@@ -94,30 +94,23 @@ describe("Payment Providers 验签（四家沙箱）", () => {
     ).rejects.toBeInstanceOf(WebhookSignatureError);
   });
 
-  it("PayPal 传输签名：正确通过 / 篡改抛错", async () => {
-    const { publicKey, privateKey } = rsaKeys();
-    const webhookId = "wh_1";
-    const provider = new PaypalPaymentProvider({ publicKeyPem: publicKey, webhookId });
-    const body = JSON.stringify({
-      id: "evt_pp",
-      event_type: "PAYMENT.CAPTURE.COMPLETED",
-      resource: { id: "cap_1", amount: { value: "10.00", currency_code: "USD" } },
-    });
-    const tid = "trans-1";
-    const ttime = "2026-01-01T00:00:00Z";
-    const sig = rsaSha256Sign(privateKey, `${tid}|${ttime}|${webhookId}|${body}`);
-
-    const ok = await provider.getWebhookActionAndData({
-      headers: { "paypal-transmission-id": tid, "paypal-transmission-time": ttime, "paypal-transmission-sig": sig },
-      rawBody: body,
-    });
-    expect(ok.action).toBe("captured");
-    expect(ok.data?.amountMinor).toBe(1000n);
-
+  it("PayPal 验签改为调官方 verify API：缺 webhook_id 时一律拒绝", async () => {
+    /*
+     * 旧实现是本地 RSA 验签（自配 publicKeyPem + 自算 canonical 串）。生产上走不通：
+     * PayPal 的签名证书会轮换，本地得自己拉 /v1/notifications/certs 并处理缓存失效，
+     * 证书一换回调就会被全量判失败。现改为调官方 `/v1/notifications/verify-webhook-signature`。
+     *
+     * 本用例只断言安全底线：**没有 webhook_id 就不放行**（宁让 PayPal 重试，
+     * 也不接受未验签的回调）。完整验签流程（SUCCESS/FAILURE 判定、事件与金额解析）
+     * 见 `paypal.provider.spec.ts`，那里用 mock fetch 覆盖。
+     *
+     * 注：`rsaSha256Verify` 仍被支付宝（RSA2）与微信（V3 证书签名）使用，工具函数保留。
+     */
+    const provider = new PaypalPaymentProvider({ clientId: "cid", clientSecret: "sec", mode: "sandbox" });
     await expect(
       provider.getWebhookActionAndData({
-        headers: { "paypal-transmission-id": tid, "paypal-transmission-time": ttime, "paypal-transmission-sig": "bad" },
-        rawBody: body,
+        headers: { "paypal-transmission-id": "trans-1" },
+        rawBody: JSON.stringify({ id: "evt_pp", event_type: "PAYMENT.CAPTURE.COMPLETED" }),
       }),
     ).rejects.toBeInstanceOf(WebhookSignatureError);
   });

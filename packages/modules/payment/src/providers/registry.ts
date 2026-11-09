@@ -54,8 +54,14 @@ const REGISTRY: Record<string, Registration> = {
     descriptor: {
       identifier: "pp_paypal",
       label: "PayPal",
-      capabilities: { webhook: true, partialRefund: false, authorizeThenCapture: true, qrFlow: false, redirectFlow: true },
-      supportedCurrencies: ["USD", "EUR"],
+      /*
+       * partialRefund: true —— PayPal 的退款接口按 capture 维度、可传 amount，
+       * 实现里用 `fromMinor(amountMinor)` 传主单位字符串，支持部分退款。
+       * supportedCurrencies 只是**内部支持范围的子集**：实际可用币种由 PayPal
+       * 账户所在地区决定，后台启用时以 PayPal 侧为准。
+       */
+      capabilities: { webhook: true, partialRefund: true, authorizeThenCapture: true, qrFlow: false, redirectFlow: true },
+      supportedCurrencies: ["USD", "EUR", "GBP", "HKD", "JPY", "AUD", "CAD", "SGD"],
     },
     ctor: PaypalPaymentProvider,
   },
