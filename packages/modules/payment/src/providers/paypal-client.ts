@@ -207,8 +207,18 @@ export class PaypalClient {
     }
 
     if (result?.verification_status !== 'SUCCESS') {
+      /*
+       * 排障线索直接写进错误消息（而不是只打日志）：
+       * 验签失败最常见的两个原因是「签名头没传到」和「rawBody 与签名时不一致」，
+       * 把收到的 paypal-* 头名列出来，一眼就能区分是网关丢了头还是内容被改了。
+       */
+      const received = Object.keys(headers)
+        .filter((h) => h.toLowerCase().startsWith('paypal'))
+        .sort()
+        .join(',');
       throw new WebhookSignatureError(
-        `PayPal webhook 验签未通过（verification_status=${result?.verification_status ?? '未知'}）`,
+        `PayPal webhook 验签未通过（verification_status=${result?.verification_status ?? '未知'}；` +
+          `收到的 paypal 头: ${received || '无'}；rawBody 长度 ${rawBody.length}）`,
       );
     }
   }

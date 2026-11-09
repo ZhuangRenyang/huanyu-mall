@@ -105,10 +105,15 @@ export function storePaymentRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
-  // 验签失败 401 且不落库；合法回调幂等去重后立即 200
+  /*
+   * 回调入口：:provider 必须是 ProviderRegistry 的 identifier（如 `pp_paypal`，不是 `paypal`）。
+   * 写错会得到 providerNotFound，与"验签失败"同样是 402（错误码首位 4 → 402），
+   * 状态码无法区分 —— 所以下面 catch 里必须显式记录 provider 与原因，否则排障只能猜。
+   */
   app.post("/api/v1/store/webhooks/payment/:provider", async (req, reply) => {
     const { provider } = req.params as { provider: string };
     const headers = req.headers as Record<string, string>;
+    try {
       const result = await deps.services.payment.handleProviderWebhook(provider, {
         headers,
         rawBody: getRawBody(req),
@@ -124,5 +129,12 @@ export function storePaymentRoutes(app: FastifyInstance, deps: AppDeps): void {
         }),
       );
       reply.code(200).ok({ received: true, duplicate: result.duplicate });
+    } catch (err) {
+      req.log.warn(
+        { provider, err: err instanceof Error ? err.message : String(err) },
+        "webhook 处理失败（provider 标识 / 验签 / 支付商接口三选一）",
+      );
+      throw err;
+    }
   });
 }
