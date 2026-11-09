@@ -107,6 +107,29 @@ bash deploy/scripts/e2e-regression.sh    # 交易闭环 15 步回归
 
 ---
 
+## 代码仓库
+
+- 远程仓库：<https://github.com/ZhuangRenyang/huanyu-mall>
+- 默认分支：`main`
+
+**本机推送注意**：这台机器的 **SSH 22 端口被网络屏蔽**（`ssh: connect to host github.com port 22: Connection refused`），HTTPS 又不能用密码认证（GitHub 已禁用，需 PAT）。可用的是 **SSH over 443**，仓库已按这个配置好：
+
+```bash
+# 首次或换机器时这样配置（当前仓库已配好，无需重复执行）
+git remote set-url origin ssh://git@ssh.github.com:443/ZhuangRenyang/huanyu-mall.git
+
+git push
+```
+
+想让它对所有仓库自动生效（可选，改全局配置）：在 `~/.ssh/config` 加
+
+```
+Host github.com
+  HostName ssh.github.com
+  Port 443
+  User git
+```
+
 ## 开发
 
 ```bash
