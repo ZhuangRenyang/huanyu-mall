@@ -3,6 +3,8 @@
 set -uo pipefail
 BASE="http://localhost/api/v1"
 VAR_ID="var_06GVXB91KJ459EG26NY1GZG850"
+# 记录起始时刻，供末尾「日志零错误」检查限定时间窗（避免把历史日志算进来）
+START_SEC=$(date +%s)
 
 step() { printf '\n=== %s ===\n' "$*"; }
 jqf() { jq -r "$1" 2>/dev/null; }
@@ -93,3 +95,50 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/
 
 step "15. 订单终态"
 curl -s "$BASE/store/orders/$ORDER_ID" | jq '.data | {id, status, payment_status, total_minor}'
+
+# =============================================================================
+# 16. 日志零错误检查
+#
+# 为什么需要这一步：HTTP 状态码和业务数据都正常，不代表服务端内部没出错。
+# 真实案例 —— 两个 onSend 钩子同时设响应头导致每个请求都抛
+# ERR_HTTP_HEADERS_SENT：响应仍是 200、body 完整，但日志被刷满、偶发变 500。
+# 当时的回归只看状态码与数据，完全没发现，直到另一次联调才暴露。
+#
+# 判据：本次回归时间窗内，api 日志不得出现
+#   - '"level":50'          （error 级日志，含 unhandled error）
+#   - REP_ALREADY_SENT      （响应已发送后又写）
+#   - HEADERS_SENT          （同上，Node 层报错）
+# 正常业务流（1-15 步）不应产生任何 error 级日志。
+#
+# 无 Docker 的环境（如纯前端联调机）跳过，不判失败。
+# =============================================================================
+step "16. 日志零错误检查（状态码正常 ≠ 内部无错）"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "  [跳过] 本机无 Docker，无法读取容器日志"
+else
+  COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  MALL_DIR="${MALL_DIR:-/data/home/mall-data}"
+  ENV_FILE="$MALL_DIR/config/.env"
+  # 多留 3 秒缓冲：--since 是秒级精度，避免漏掉回归末尾的日志
+  WINDOW=$(( $(date +%s) - START_SEC + 3 ))
+
+  if command -v docker >/dev/null 2>&1 && docker compose --env-file "$ENV_FILE" -f "$COMPOSE_DIR/docker-compose.yml" ps api >/dev/null 2>&1; then
+    LOGS=$(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_DIR/docker-compose.yml" \
+      logs --since "${WINDOW}s" api 2>&1)
+    ERRS=$(printf '%s\n' "$LOGS" | grep -E '"level":50|REP_ALREADY_SENT|HEADERS_SENT' || true)
+    if [[ -z "$ERRS" ]]; then
+      echo "  [通过] 本次回归窗口内无 error 级日志"
+    else
+      echo "  [失败] 发现 error 级日志（响应可能仍正常，但内部出错）："
+      printf '%s\n' "$ERRS" | head -3 | cut -c1-220 | sed 's/^/         /'
+      echo "         处置：按上面的 message/stack 定位；常见原因是钩子里重复写响应、"
+      echo "               或在响应已发送后仍抛错（error handler 会追加记录原始错误）"
+      exit 1
+    fi
+  else
+    echo "  [跳过] 取不到 api 容器（未部署或 env 文件缺失）"
+  fi
+fi
+
+printf '\n================= 回归完成 =================\n'
+printf '业务链路 15 步 + 日志零错误检查均通过\n'
