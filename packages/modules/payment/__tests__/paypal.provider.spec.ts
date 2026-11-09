@@ -198,6 +198,21 @@ describe('错误分层', () => {
       }),
     ).rejects.toThrow(/HTTP 500/);
   });
+
+  it('币种不支持（CURRENCY_NOT_SUPPORTED）→ 转成可操作的 20001，而不是 500「内部错误」', async () => {
+    /*
+     * 真实踩到过：PayPal 多数地区不接受 CNY 作为交易币种。
+     * 若不单独翻译，用户只看到「内部错误」，完全不知道该改什么。
+     */
+    fetchMock
+      .mockResolvedValueOnce(tokenOk())
+      .mockResolvedValueOnce(
+        res(422, { name: 'UNPROCESSABLE_ENTITY', details: [{ issue: 'CURRENCY_NOT_SUPPORTED' }] }),
+      );
+    const promise = makeProvider().initiatePayment({ sessionId: 's', amountMinor: 10700n, currencyCode: 'CNY' });
+    await expect(promise).rejects.toThrow(/PayPal 不支持以 CNY 收款/);
+    await expect(promise).rejects.toMatchObject({ code: 20001 });
+  });
 });
 
 describe('无配置时的行为', () => {

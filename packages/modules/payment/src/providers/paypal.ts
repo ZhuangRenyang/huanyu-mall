@@ -1,4 +1,4 @@
-import { fromMinor, toMinor } from '@mall/core';
+import { DomainError, fromMinor, toMinor } from '@mall/core';
 import { AbstractPaymentProvider } from './abstract.js';
 import { PaypalApiError, PaypalClient, type PaypalClientConfig } from './paypal-client.js';
 import type {
@@ -76,27 +76,45 @@ export class PaypalPaymentProvider extends AbstractPaymentProvider {
     const captureMethod = String(this.config.captureMethod ?? 'automatic');
     const intent = captureMethod === 'manual' ? 'AUTHORIZE' : 'CAPTURE';
 
-    const order = await this.client().request<PaypalOrder>('/v2/checkout/orders', {
-      method: 'POST',
-      /* 用 sessionId 派生幂等键：用户重复点"去支付"不会生成多个订单 */
-      idempotencyKey: `init_${input.sessionId}`,
-      body: {
-        intent,
-        purchase_units: [
-          {
-            custom_id: input.sessionId,
-            amount: {
-              currency_code: input.currencyCode,
-              value: fromMinor(input.amountMinor, input.currencyCode),
+    let order: PaypalOrder;
+    try {
+      order = await this.client().request<PaypalOrder>('/v2/checkout/orders', {
+        method: 'POST',
+        /* 用 sessionId 派生幂等键：用户重复点"去支付"不会生成多个订单 */
+        idempotencyKey: `init_${input.sessionId}`,
+        body: {
+          intent,
+          purchase_units: [
+            {
+              custom_id: input.sessionId,
+              amount: {
+                currency_code: input.currencyCode,
+                value: fromMinor(input.amountMinor, input.currencyCode),
+              },
             },
+          ],
+          application_context: {
+            user_action: 'PAY_NOW',
+            ...(input.returnUrl ? { return_url: input.returnUrl, cancel_url: input.returnUrl } : {}),
           },
-        ],
-        application_context: {
-          user_action: 'PAY_NOW',
-          ...(input.returnUrl ? { return_url: input.returnUrl, cancel_url: input.returnUrl } : {}),
         },
-      },
-    });
+      });
+    } catch (err) {
+      /*
+       * 币种不支持是最容易踩的一条：PayPal 在多数地区**不把 CNY 作为交易币种**。
+       * 若不单独翻译，用户只会看到「内部错误」，完全不知道该怎么办。
+       * 转成 20001（参数/校验类，HTTP 400）并给出可操作的处置建议。
+       */
+      if (err instanceof PaypalApiError && err.issues.includes('CURRENCY_NOT_SUPPORTED')) {
+        throw new DomainError({
+          code: 20001,
+          message:
+            `PayPal 不支持以 ${input.currencyCode} 收款。PayPal 仅适用于外币渠道（USD / EUR / GBP 等），` +
+            '人民币请使用支付宝或微信支付。处置：为该渠道启用支持本币的支付方式，或改用外币渠道结算',
+        });
+      }
+      throw err;
+    }
 
     /* 新版返回 rel=payer-action，旧版是 approve —— 两个都认，避免版本差异导致拿不到跳转链接 */
     const link = order.links?.find((l) => l.rel === 'payer-action' || l.rel === 'approve');
