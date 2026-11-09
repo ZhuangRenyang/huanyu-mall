@@ -19,6 +19,26 @@ export function setupResponse(app: FastifyInstance): void {
 
   app.setErrorHandler((err, req, reply) => {
     const requestId = req.id;
+
+    /*
+     * 响应已经发出去了，就绝不能再写第二次。
+     *
+     * 真实踩到过：某次请求先成功 `reply.ok()` 发出 200，随后生命周期里又冒出一个错误，
+     * 错误处理器照样 `reply.code(500).send()` → 抛 `FST_ERR_REP_ALREADY_SENT`，
+     * 而这个二次错误**又覆盖了原始错误**，日志里只剩「Reply was already sent」，
+     * 真凶彻底消失，排查只能靠猜。
+     *
+     * 现在的策略：已发送时只记录原始错误、不再写响应（连接已 close，写也无效），
+     * 保证「第一个错误」永远能在日志里看到。
+     */
+    if (reply.sent) {
+      req.log.error(
+        { err, requestId, url: req.url, method: req.method },
+        "响应已发送后仍抛出错误（已忽略，不二次写响应；请查此条定位原始错误）",
+      );
+      return;
+    }
+
     if (isDomainError(err)) {
       const status = httpStatusFor(err.code);
       const body: Envelope = {
