@@ -1,0 +1,39 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "packages/modules/*"
+  - "packages/providers/*"
+
+# 依赖单点锁定：所有包引用 catalog: 统一版本（架构 §0 / ADR-006）
+allowBuilds:
+  esbuild: true
+  msgpackr-extract: true
+
+catalog:
+  typescript: 7.0.2
+  "@types/node": 26.6.6
+  turbo: 2.11.10
+  tsx: 4.23.15
+  vitest: 5.1.0
+  zod: 4.6.7
+  drizzle-orm: 0.45.4
+  drizzle-kit: 0.31.11
+  pg: 8.23.1
+  "@types/pg": 8.23.1
+  ioredis: 6.0.0
+  bullmq: 6.7.2
+  fastify: 5.12.8
+  "@fastify/rate-limit": 11.2.2
+  pino: 10.4.0
+  "@node-rs/argon2": 2.2.2
+  # ---- UI 层（shadcn/ui 实现体系，见 ADR-011）----
+  clsx: 2.1.1
+  tailwind-merge: 3.7.0
+  class-variance-authority: 0.7.1
+  "@radix-ui/react-dialog": 1.3.1
+  "@radix-ui/react-tabs": 1.2.1
+  "@radix-ui/react-select": 2.4.1
+  "@radix-ui/react-slot": 1.5.0
+  sonner: 2.0.8
+
+# 允许运行 install 构建脚本的依赖（原生二进制：esbuild / msgpackr-extract）

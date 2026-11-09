@@ -1,0 +1,1908 @@
+openapi: 3.0.1
+info:
+  title: 全球商城 API
+  version: 1.0.0
+  description: >
+    单商户跨境商城 Store API 与 Admin API（一期 MVP）。统一响应封装 { code, data, message }，
+    错误码见 ARCHITECTURE.md §7.4。金额一律 amount_minor（bigint 最小币种单位）。ID 为 ULID 带前缀。
+servers:
+  - url: /api/v1
+    description: 相对路径（nginx 反代后 /api/v1）
+
+tags:
+  - name: store
+    description: 店面 API（公开，x-publishable-key 解析 channel）
+  - name: store-auth
+    description: 店面认证
+  - name: admin
+    description: 管理后台 API（admin JWT + RBAC）
+  - name: admin-auth
+    description: 后台认证
+
+components:
+  securitySchemes:
+    publishableKey:
+      type: apiKey
+      in: header
+      name: x-publishable-key
+      description: 标识请求所属 channel（非秘密，解析定价/支付/语言）
+    customerJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 顾客访问令牌（15 分钟），可选；refresh 走 /store/auth/refresh
+    adminJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 管理员访问令牌（15 分钟），RBAC 两档 admin/staff
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20, example: 20 }
+      description: 每页条数，默认 20，上限 100
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, maximum: 10000, default: 0, example: 0 }
+      description: 偏移，上限 10000
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid, example: "4f1c9a0e-8f21-4b3a-9d2e-1c5b7a9f0e3d" }
+      description: 幂等键（UUID v4），同键同体回放上次响应
+    HandleParam:
+      name: handle
+      in: path
+      required: true
+      schema: { type: string, example: "wireless-mouse" }
+    CartIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "cart_01JABCDEF" }
+    LineItemIdParam:
+      name: lineId
+      in: path
+      required: true
+      schema: { type: string, example: "cli_01JABCDEF" }
+    OrderIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "ord_01JABCDEF" }
+    ProductIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "prod_01JABCDEF" }
+    VariantIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "var_01JABCDEF" }
+    FulfillmentIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "fulf_01JABCDEF" }
+    CustomerIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "cust_01JABCDEF" }
+    InventoryLevelIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "invlvl_01JABCDEF" }
+    ProviderConfigIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: "pp_01JABCDEF" }
+    ProviderParam:
+      name: provider
+      in: path
+      required: true
+      schema: { type: string, example: "pp_wechat" }
+      description: Provider 标识（pp_wechat / pp_alipay / pp_stripe / pp_paypal / pp_fake）
+
+  schemas:
+    # ===== 通用 =====
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          example: 30001
+          description: 错误码（0=成功；见 ARCHITECTURE §7.4）
+        data:
+          type: object
+          nullable: true
+          example: null
+        message:
+          type: string
+          example: "资源不存在"
+
+    # ===== 金额/币种（统一最小单位）=====
+    Money:
+      type: object
+      required: [amount_minor, currency_code]
+      properties:
+        amount_minor: { type: integer, format: int64, example: 19900 }
+        currency_code: { type: string, minLength: 3, maxLength: 3, example: "CNY" }
+
+    # ===== 产品（Store）=====
+    ProductSummary:
+      type: object
+      required: [id, title, handle, status]
+      properties:
+        id: { type: string, example: "prod_01JABCDEF" }
+        title: { type: string, example: "无线鼠标" }
+        handle: { type: string, example: "wireless-mouse" }
+        subtitle: { type: string, nullable: true, example: "静音版" }
+        thumbnail_url: { type: string, nullable: true, example: "https://cdn.example.com/pimg_xxx.webp" }
+        status: { type: string, enum: [draft, published, archived], example: "published" }
+        price:
+          $ref: '#/components/schemas/Money'
+
+    ProductDetail:
+      type: object
+      required: [id, title, handle, status, variants]
+      properties:
+        id: { type: string, example: "prod_01JABCDEF" }
+        title: { type: string, example: "无线鼠标" }
+        handle: { type: string, example: "wireless-mouse" }
+        subtitle: { type: string, nullable: true, example: "静音版" }
+        description: { type: string, nullable: true, example: "人体工学无线鼠标" }
+        status: { type: string, enum: [draft, published, archived], example: "published" }
+        images:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, example: "pimg_01JABCDEF" }
+              url: { type: string, example: "https://cdn.example.com/pimg_xxx.webp" }
+              alt: { type: string, nullable: true }
+              is_primary: { type: boolean, example: true }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/VariantSummary' }
+        attributes:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string, example: "颜色" }
+              value: { type: string, example: "黑色" }
+
+    VariantSummary:
+      type: object
+      required: [id, title, sku, status]
+      properties:
+        id: { type: string, example: "var_01JABCDEF" }
+        title: { type: string, example: "黑色" }
+        sku: { type: string, example: "MS-001-BLK" }
+        status: { type: string, enum: [draft, published, archived], example: "published" }
+        price:
+          $ref: '#/components/schemas/Money'
+        inventory_status:
+          type: string
+          enum: [in_stock, low_stock, out_of_stock]
+          example: "in_stock"
+          description: 变体级可用量（AC-03/行业交互要求）
+        available_quantity: { type: integer, example: 12 }
+
+    Category:
+      type: object
+      required: [id, name, handle]
+      properties:
+        id: { type: string, example: "cat_01JABCDEF" }
+        name: { type: string, example: "数码配件" }
+        handle: { type: string, example: "digital-accessories" }
+        parent_id: { type: string, nullable: true }
+
+    # ===== 购物车 =====
+    CartLineItem:
+      type: object
+      required: [id, variant_id, title, quantity, unit_price_minor, currency_code]
+      properties:
+        id: { type: string, example: "cli_01JABCDEF" }
+        variant_id: { type: string, example: "var_01JABCDEF" }
+        product_id: { type: string, example: "prod_01JABCDEF" }
+        title: { type: string, example: "无线鼠标 · 黑色" }
+        quantity: { type: integer, minimum: 1, example: 2 }
+        unit_price_minor: { type: integer, format: int64, example: 19900 }
+        currency_code: { type: string, example: "CNY" }
+        line_total_minor: { type: integer, format: int64, example: 39800 }
+
+    CartShippingMethod:
+      type: object
+      required: [id, name, amount_minor, currency_code]
+      properties:
+        id: { type: string, example: "csm_01JABCDEF" }
+        shipping_option_id: { type: string, example: "shipopt_01JABCDEF" }
+        name: { type: string, example: "顺丰速运" }
+        amount_minor: { type: integer, format: int64, example: 1200 }
+        currency_code: { type: string, example: "CNY" }
+
+    Cart:
+      type: object
+      required: [id, channel_id, currency_code, status, line_items, totals]
+      properties:
+        id: { type: string, example: "cart_01JABCDEF" }
+        channel_id: { type: string, example: "chn_01JABCDEF" }
+        region_id: { type: string, example: "reg_01JABCDEF" }
+        currency_code: { type: string, example: "CNY" }
+        customer_id: { type: string, nullable: true }
+        email: { type: string, nullable: true, format: email }
+        status: { type: string, enum: [open, completed, abandoned], example: "open" }
+        line_items:
+          type: array
+          items: { $ref: '#/components/schemas/CartLineItem' }
+        shipping_method:
+          $ref: '#/components/schemas/CartShippingMethod'
+        totals:
+          type: object
+          required: [subtotal_minor, shipping_minor, tax_minor, total_minor]
+          properties:
+            subtotal_minor: { type: integer, format: int64, example: 39800 }
+            shipping_minor: { type: integer, format: int64, example: 1200 }
+            tax_minor: { type: integer, format: int64, example: 5330 }
+            discount_minor: { type: integer, format: int64, example: 0 }
+            total_minor: { type: integer, format: int64, example: 46330 }
+
+    # ===== 履约/支付/订单 =====
+    ShippingOption:
+      type: object
+      required: [id, name, amount_minor, currency_code]
+      properties:
+        id: { type: string, example: "shipopt_01JABCDEF" }
+        name: { type: string, example: "顺丰速运" }
+        type: { type: string, enum: [flat, weight_based, free_over], example: "flat" }
+        amount_minor: { type: integer, format: int64, example: 1200 }
+        currency_code: { type: string, example: "CNY" }
+
+    PaymentProviderOption:
+      type: object
+      required: [id, provider_id, label]
+      properties:
+        id: { type: string, example: "pp_01JABCDEF" }
+        provider_id: { type: string, example: "pp_wechat" }
+        label: { type: string, example: "微信支付" }
+
+    PaymentSession:
+      type: object
+      required: [id, provider_id, status, amount_minor, currency_code]
+      properties:
+        id: { type: string, example: "paysess_01JABCDEF" }
+        provider_id: { type: string, example: "pp_wechat" }
+        status: { type: string, enum: [pending, requires_more, authorized, captured, failed, canceled, expired], example: "pending" }
+        amount_minor: { type: integer, format: int64, example: 46330 }
+        currency_code: { type: string, example: "CNY" }
+        context:
+          type: object
+          nullable: true
+          description: 客户端拉起支付所需
+          properties:
+            kind: { type: string, enum: [qrcode, redirectUrl, clientSecret], example: "qrcode" }
+            qrcode: { type: string, nullable: true }
+            redirectUrl: { type: string, nullable: true }
+            clientSecret: { type: string, nullable: true }
+
+    Payment:
+      type: object
+      required: [id, payment_collection_id, session_id, status, amount_minor, currency_code, provider_id]
+      properties:
+        id: { type: string, example: "pay_01JABCDEF" }
+        payment_collection_id: { type: string, example: "paycol_01JABCDEF" }
+        session_id: { type: string, example: "paysess_01JABCDEF" }
+        status: { type: string, enum: [pending, authorized, captured, failed, canceled], example: "authorized" }
+        amount_minor: { type: integer, format: int64, example: 19800 }
+        currency_code: { type: string, example: "CNY" }
+        provider_id: { type: string, example: "pp_fake" }
+        provider_reference: { type: string, nullable: true }
+        captured_at: { type: string, format: date-time, nullable: true }
+
+    OrderLineItem:
+      type: object
+      required: [id, title, sku, quantity, unit_price_minor, total_minor, currency_code]
+      properties:
+        id: { type: string, example: "oli_01JABCDEF" }
+        variant_id: { type: string, example: "var_01JABCDEF" }
+        title: { type: string, example: "无线鼠标 · 黑色" }
+        sku: { type: string, example: "MS-001-BLK" }
+        quantity: { type: integer, example: 2 }
+        unit_price_minor: { type: integer, format: int64, example: 19900 }
+        tax_rate_bps: { type: integer, example: 1300 }
+        tax_amount_minor: { type: integer, format: int64, example: 5174 }
+        total_minor: { type: integer, format: int64, example: 44974 }
+        currency_code: { type: string, example: "CNY" }
+
+    Order:
+      type: object
+      required: [id, status, email, currency_code, total_minor, line_items]
+      properties:
+        id: { type: string, example: "ord_01JABCDEF" }
+        status: { type: string, enum: [pending, awaiting_payment, paid, fulfilled, completed, canceled, refunded], example: "paid" }
+        payment_status: { type: string, enum: [unpaid, authorized, captured, refunded], example: "captured" }
+        email: { type: string, format: email, example: "buyer@example.com" }
+        currency_code: { type: string, example: "CNY" }
+        subtotal_minor: { type: integer, format: int64, example: 39800 }
+        shipping_minor: { type: integer, format: int64, example: 1200 }
+        tax_minor: { type: integer, format: int64, example: 5330 }
+        discount_minor: { type: integer, format: int64, example: 0 }
+        total_minor: { type: integer, format: int64, example: 46330 }
+        shipping_address:
+          type: object
+          description: 收货地址快照
+          properties:
+            first_name: { type: string, example: "张三" }
+            last_name: { type: string, example: "" }
+            line1: { type: string, example: "上海市浦东新区" }
+            city: { type: string, example: "上海市" }
+            postal_code: { type: string, example: "200000" }
+            country_code: { type: string, example: "CN" }
+            phone: { type: string, example: "13800000000" }
+        line_items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderLineItem' }
+        placed_at: { type: string, format: date-time, example: "2026-11-08T10:00:00Z" }
+
+    # ===== 客户 =====
+    Address:
+      type: object
+      required: [id, first_name, last_name, line1, city, postal_code, country_code]
+      properties:
+        id: { type: string, example: "addr_01JABCDEF" }
+        first_name: { type: string, example: "张三" }
+        last_name: { type: string, example: "" }
+        phone: { type: string, nullable: true, example: "13800000000" }
+        line1: { type: string, example: "上海市浦东新区" }
+        line2: { type: string, nullable: true }
+        city: { type: string, example: "上海市" }
+        province: { type: string, nullable: true }
+        postal_code: { type: string, example: "200000" }
+        country_code: { type: string, example: "CN" }
+        is_default_shipping: { type: boolean, example: true }
+
+    Customer:
+      type: object
+      required: [id, email]
+      properties:
+        id: { type: string, example: "cust_01JABCDEF" }
+        email: { type: string, format: email, example: "buyer@example.com" }
+        first_name: { type: string, nullable: true }
+        last_name: { type: string, nullable: true }
+        phone: { type: string, nullable: true, example: "13800000000" }
+
+    # ===== 库存 =====
+    InventoryItem:
+      type: object
+      required: [id, sku]
+      properties:
+        id: { type: string, example: "invitem_01JABCDEF" }
+        sku: { type: string, example: "MS-001-BLK" }
+        title: { type: string, nullable: true }
+        requires_shipping: { type: boolean, example: true }
+
+    InventoryLevel:
+      type: object
+      required: [id, inventory_item_id, stock_location_id, stocked_quantity, reserved_quantity, available_quantity]
+      properties:
+        id: { type: string, example: "invlvl_01JABCDEF" }
+        inventory_item_id: { type: string, example: "invitem_01JABCDEF" }
+        stock_location_id: { type: string, example: "loc_01JABCDEF" }
+        stocked_quantity: { type: integer, example: 100 }
+        reserved_quantity: { type: integer, example: 2 }
+        available_quantity: { type: integer, example: 98 }
+
+    # ===== 设置/主题/文件 =====
+    Settings:
+      type: object
+      properties:
+        site_name: { type: string, example: "全球商城" }
+        channel_slug: { type: string, example: "cn" }
+        default_locale: { type: string, example: "zh-CN" }
+        currency_code: { type: string, example: "CNY" }
+
+    ThemeSettings:
+      type: object
+      properties:
+        primary_color: { type: string, example: "#000", description: "主色（默认值来自 design-tokens，禁硬编码）" }
+        font_family: { type: string, example: "Inter, Noto Sans SC" }
+        border_radius: { type: string, example: "8px" }
+        shadow: { type: string, example: "none" }
+        product_image_ratio: { type: string, example: "1:1" }
+
+    FileInfo:
+      type: object
+      required: [id, url]
+      properties:
+        id: { type: string, example: "file_01JABCDEF" }
+        url: { type: string, example: "https://cdn.example.com/file_xxx.webp" }
+        content_type: { type: string, example: "image/webp" }
+        size_bytes: { type: integer, format: int64, example: 51200 }
+
+    # ===== 认证 =====
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token: { type: string, example: "eyJhbGciOi..." }
+        refresh_token: { type: string, example: "rt_01JABCDEF..." }
+        expires_in: { type: integer, example: 900, description: "access 有效期秒（900=15 分钟）" }
+        scope: { type: string, enum: [customer, admin], example: "customer" }
+
+    # ===== Admin 产品（字段级）=====
+    AttributeInput:
+      type: object
+      required: [name, handle, input_type]
+      properties:
+        name: { type: string, example: "颜色" }
+        handle: { type: string, example: "color" }
+        input_type: { type: string, enum: [dropdown, multiselect, swatch, boolean, numeric, text], example: "dropdown" }
+        values: { type: array, items: { type: string, example: "黑色" } }
+        is_filterable: { type: boolean, example: true }
+
+    AdminProduct:
+      type: object
+      required: [id, title, handle, status]
+      properties:
+        id: { type: string, example: "prod_01JABCDEF" }
+        title: { type: string, example: "无线鼠标" }
+        handle: { type: string, example: "wireless-mouse" }
+        subtitle: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [draft, published, archived], example: "published" }
+        product_type: { type: string, nullable: true, example: "pt_01JABCDEF" }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/AdminVariant' }
+
+    AdminVariant:
+      type: object
+      required: [id, sku, title, status]
+      properties:
+        id: { type: string, example: "var_01JABCDEF" }
+        sku: { type: string, example: "MS-001-BLK" }
+        title: { type: string, example: "黑色" }
+        status: { type: string, enum: [draft, published, archived], example: "published" }
+        options: { type: object, additionalProperties: { type: string }, example: { "attr_color": "attrv_black" } }
+        prices:
+          type: array
+          items: { $ref: '#/components/schemas/Money' }
+
+    Fulfillment:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, example: "fulf_01JABCDEF" }
+        order_id: { type: string, example: "ord_01JABCDEF" }
+        status: { type: string, enum: [not_fulfilled, fulfilled, shipped, delivered, canceled], example: "shipped" }
+        shipments:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, example: "ship_01JABCDEF" }
+              carrier_name: { type: string, example: "顺丰速运" }
+              tracking_number: { type: string, example: "SF1234567890" }
+              shipped_at: { type: string, format: date-time }
+
+    Refund:
+      type: object
+      required: [id, amount_minor, currency_code, status]
+      properties:
+        id: { type: string, example: "rfd_01JABCDEF" }
+        amount_minor: { type: integer, format: int64, example: 46330 }
+        currency_code: { type: string, example: "CNY" }
+        reason: { type: string, nullable: true }
+        status: { type: string, enum: [pending, succeeded, failed], example: "succeeded" }
+
+    # ===== 请求体 =====
+    CreateCartRequest:
+      type: object
+      required: [region_id]
+      properties:
+        region_id: { type: string, example: "reg_01JABCDEF" }
+        email: { type: string, format: email, nullable: true }
+
+    AddLineItemRequest:
+      type: object
+      required: [variant_id, quantity]
+      properties:
+        variant_id: { type: string, example: "var_01JABCDEF" }
+        quantity: { type: integer, minimum: 1, maximum: 999, example: 1 }
+
+    UpdateLineItemRequest:
+      type: object
+      required: [quantity]
+      properties:
+        quantity: { type: integer, minimum: 1, maximum: 999, example: 3 }
+
+    SetShippingMethodRequest:
+      type: object
+      required: [shipping_option_id]
+      properties:
+        shipping_option_id: { type: string, example: "shipopt_01JABCDEF" }
+
+    CreatePaymentSessionRequest:
+      type: object
+      required: [cart_id, provider_id]
+      properties:
+        cart_id: { type: string, example: "cart_01JABCDEF" }
+        provider_id: { type: string, example: "pp_wechat" }
+
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: "buyer@example.com" }
+        password: { type: string, minLength: 8, example: "Password123" }
+        first_name: { type: string, nullable: true }
+        last_name: { type: string, nullable: true }
+
+    LoginRequest:
+      type: object
+      description: 登录标识（邮箱或管理员名，内置管理员为 admin）
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: "buyer@example.com" }
+        password: { type: string, example: "Password123" }
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string, example: "rt_01JABCDEF..." }
+
+    ChangePasswordRequest:
+      type: object
+      description: >
+        管理员自助改密请求。只传当前口令与新口令，不接受管理员 id（防越权改他人口令）。
+        新口令强度规则（至少 8 位 + 字母 + 数字）由 @mall/policy 统一裁决，前后端共用同一份实现。
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, example: "oldpass123" }
+        new_password: { type: string, minLength: 8, example: "Admin2024" }
+
+    ChangePasswordResponse:
+      type: object
+      description: >
+        改密结果。成功后该管理员的全部 refresh_token 被撤销（reauth_required=true），
+        后端不签发新令牌，调用方须清掉本地会话并引导用户重新登录。
+      required: [changed, revoked_refresh_tokens, reauth_required, message]
+      properties:
+        changed: { type: boolean, example: true }
+        revoked_refresh_tokens: { type: integer, example: 2, description: 被撤销的 refresh_token 数量 }
+        reauth_required: { type: boolean, example: true, description: 为 true 时必须重新登录 }
+        message: { type: string, example: "密码已修改，请使用新密码重新登录" }
+
+    CreateProductRequest:
+      type: object
+      required: [title, handle]
+      properties:
+        title: { type: string, example: "无线鼠标" }
+        handle: { type: string, example: "wireless-mouse" }
+        subtitle: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        product_type_id: { type: string, nullable: true }
+        attributes:
+          type: array
+          items: { $ref: '#/components/schemas/AttributeInput' }
+        variants:
+          type: array
+          items: { $ref: '#/components/schemas/CreateVariantRequest' }
+
+    UpdateProductRequest:
+      type: object
+      properties:
+        title: { type: string, example: "无线鼠标 Pro" }
+        subtitle: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        status: { type: string, enum: [draft, published, archived], example: "published" }
+
+    CreateVariantRequest:
+      type: object
+      required: [sku, title]
+      properties:
+        sku: { type: string, example: "MS-001-BLK" }
+        title: { type: string, example: "黑色" }
+        options: { type: object, additionalProperties: { type: string } }
+        weight_gram: { type: integer, nullable: true, example: 90 }
+        prices:
+          type: array
+          items: { $ref: '#/components/schemas/Money' }
+
+    UpdateVariantRequest:
+      type: object
+      properties:
+        sku: { type: string, example: "MS-001-BLK" }
+        title: { type: string, example: "黑色" }
+        status: { type: string, enum: [draft, published, archived] }
+
+    PutPricesRequest:
+      type: object
+      required: [prices]
+      properties:
+        prices:
+          type: array
+          items: { $ref: '#/components/schemas/Money' }
+
+    CreateRefundRequest:
+      type: object
+      required: [amount_minor, reason]
+      properties:
+        amount_minor: { type: integer, format: int64, example: 46330, description: "一期只全额" }
+        reason: { type: string, example: "商品质量问题" }
+
+    CreateFulfillmentRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [order_line_item_id, quantity]
+            properties:
+              order_line_item_id: { type: string, example: "oli_01JABCDEF" }
+              quantity: { type: integer, example: 2 }
+
+    CreateShipmentRequest:
+      type: object
+      required: [carrier_name, tracking_number]
+      properties:
+        carrier_name: { type: string, example: "顺丰速运" }
+        tracking_number: { type: string, example: "SF1234567890" }
+
+    UpdateInventoryLevelRequest:
+      type: object
+      required: [stocked_quantity]
+      properties:
+        stocked_quantity: { type: integer, minimum: 0, example: 100 }
+
+    UpdateSettingsRequest:
+      type: object
+      properties:
+        site_name: { type: string, example: "全球商城" }
+
+    UpdateThemeRequest:
+      type: object
+      properties:
+        primary_color: { type: string, example: "#000", description: "主色（来自设计变量）" }
+        font_family: { type: string }
+        border_radius: { type: string }
+        product_image_ratio: { type: string }
+
+    UpdatePaymentProviderRequest:
+      type: object
+      required: [is_enabled]
+      properties:
+        is_enabled: { type: boolean, example: true }
+        options:
+          type: object
+          description: 密钥（服务端 AES-256-GCM 加密存储，读回时打码）
+          additionalProperties: { type: string }
+
+paths:
+  # ===================== Store =====================
+  /store/bootstrap:
+    get:
+      tags: [store]
+      summary: 一次性获取 channel / locale / 币种 / 导航 / 设计变量
+      security: [{ publishableKey: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    required: [channel, locale, currency_code, theme]
+                    properties:
+                      channel: { type: string, example: "cn" }
+                      locale: { type: string, example: "zh-CN" }
+                      currency_code: { type: string, example: "CNY" }
+                      theme: { $ref: '#/components/schemas/ThemeSettings' }
+                  message: { type: string, example: "" }
+        '400': { description: 参数错误, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: 内部错误, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/products:
+    get:
+      tags: [store]
+      summary: 商品列表（q / category / attribute / sort / 分页）
+      security: [{ publishableKey: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, example: "鼠标" }, description: 关键词 }
+        - { name: category, in: query, schema: { type: string, example: "cat_01JABCDEF" } }
+        - { name: sort, in: query, schema: { type: string, enum: [created_at.desc, price.asc, price.desc], example: "created_at.desc" } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    required: [items, count, offset, limit, hasMore]
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/ProductSummary' } }
+                      count: { type: integer, example: 137 }
+                      offset: { type: integer, example: 0 }
+                      limit: { type: integer, example: 20 }
+                      hasMore: { type: boolean, example: true }
+                  message: { type: string, example: "" }
+        '400': { description: 参数错误, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '500': { description: 内部错误, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/products/{handle}:
+    get:
+      tags: [store]
+      summary: 商品详情（变体 + 价格 + 图 + 属性 + 库存状态）
+      security: [{ publishableKey: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/HandleParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/ProductDetail' }
+                  message: { type: string, example: "" }
+        '404': { description: 商品不存在, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/categories:
+    get:
+      tags: [store]
+      summary: 分类列表
+      security: [{ publishableKey: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: array, items: { $ref: '#/components/schemas/Category' } }
+                  message: { type: string, example: "" }
+
+  /store/carts:
+    post:
+      tags: [store]
+      summary: 创建购物车（匿名或登录）
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCartRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Cart' }
+                  message: { type: string, example: "" }
+        '400': { description: 参数错误, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: 校验失败, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/carts/{id}:
+    get:
+      tags: [store]
+      summary: 获取购物车
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CartIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Cart' }
+                  message: { type: string, example: "" }
+        '404': { description: 购物车不存在, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/carts/{id}/line-items:
+    post:
+      tags: [store]
+      summary: 加购（校验变体可售 + 库存可用量）
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CartIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddLineItemRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Cart' }
+                  message: { type: string, example: "" }
+        '409': { description: 库存不足(30003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: 校验失败, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/carts/{id}/line-items/{lineId}:
+    patch:
+      tags: [store]
+      summary: 修改行数量
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CartIdParam' }
+        - { $ref: '#/components/parameters/LineItemIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateLineItemRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Cart' }
+                  message: { type: string, example: "" }
+        '404': { description: 行不存在, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    delete:
+      tags: [store]
+      summary: 删除行
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CartIdParam' }
+        - { $ref: '#/components/parameters/LineItemIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Cart' }
+                  message: { type: string, example: "" }
+
+  /store/carts/{id}/shipping-methods:
+    post:
+      tags: [store]
+      summary: 选择运费方式
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CartIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetShippingMethodRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Cart' }
+                  message: { type: string, example: "" }
+        '409': { description: 地址不在配送范围(30006), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/shipping-options:
+    get:
+      tags: [store]
+      summary: 可用运费方式（按 country + cart）
+      security: [{ publishableKey: [] }]
+      parameters:
+        - { name: country, in: query, required: true, schema: { type: string, example: "CN" } }
+        - { name: cart_id, in: query, required: true, schema: { type: string, example: "cart_01JABCDEF" } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: array, items: { $ref: '#/components/schemas/ShippingOption' } }
+                  message: { type: string, example: "" }
+
+  /store/payment-providers:
+    get:
+      tags: [store]
+      summary: 该渠道启用的支付方式
+      security: [{ publishableKey: [] }]
+      parameters:
+        - { name: cart_id, in: query, required: true, schema: { type: string, example: "cart_01JABCDEF" } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: array, items: { $ref: '#/components/schemas/PaymentProviderOption' } }
+                  message: { type: string, example: "" }
+
+  /store/payment-sessions:
+    post:
+      tags: [store]
+      summary: 创建支付会话（返回客户端拉起所需 context）
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePaymentSessionRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/PaymentSession' }
+                  message: { type: string, example: "" }
+        '402': { description: 支付方式不可用(40001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/payment-sessions/{id}/authorize:
+    post:
+      tags: [store]
+      summary: 授权支付会话（创建 payment 记录，状态 authorized）
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Payment' }
+                  message: { type: string, example: "" }
+        '402': { description: 支付方式不可用(40001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/payments/{id}/capture:
+    post:
+      tags: [store]
+      summary: 扣款（幂等键必填）
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [idempotency_key]
+              properties:
+                amount_minor: { type: integer, format: int64, minimum: 0, example: 19800 }
+                idempotency_key: { type: string, example: "cap_01JABCDEF" }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Payment' }
+                  message: { type: string, example: "" }
+        '402': { description: 支付失败(40002), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/carts/{id}/complete:
+    post:
+      tags: [store]
+      summary: 下单（幂等键必填，返回 order）
+      security: [{ publishableKey: [] }, { publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CartIdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Order' }
+                  message: { type: string, example: "" }
+        '409': { description: 库存不足/价格已变(30003/30004), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '422': { description: 购物车为空(30005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/orders/{id}:
+    get:
+      tags: [store]
+      summary: 订单详情（customer 归属或游客 token）
+      security: [{ publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Order' }
+                  message: { type: string, example: "" }
+        '403': { description: 无权限(10003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 订单不存在, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/webhooks/payment/{provider}:
+    post:
+      tags: [store]
+      summary: 支付回调（验签失败 401 不落库；验签后入队立即 200）
+      security: []
+      parameters:
+        - { $ref: '#/components/parameters/ProviderParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: 原始回调 body（各 Provider 格式） }
+      responses:
+        '200':
+          description: 已接收（异步处理）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: object, nullable: true }
+                  message: { type: string, example: "" }
+        '401': { description: 验签失败(40005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/auth/register:
+    post:
+      tags: [store-auth]
+      summary: 顾客注册
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/TokenPair' }
+                  message: { type: string, example: "" }
+        '409': { description: 邮箱已存在(30002), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/auth/login:
+    post:
+      tags: [store-auth]
+      summary: 顾客登录
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/TokenPair' }
+                  message: { type: string, example: "" }
+        '401': { description: 凭证错误(10005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/auth/refresh:
+    post:
+      tags: [store-auth]
+      summary: 刷新令牌（轮换，旧 token 立即失效）
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/TokenPair' }
+                  message: { type: string, example: "" }
+        '401': { description: 令牌无效/已撤销(10002), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/auth/logout:
+    post:
+      tags: [store-auth]
+      summary: 退出登录（撤销 refresh token）
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: object, nullable: true }
+                  message: { type: string, example: "" }
+
+  # ===================== Admin =====================
+  /admin/auth/login:
+    post:
+      tags: [admin-auth]
+      summary: 管理员登录
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/TokenPair' }
+                  message: { type: string, example: "" }
+        '401': { description: 凭证错误(10005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/auth/refresh:
+    post:
+      tags: [admin-auth]
+      summary: 管理员刷新令牌
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/TokenPair' }
+                  message: { type: string, example: "" }
+        '401': { description: 令牌无效(10002), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/auth/logout:
+    post:
+      tags: [admin-auth]
+      summary: 管理员退出
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: object, nullable: true }
+                  message: { type: string, example: "" }
+
+  /admin/auth/change-password:
+    post:
+      tags: [admin-auth]
+      summary: 管理员自助改密（校验当前口令 → 强度校验 → 撤销该管理员全部会话 → 覆盖口令；不签发新令牌）
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
+      responses:
+        '200':
+          description: 改密成功（原会话已全部失效，需重新登录）
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/ChangePasswordResponse' }
+                  message: { type: string, example: "" }
+        '400': { description: 新口令强度不足或与当前口令相同(20001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '401': { description: 未认证(10001)或当前口令错误(10005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '429': { description: 尝试过于频繁(60001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/products:
+    get:
+      tags: [admin]
+      summary: 商品列表
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, example: "鼠标" } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, published, archived] } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    required: [items, count, offset, limit, hasMore]
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/AdminProduct' } }
+                      count: { type: integer, example: 137 }
+                      offset: { type: integer, example: 0 }
+                      limit: { type: integer, example: 20 }
+                      hasMore: { type: boolean, example: true }
+                  message: { type: string, example: "" }
+        '401': { description: 未认证(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '403': { description: 权限不足(10003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    post:
+      tags: [admin]
+      summary: 创建商品（type + attribute + variant + 定价 + 库存，批量导入需幂等键）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, format: uuid }
+          description: 批量导入时建议携带
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProductRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AdminProduct' }
+                  message: { type: string, example: "" }
+        '422': { description: 校验失败(20001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/products/{id}:
+    get:
+      tags: [admin]
+      summary: 商品详情
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ProductIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AdminProduct' }
+                  message: { type: string, example: "" }
+        '404': { description: 商品不存在, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    patch:
+      tags: [admin]
+      summary: 更新商品
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ProductIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProductRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AdminProduct' }
+                  message: { type: string, example: "" }
+    delete:
+      tags: [admin]
+      summary: 删除商品（软删）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ProductIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: object, nullable: true }
+                  message: { type: string, example: "" }
+
+  /admin/products/{id}/variants:
+    post:
+      tags: [admin]
+      summary: 新增变体
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ProductIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateVariantRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AdminVariant' }
+                  message: { type: string, example: "" }
+
+  /admin/variants/{id}:
+    patch:
+      tags: [admin]
+      summary: 更新变体
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/VariantIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateVariantRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AdminVariant' }
+                  message: { type: string, example: "" }
+
+  /admin/variants/{id}/prices:
+    put:
+      tags: [admin]
+      summary: 按币种批量设价
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/VariantIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutPricesRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { type: array, items: { $ref: '#/components/schemas/Money' } }
+                  message: { type: string, example: "" }
+
+  /admin/orders:
+    get:
+      tags: [admin]
+      summary: 订单列表
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, awaiting_payment, paid, fulfilled, completed, canceled, refunded] } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    required: [items, count, offset, limit, hasMore]
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Order' } }
+                      count: { type: integer, example: 42 }
+                      offset: { type: integer, example: 0 }
+                      limit: { type: integer, example: 20 }
+                      hasMore: { type: boolean, example: false }
+                  message: { type: string, example: "" }
+
+  /admin/orders/{id}:
+    get:
+      tags: [admin]
+      summary: 订单详情（含 fulfillment / refund）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Order' }
+                  message: { type: string, example: "" }
+        '404': { description: 订单不存在, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/orders/{id}/cancel:
+    post:
+      tags: [admin]
+      summary: 取消订单（未支付）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Order' }
+                  message: { type: string, example: "" }
+        '409': { description: 状态不允许(30002), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/orders/{id}/refunds:
+    post:
+      tags: [admin]
+      summary: 全额退款（幂等键必填）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderIdParam' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRefundRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Refund' }
+                  message: { type: string, example: "" }
+        '402': { description: 退款失败(40004), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/orders/{id}/fulfillments:
+    post:
+      tags: [admin]
+      summary: 创建发货单
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/OrderIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFulfillmentRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Fulfillment' }
+                  message: { type: string, example: "" }
+
+  /admin/fulfillments/{id}/shipments:
+    post:
+      tags: [admin]
+      summary: 发货（手填承运商 + 单号）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/FulfillmentIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateShipmentRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Fulfillment' }
+                  message: { type: string, example: "" }
+
+  /admin/customers:
+    get:
+      tags: [admin]
+      summary: 客户列表
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    required: [items, count, offset, limit, hasMore]
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Customer' } }
+                      count: { type: integer, example: 8 }
+                      offset: { type: integer, example: 0 }
+                      limit: { type: integer, example: 20 }
+                      hasMore: { type: boolean, example: false }
+                  message: { type: string, example: "" }
+
+  /admin/customers/{id}:
+    get:
+      tags: [admin]
+      summary: 客户详情（含地址簿）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/CustomerIdParam' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    allOf:
+                      - { $ref: '#/components/schemas/Customer' }
+                      - type: object
+                        properties:
+                          addresses: { type: array, items: { $ref: '#/components/schemas/Address' } }
+                  message: { type: string, example: "" }
+        '404': { description: 客户不存在, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/inventory-items:
+    get:
+      tags: [admin]
+      summary: 库存项列表
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string, example: "MS-001" }, description: 按 sku 检索 }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    required: [items, count, offset, limit, hasMore]
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/InventoryItem' } }
+                      count: { type: integer, example: 30 }
+                      offset: { type: integer, example: 0 }
+                      limit: { type: integer, example: 20 }
+                      hasMore: { type: boolean, example: true }
+                  message: { type: string, example: "" }
+
+  /admin/inventory-levels/{id}:
+    put:
+      tags: [admin]
+      summary: 更新库存量（在库量）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/InventoryLevelIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateInventoryLevelRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/InventoryLevel' }
+                  message: { type: string, example: "" }
+
+  /admin/settings:
+    get:
+      tags: [admin]
+      summary: 读取设置
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Settings' }
+                  message: { type: string, example: "" }
+    patch:
+      tags: [admin]
+      summary: 更新设置
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSettingsRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Settings' }
+                  message: { type: string, example: "" }
+
+  /admin/settings/theme:
+    put:
+      tags: [admin]
+      summary: 更新设计变量（换肤）
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateThemeRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/ThemeSettings' }
+                  message: { type: string, example: "" }
+
+  /admin/settings/payment-providers/{id}:
+    put:
+      tags: [admin]
+      summary: 填写密钥并启用支付 Provider
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/ProviderConfigIdParam' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdatePaymentProviderRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, example: "pp_01JABCDEF" }
+                      provider_id: { type: string, example: "pp_wechat" }
+                      is_enabled: { type: boolean, example: true }
+                  message: { type: string, example: "" }
+        '403': { description: 仅 admin 可改(10003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/files:
+    post:
+      tags: [admin]
+      summary: 上传文件（multipart，魔数 + content-type 双校验）
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: jpg/png/webp/avif/gif 白名单
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, data]
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/FileInfo' }
+                  message: { type: string, example: "" }
+        '422': { description: 文件类型不允许(20001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+

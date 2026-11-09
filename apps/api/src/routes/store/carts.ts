@@ -1,0 +1,121 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { errors } from "@mall/core";
+import type { CartDetailDTO, CartLineItemDTO } from "@mall/cart";
+import type { AppDeps } from "../../deps.js";
+import { makeAuthHelpers, resolveChannelId } from "../../plugins/auth.js";
+
+const createCartBody = z.object({ email: z.string().email().optional() });
+/** 加购只收 variant_id + quantity：价格/标题由后端解析（铁律 13，防客户端篡改价格）。 */
+const addLineItemBody = z.object({
+  variant_id: z.string(),
+  quantity: z.number().int().min(1).max(999),
+});
+const updateLineItemBody = z.object({ quantity: z.number().int().min(1).max(999) });
+/** 选运费只收方案 id：方案名与运费金额由后端解析（铁律 13，防客户端指定运费）。 */
+const shippingMethodBody = z.object({
+  shipping_option_id: z.string(),
+});
+
+function mapLineItem(li: CartLineItemDTO) {
+  return {
+    id: li.id,
+    variant_id: li.variant_id,
+    product_id: li.product_id,
+    title: li.title,
+    quantity: li.quantity,
+    unit_price_minor: li.unit_price_minor,
+    currency_code: li.currency_code,
+    line_total_minor: li.unit_price_minor * BigInt(li.quantity),
+  };
+}
+
+export function mapCart(cart: CartDetailDTO) {
+  return {
+    id: cart.id,
+    channel_id: cart.channel_id,
+    region_id: cart.region_id,
+    currency_code: cart.currency_code,
+    customer_id: cart.customer_id,
+    email: cart.email,
+    status: cart.status,
+    line_items: cart.items.map(mapLineItem),
+    shipping_method: cart.shipping_method,
+    totals: cart.totals,
+  };
+}
+
+export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
+  const auth = makeAuthHelpers(deps);
+
+  app.post(
+    "/api/v1/store/carts",
+    { preHandler: [auth.customerAuth], schema: { body: createCartBody } },
+    async (req, reply) => {
+      const body = req.body as { email?: string };
+      const channelId = await resolveChannelId(deps, req);
+      const channel = await deps.services.regionChannel.getChannel(channelId);
+      const cart = await deps.services.cart.createCart({
+        channelId,
+        regionId: channel.region_id,
+        currencyCode: channel.currency_code,
+        customerId: req.auth?.sub ?? null,
+        email: body.email ?? null,
+      });
+      reply.code(201).ok(cart);
+    },
+  );
+
+  app.get("/api/v1/store/carts/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const cart = await deps.services.cart.retrieveCart(id);
+    if (cart.customer_id && req.auth?.sub && cart.customer_id !== req.auth.sub) {
+      throw errors.forbidden("not your cart");
+    }
+    reply.ok(mapCart(cart));
+  });
+
+  app.post(
+    "/api/v1/store/carts/:id/line-items",
+    { schema: { body: addLineItemBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof addLineItemBody>;
+      const cart = await deps.services.cart.addLineItem(id, {
+        variantId: b.variant_id,
+        quantity: b.quantity,
+      });
+      reply.code(201).ok(mapCart(cart));
+    },
+  );
+
+  app.patch(
+    "/api/v1/store/carts/:id/line-items/:lineId",
+    { schema: { body: updateLineItemBody } },
+    async (req, reply) => {
+      const { id, lineId } = req.params as { id: string; lineId: string };
+      const b = req.body as { quantity: number };
+      const cart = await deps.services.cart.updateLineItem(id, lineId, { quantity: b.quantity });
+      reply.ok(mapCart(cart));
+    },
+  );
+
+  app.delete("/api/v1/store/carts/:id/line-items/:lineId", async (req, reply) => {
+    const { id, lineId } = req.params as { id: string; lineId: string };
+    await deps.services.cart.deleteLineItem(id, lineId);
+    reply.code(204).send();
+  });
+
+  app.post(
+    "/api/v1/store/carts/:id/shipping-methods",
+    { schema: { body: shippingMethodBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof shippingMethodBody>;
+      const cart = await deps.services.cart.setShippingMethod(id, {
+        shippingOptionId: b.shipping_option_id,
+      });
+      reply.ok(mapCart(cart));
+    },
+  );
+}

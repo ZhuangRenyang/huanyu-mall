@@ -1,0 +1,185 @@
+import {
+  Container,
+  EventBus,
+  createLogger,
+  prefixedUlid,
+  PostgresDeadLetter,
+  PostgresJournal,
+  SubscriberRegistry,
+  WorkflowEngine,
+  type ModuleDefinition,
+} from "@mall/core";
+import type { Pool } from "pg";
+import regionChannelModule from "@mall/region-channel";
+import productModule from "@mall/product";
+import pricingModule from "@mall/pricing";
+import taxModule from "@mall/tax";
+import customerModule from "@mall/customer";
+import fileModule from "@mall/file";
+import authModule from "@mall/auth";
+import inventoryModule from "@mall/inventory";
+import cartModule from "@mall/cart";
+import orderModule from "@mall/order";
+import paymentModule from "@mall/payment";
+import fulfillmentModule from "@mall/fulfillment";
+import themeModule from "@mall/theme";
+import { createWorkflowRegistry, registerSubscribers } from "@mall/workflows";
+import type { IRegionChannelModuleService } from "@mall/region-channel";import type { IProductModuleService } from "@mall/product";
+import type { IPricingModuleService } from "@mall/pricing";
+import type { ITaxModuleService } from "@mall/tax";
+import type { ICustomerModuleService } from "@mall/customer";
+import type { IFileModuleService } from "@mall/file";
+import type { IAuthModuleService } from "@mall/auth";
+import type { IInventoryModuleService } from "@mall/inventory";
+import type { ICartModuleService } from "@mall/cart";
+import type { IOrderModuleService } from "@mall/order";
+import type { IPaymentModuleService } from "@mall/payment";
+import type { IFulfillmentModuleService } from "@mall/fulfillment";
+import type { IThemeModuleService } from "@mall/theme";
+import type { ApiConfig } from "./config.js";
+import { PgAuditRepository } from "./repositories/audit.repository.js";
+import { AuditService } from "./services/audit.service.js";
+
+export interface AppServices {
+  regionChannel: IRegionChannelModuleService;
+  product: IProductModuleService;
+  pricing: IPricingModuleService;
+  tax: ITaxModuleService;
+  customer: ICustomerModuleService;
+  file: IFileModuleService;
+  auth: IAuthModuleService;
+  inventory: IInventoryModuleService;
+  cart: ICartModuleService;
+  order: IOrderModuleService;
+  payment: IPaymentModuleService;
+  fulfillment: IFulfillmentModuleService;
+  theme: IThemeModuleService;
+}
+
+export interface WorkflowRunner {
+  run(
+    workflow: unknown,
+    input: unknown,
+    opts?: { idempotencyKey?: string },
+  ): Promise<{ result: unknown; executionId: string }>;
+}
+
+export interface AppDeps {
+  config: ApiConfig;
+  services: AppServices;
+  workflow: WorkflowRunner;
+  eventBus: EventBus;
+  /** 审计留痕服务（后台写操作落 audit_log）。 */
+  audit: AuditService;
+}
+
+const MODULES: ModuleDefinition[] = [
+  regionChannelModule,
+  productModule,
+  pricingModule,
+  taxModule,
+  customerModule,
+  fileModule,
+  authModule,
+  inventoryModule,
+  cartModule,
+  orderModule,
+  paymentModule,
+  fulfillmentModule,
+  themeModule,
+];
+
+/** 组合根：按依赖拓扑序把 12 个模块注册进容器，实例化 workflow 引擎。 */
+export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
+  const container = new Container();
+  container.register("pool", () => pool);
+  for (const mod of MODULES) container.register(mod.name, mod.service);
+
+  // Event Bus（正式版）：subscriber 注册 + 事件持久化
+  const subscriberRegistry = new SubscriberRegistry();
+  registerSubscribers(subscriberRegistry, (name) => container.resolve(name));
+  const eventBus = new EventBus({ pool, registry: subscriberRegistry });
+
+  // 领域事件发射端口：payment 等模块发事件用（模块间只走事件，payment 不依赖 order）
+  container.register(
+    "payment-events",
+    () => async (event: { name: string; data: Record<string, unknown> }) => {
+      await eventBus.publish({
+        id: prefixedUlid("evt"),
+        name: event.name,
+        data: event.data,
+        occurredAt: new Date().toISOString(),
+      });
+    },
+  );
+
+  const services: AppServices = {
+    regionChannel: container.resolve<IRegionChannelModuleService>("region-channel"),
+    product: container.resolve<IProductModuleService>("product"),
+    pricing: container.resolve<IPricingModuleService>("pricing"),
+    tax: container.resolve<ITaxModuleService>("tax"),
+    customer: container.resolve<ICustomerModuleService>("customer"),
+    file: container.resolve<IFileModuleService>("file"),
+    auth: container.resolve<IAuthModuleService>("auth"),
+    inventory: container.resolve<IInventoryModuleService>("inventory"),
+    cart: container.resolve<ICartModuleService>("cart"),
+    order: container.resolve<IOrderModuleService>("order"),
+    payment: container.resolve<IPaymentModuleService>("payment"),
+    fulfillment: container.resolve<IFulfillmentModuleService>("fulfillment"),
+    theme: container.resolve<IThemeModuleService>("theme"),
+  };
+
+  // workflow 端口适配器：camelCase 端口契约 ↔ module service（id/snake_case DTO，架构铁律 5）
+  const orderPort = {
+    createOrder: async (input: unknown) => {
+      const order = await services.order.createOrder(input as never);
+      return { orderId: order.id, totalMinor: order.total_minor };
+    },
+    cancelOrder: (orderId: string) => services.order.cancelOrder(orderId),
+  };
+  const inventoryPort = {
+    reserve: async (input: unknown) => {
+      const r = await services.inventory.reserve(input as never);
+      return { reservationId: r.id };
+    },
+    releaseReservation: (id: string) => services.inventory.releaseReservation(id),
+  };
+  const paymentPort = {
+    createPaymentCollection: async (input: unknown) => {
+      const pc = await services.payment.createPaymentCollection(input as never);
+      return { paymentCollectionId: pc.id };
+    },
+  };
+
+  const engine = new WorkflowEngine({
+    journal: new PostgresJournal(pool),
+    deadLetter: new PostgresDeadLetter(pool),
+    registry: createWorkflowRegistry(),
+    logger: createLogger({ level: config.logLevel }),
+    resolve: (name) => {
+      if (name === "order") return orderPort;
+      if (name === "inventory") return inventoryPort;
+      if (name === "payment") return paymentPort;
+      return container.resolve(name);
+    },
+  });
+  // workflow runner：把事件通过 eventBus.publish 接线到 outbox + subscriber
+  const workflowRunner: WorkflowRunner = {
+    async run(workflow, input, opts) {
+      return engine.run(workflow as never, input, {
+        idempotencyKey: opts?.idempotencyKey,
+        emit: (event) => eventBus.publish(event),
+      });
+    },
+  };
+
+  const logger = createLogger({ level: config.logLevel });
+
+  return {
+    config,
+    services,
+    workflow: workflowRunner,
+    eventBus,
+    audit: new AuditService(new PgAuditRepository(pool), logger),
+  };
+}

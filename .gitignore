@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+.next/
+out/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# 运行时数据（部署时在 MALL_DIR，不在仓库内；此处为兜底）
+data/
+
+# 日志
+*.log
+
+# 密钥与本地配置（绝不能提交）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.local
+
+# AI 工作目录（项目记忆与临时产物，不属于源码）
+.workbuddy/

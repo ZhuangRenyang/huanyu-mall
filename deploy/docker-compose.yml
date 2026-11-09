@@ -1,0 +1,176 @@
+# 一键安装全量编排（架构 §9.2 + SPEC §10）。
+# 分两层：基础设施（postgres/redis/pgbouncer）+ 应用（api/worker/migrator/storefront/admin/nginx）。
+# 说明：本机无 Docker，未实测拉起；结构与语法经 YAML 校验，真实拉起在 Linux 干净机器验收。
+# 秘密来源：install.sh 会在本目录生成 .env（compose 自动读取），含 POSTGRES_PASSWORD/JWT_SECRET/ENCRYPTION_KEY。
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mall
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mall}
+      POSTGRES_DB: mall
+    volumes:
+      # postgres 18+ 数据目录改为版本化子目录，挂载父目录 /var/lib/postgresql
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mall -d mall"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:8.10-alpine
+    restart: unless-stopped
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    volumes:
+      - redisdata:/data
+      - ${MALL_DIR:-/opt/mall}/config/redis.conf:/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    environment:
+      DB_USER: mall
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-mall}
+      DB_HOST: postgres
+      DB_NAME: mall
+      LISTEN_PORT: 6432
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: session
+      DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL:-15}
+      MAX_CLIENT_CONN: 100
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U mall -d mall"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # 迁移（一次性，跑完退出；install.sh 步骤 7）
+  # 注意：migrator 与 api / worker 共用同一个镜像标签，不带 build 段。
+  # 曾经三个服务各写一份 build:，compose 会生成 deploy-api / deploy-worker / deploy-migrator
+  # 三个独立镜像标签 —— 只 build 其中一两个，其余就是旧版，且没有任何机制会提醒你。
+  # 真实后果：migrator 用旧镜像 → 新迁移文件没被加载 → 新表根本不存在，而迁移日志还显示「成功」。
+  # 现在统一 image:，构建一次三处使用，物理上不可能漂移。
+  migrator:
+    image: ${IMAGE_NAME:-mall-app:local}
+    command: ["node", "apps/api/dist/migrate.js"]
+    environment:
+      MIGRATION_DATABASE_URL: postgres://mall:${POSTGRES_PASSWORD:-mall}@postgres:5432/mall
+      MALL_REPO: /repo
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    # api / worker / migrator 三者共用这一个镜像标签（IMAGE_NAME 可在 .env 里改）
+    image: ${IMAGE_NAME:-mall-app:local}
+    # 只有 api 带 build 段：compose build 只构建这一个服务，产物就是上面那个标签
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.node
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://mall:${POSTGRES_PASSWORD:-mall}@pgbouncer:6432/mall
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key}
+      PORT: "3000"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # 默认不放行任何来源。生产请在 .env 里设为具体域名，多个用逗号分隔。
+      # （同源部署经 nginx 反代，本来就不需要 CORS；跨域前端才需要显式列出）
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      NODE_ENV: production
+    command: ["node", "apps/api/dist/index.js"]
+    volumes:
+      - ${MALL_DIR:-/opt/mall}/data/uploads:/repo/data/uploads
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    # 与 api / migrator 共用同一个镜像标签，不带 build 段（见上方 migrator 的说明）
+    image: ${IMAGE_NAME:-mall-app:local}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://mall:${POSTGRES_PASSWORD:-mall}@pgbouncer:6432/mall
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+    command: ["node", "apps/worker/dist/index.js"]
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  storefront:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.storefront
+      args:
+        # 构建期注入（NEXT_PUBLIC_* 会被内联进客户端 bundle）
+        NEXT_PUBLIC_API_MODE: ${NEXT_PUBLIC_API_MODE:-mock}
+        NEXT_PUBLIC_CHANNEL: ${NEXT_PUBLIC_CHANNEL:-cn}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      # SSR 直连 api 容器（相对路径在服务端无法解析）
+      API_INTERNAL_URL: http://api:3000
+      # 客户端同源，走 nginx 反代
+      NEXT_PUBLIC_API_BASE: ""
+    depends_on:
+      api:
+        condition: service_healthy
+
+  admin:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.admin
+      args:
+        # 构建期注入（VITE_* 会被内联进客户端 bundle）
+        VITE_API_MODE: ${ADMIN_API_MODE:-mock}
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      # HTTPS：setup-https.sh 启用后才有 443 监听；未启用时该映射不生效（容器内无 443 server）
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # HTTPS 片段（setup-https.sh 生成 https.inc）；目录为空时 include 匹配不到文件
+      - ${MALL_DIR:-/opt/mall}/config/nginx:/etc/nginx/snippets:ro
+      # Let's Encrypt 证书（certbot 写入，nginx 只读）
+      - ${MALL_DIR:-/opt/mall}/config/letsencrypt:/etc/letsencrypt:ro
+      # Let's Encrypt HTTP-01 校验目录（certbot 写入，nginx 只读）
+      - ${MALL_DIR:-/opt/mall}/config/certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      - api
+      - storefront
+      - admin
+
+volumes:
+  pgdata:
+  redisdata:

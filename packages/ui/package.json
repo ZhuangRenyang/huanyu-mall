@@ -1,0 +1,42 @@
+{
+  "name": "@mall/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "shadcn/ui 风格原子组件 + M18 可嵌入组件（CartDrawer / ProductGallery / VariantPicker）",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "react": ">=19",
+    "react-dom": ">=19"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "catalog:",
+    "@radix-ui/react-select": "catalog:",
+    "@radix-ui/react-slot": "catalog:",
+    "@radix-ui/react-tabs": "catalog:",
+    "class-variance-authority": "catalog:",
+    "clsx": "catalog:",
+    "lucide-react": "1.70.0",
+    "sonner": "catalog:",
+    "tailwind-merge": "catalog:"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^31.0.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "^5.9.0",
+    "vitest": "catalog:"
+  }
+}

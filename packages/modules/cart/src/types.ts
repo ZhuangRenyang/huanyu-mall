@@ -1,0 +1,144 @@
+/** M04 Cart DTO 与契约（对齐架构 §2.1）。游客车 customer_id 为 null（cart_customer 无行）。 */
+
+export type CartStatus = "open" | "completed" | "abandoned";
+
+export interface CartTotals {
+  subtotal_minor: bigint;
+  shipping_minor: bigint;
+  tax_minor: bigint;
+  total_minor: bigint;
+  discount_minor: bigint;
+}
+
+export interface CartLineItemDTO {
+  id: string;
+  cart_id: string;
+  variant_id: string;
+  product_id: string;
+  title: string;
+  quantity: number;
+  unit_price_minor: bigint;
+  currency_code: string;
+}
+
+export interface CartShippingMethodDTO {
+  id: string;
+  cart_id: string;
+  shipping_option_id: string;
+  name: string;
+  amount_minor: bigint;
+  currency_code: string;
+}
+
+export interface CartDTO {
+  id: string;
+  channel_id: string;
+  region_id: string;
+  currency_code: string;
+  customer_id: string | null;
+  email: string | null;
+  status: CartStatus;
+  totals: CartTotals | null;
+}
+
+export interface CartDetailDTO extends CartDTO {
+  items: CartLineItemDTO[];
+  shipping_method: CartShippingMethodDTO | null;
+}
+
+export interface CreateCartInput {
+  channelId: string;
+  regionId: string;
+  currencyCode: string;
+  customerId?: string | null;
+  email?: string | null;
+}
+
+/** 加购入参：**只收 variantId + quantity**。价格/标题一律后端解析（铁律 13，防客户端篡改价格）。 */
+export interface AddLineItemInput {
+  variantId: string;
+  quantity: number;
+}
+
+/** 后端解析后的完整行项（价格/标题只信后端）。 */
+export interface ResolvedLineItem extends AddLineItemInput {
+  productId: string;
+  title: string;
+  sku: string;
+  unitPriceMinor: bigint;
+  currencyCode: string;
+}
+
+/** 商品查询端口：解析变体 → 商品 id / 标题 / sku。 */
+export interface ProductLookupPort {
+  listVariantsByIds(
+    ids: string[],
+  ): Promise<Array<{ id: string; product_id: string; sku: string; title: string; status: string }>>;
+}
+
+/** 定价端口：按币种/渠道/数量算价（唯一计价入口）。 */
+export interface PricingLookupPort {
+  calculatePrices(input: {
+    variantIds: string[];
+    context: { currencyCode: string; channelId?: string; quantity?: number };
+  }): Promise<Array<{ variantId: string; amountMinor: bigint; currencyCode: string }>>;
+}
+
+/** Cart 模块依赖：repo + 商品/定价/运费查询端口（跨模块走端口，架构 §2）。 */
+export interface CartServiceDeps {
+  repo: CartRepository;
+  product: ProductLookupPort;
+  pricing: PricingLookupPort;
+  shipping: ShippingLookupPort;
+}
+
+/** 选运费：只传方案 id，方案名与运费由后端解析（铁律 13，防客户端指定运费）。 */
+export interface SetShippingInput {
+  shippingOptionId: string;
+}
+
+/** 落库的运费方式（name/amountMinor 由后端解析后传入）。 */
+export interface ShippingMethodInput {
+  shippingOptionId: string;
+  name: string;
+  amountMinor: bigint;
+}
+
+/** 运费方案查询端口（跨模块走端口，M08 fulfillment）。 */
+export interface ShippingLookupPort {
+  findShippingOption(
+    id: string,
+  ): Promise<{ id: string; name: string; amount_minor: bigint } | null>;
+}
+
+export interface CartRepository {
+  insert(input: CreateCartInput & { id: string }): Promise<CartDTO>;
+  findById(id: string): Promise<CartDTO | null>;
+  updateStatus(id: string, status: CartStatus): Promise<void>;
+  updateTotals(id: string, totals: CartTotals): Promise<void>;
+  softDelete(id: string): Promise<void>;
+  restore(id: string): Promise<void>;
+  listLineItems(cartId: string): Promise<CartLineItemDTO[]>;
+  findLineItem(lineId: string): Promise<CartLineItemDTO | null>;
+  insertLineItem(cartId: string, input: ResolvedLineItem): Promise<CartLineItemDTO>;
+  updateLineItemQuantity(lineId: string, quantity: number): Promise<void>;
+  softDeleteLineItem(lineId: string): Promise<void>;
+  upsertShippingMethod(
+    cartId: string,
+    input: ShippingMethodInput & { currencyCode: string },
+  ): Promise<void>;
+  findShippingMethod(cartId: string): Promise<CartShippingMethodDTO | null>;
+  linkCustomer(cartId: string, customerId: string): Promise<void>;
+}
+
+export interface ICartModuleService {
+  createCart(input: CreateCartInput): Promise<CartDTO>;
+  retrieveCart(id: string): Promise<CartDetailDTO>;
+  addLineItem(cartId: string, input: AddLineItemInput): Promise<CartDetailDTO>;
+  updateLineItem(cartId: string, lineId: string, patch: { quantity: number }): Promise<CartDetailDTO>;
+  deleteLineItem(cartId: string, lineId: string): Promise<void>;
+  setShippingMethod(cartId: string, input: SetShippingInput): Promise<CartDetailDTO>;
+  applyTotals(cartId: string, totals: CartTotals): Promise<CartDTO>;
+  completeCart(cartId: string): Promise<void>;
+  restoreCart(cartId: string): Promise<void>;
+}

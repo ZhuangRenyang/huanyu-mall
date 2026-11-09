@@ -1,0 +1,275 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "$description": "商城 · Design Tokens. 单一真相源。店面与后台共用。tier: primitive → semantic → component。CSS 变量见 design-tokens.css。禁止组件引用 primitive 层。",
+  "$meta": {
+    "project": "shop-mvp",
+    "designer": "颜好看",
+    "phase": "Phase 1",
+    "axis": { "design_variance": 6, "motion_intensity": 3, "visual_density_storefront": 3, "visual_density_admin": 7 },
+    "register": { "storefront": "brand-leaning-product", "admin": "product" },
+    "platform": "responsive-web (PC + H5 同源代码, 移动优先)",
+    "iconLibrary": "lucide",
+    "defaultLocale": "zh-CN",
+    "defaultCurrency": "CNY",
+    "palette": "活力信任蓝：primary #1666D9 / gradient #5B8DEF / accent #FF6B35"
+  },
+
+  "color": {
+    "primitive": {
+      "neutral-0":   { "value": "#FFFFFF", "type": "color", "note": "允许的硬编码例外之一" },
+      "neutral-25":  { "value": "#FAFAFB", "type": "color" },
+      "neutral-50":  { "value": "#F4F4F6", "type": "color" },
+      "neutral-100": { "value": "#E9E9ED", "type": "color" },
+      "neutral-200": { "value": "#DADAE0", "type": "color" },
+      "neutral-300": { "value": "#BEBEC7", "type": "color" },
+      "neutral-400": { "value": "#9A9AA6", "type": "color" },
+      "neutral-500": { "value": "#71717F", "type": "color" },
+      "neutral-600": { "value": "#55555F", "type": "color" },
+      "neutral-700": { "value": "#3D3D46", "type": "color" },
+      "neutral-800": { "value": "#26262C", "type": "color" },
+      "neutral-900": { "value": "#17171B", "type": "color" },
+      "neutral-950": { "value": "#0E0E11", "type": "color" },
+
+      "primary-50":  { "value": "#EAF2FD", "type": "color" },
+      "primary-100": { "value": "#D6E7FB", "type": "color" },
+      "primary-200": { "value": "#ADCDF7", "type": "color" },
+      "primary-300": { "value": "#7CAEF0", "type": "color" },
+      "primary-400": { "value": "#4A8DE8", "type": "color" },
+      "primary-500": { "value": "#2B76E0", "type": "color" },
+      "primary-600": { "value": "#1666D9", "type": "color", "note": "品牌基准色，白字 5.33:1" },
+      "primary-700": { "value": "#1454B4", "type": "color", "note": "hover 态，白字 7.10:1" },
+      "primary-800": { "value": "#124594", "type": "color", "note": "active 态，白字 9.11:1" },
+      "primary-900": { "value": "#0F3A77", "type": "color" },
+
+      "gradient": { "value": "#5B8DEF", "type": "color", "note": "次级强调 / 渐变过渡。白字仅 3.23:1 → 仅装饰或大字，禁止正文" },
+
+      "accent-orange-50":  { "value": "#FFF3EC", "type": "color" },
+      "accent-orange-100": { "value": "#FFE4D6", "type": "color" },
+      "accent-orange-200": { "value": "#FFC5A6", "type": "color" },
+      "accent-orange-300": { "value": "#FF9F70", "type": "color" },
+      "accent-orange-400": { "value": "#FF8547", "type": "color" },
+      "accent-orange-500": { "value": "#FF6B35", "type": "color", "note": "强调橙（非文本）。白底对比 2.83:1，连 3:1 大字都不过，仅用于徽章底/圆点/图标/装饰；其上文字用深色（neutral-900）6.30:1" },
+      "accent-orange-600": { "value": "#E04E1B", "type": "color", "note": "白底 3.98:1，仅大字/非文本" },
+      "accent-orange-700": { "value": "#C2410C", "type": "color", "note": "促销价文字专用，白底 4.96:1 AA" },
+
+      "green-600": { "value": "#15803D", "type": "color" },
+      "green-700": { "value": "#166534", "type": "color" },
+      "green-50":  { "value": "#F0FDF4", "type": "color" },
+      "amber-600": { "value": "#B45309", "type": "color" },
+      "amber-700": { "value": "#92400E", "type": "color" },
+      "amber-50":  { "value": "#FFFBEB", "type": "color" },
+      "red-600":   { "value": "#B91C1C", "type": "color" },
+      "red-700":   { "value": "#991B1B", "type": "color" },
+      "red-50":    { "value": "#FEF2F2", "type": "color" }
+    },
+
+    "semantic": {
+      "background":         { "value": "{color.primitive.neutral-25}", "type": "color" },
+      "foreground":         { "value": "{color.primitive.neutral-900}", "type": "color" },
+      "card":               { "value": "{color.primitive.neutral-0}", "type": "color" },
+      "card-foreground":    { "value": "{color.primitive.neutral-900}", "type": "color" },
+      "popover":            { "value": "{color.primitive.neutral-0}", "type": "color" },
+      "popover-foreground": { "value": "{color.primitive.neutral-900}", "type": "color" },
+      "secondary":          { "value": "{color.primitive.neutral-50}", "type": "color" },
+      "secondary-foreground": { "value": "{color.primitive.neutral-900}", "type": "color" },
+      "muted":              { "value": "{color.primitive.neutral-50}", "type": "color" },
+      "muted-foreground":   { "value": "{color.primitive.neutral-500}", "type": "color", "note": "最低对比 4.60:1 on background，不得再浅" },
+      "accent":             { "value": "{color.primitive.neutral-50}", "type": "color", "note": "shadcn 语义：hover/选中面。不是品牌色、不是橙色强调色" },
+      "accent-foreground":  { "value": "{color.primitive.neutral-900}", "type": "color" },
+      "primary":            { "value": "{color.primitive.primary-600}", "type": "color", "note": "品牌蓝：主按钮/链接/选中态" },
+      "primary-foreground": { "value": "{color.primitive.neutral-0}", "type": "color" },
+      "primary-hover":      { "value": "{color.primitive.primary-700}", "type": "color" },
+      "primary-active":     { "value": "{color.primitive.primary-800}", "type": "color" },
+      "primary-subtle":     { "value": "{color.primitive.primary-50}", "type": "color" },
+      "primary-subtle-foreground": { "value": "{color.primitive.primary-700}", "type": "color" },
+      "gradient":           { "value": "{color.primitive.gradient}", "type": "color" },
+      "gradient-foreground":{ "value": "{color.primitive.neutral-0}", "type": "color", "note": "仅装饰/大字，白字 on #5B8DEF = 3.23:1" },
+      "accent-orange":      { "value": "{color.primitive.accent-orange-500}", "type": "color", "note": "强调橙：徽章底/圆点/图标/装饰/次要 CTA 底（配深色文字）" },
+      "accent-orange-foreground": { "value": "{color.primitive.neutral-900}", "type": "color", "note": "橙底配近黑文字 6.30:1，禁止白字（2.83:1）" },
+      "accent-orange-deep": { "value": "{color.primitive.accent-orange-700}", "type": "color", "note": "促销价文字专用，白底 4.96:1 AA" },
+      "accent-orange-subtle": { "value": "{color.primitive.accent-orange-50}", "type": "color" },
+      "accent-orange-subtle-foreground": { "value": "{color.primitive.accent-orange-700}", "type": "color" },
+      "destructive":        { "value": "{color.primitive.red-600}", "type": "color" },
+      "destructive-foreground": { "value": "{color.primitive.neutral-0}", "type": "color" },
+      "destructive-subtle": { "value": "{color.primitive.red-50}", "type": "color" },
+      "success":            { "value": "{color.primitive.green-600}", "type": "color" },
+      "success-foreground": { "value": "{color.primitive.neutral-0}", "type": "color" },
+      "success-subtle":     { "value": "{color.primitive.green-50}", "type": "color" },
+      "warning":            { "value": "{color.primitive.amber-600}", "type": "color" },
+      "warning-foreground": { "value": "{color.primitive.neutral-0}", "type": "color" },
+      "warning-subtle":     { "value": "{color.primitive.amber-50}", "type": "color" },
+      "info":               { "value": "{color.primitive.primary-600}", "type": "color", "note": "信息提示即品牌蓝，避免再引入第二种蓝" },
+      "info-foreground":    { "value": "{color.primitive.neutral-0}", "type": "color" },
+      "info-subtle":        { "value": "{color.primitive.primary-50}", "type": "color" },
+      "border":             { "value": "{color.primitive.neutral-100}", "type": "color" },
+      "border-strong":      { "value": "{color.primitive.neutral-200}", "type": "color" },
+      "input":              { "value": "{color.primitive.neutral-200}", "type": "color" },
+      "ring":               { "value": "{color.primitive.primary-600}", "type": "color", "note": "焦点环改用品牌蓝，键盘路径更醒目" },
+      "skeleton-base":      { "value": "{color.primitive.neutral-100}", "type": "color" },
+      "skeleton-shine":     { "value": "{color.primitive.neutral-50}", "type": "color" }
+    },
+
+    "chart": {
+      "chart-1": { "value": "#1666D9", "type": "color" },
+      "chart-2": { "value": "#0F766E", "type": "color" },
+      "chart-3": { "value": "#FF6B35", "type": "color" },
+      "chart-4": { "value": "#CA8A04", "type": "color" },
+      "chart-5": { "value": "#71717F", "type": "color" }
+    }
+  },
+
+  "dimension": {
+    "space": {
+      "1":  { "value": "4px",  "type": "dimension" },
+      "2":  { "value": "8px",  "type": "dimension" },
+      "3":  { "value": "12px", "type": "dimension" },
+      "4":  { "value": "16px", "type": "dimension" },
+      "5":  { "value": "20px", "type": "dimension" },
+      "6":  { "value": "24px", "type": "dimension" },
+      "8":  { "value": "32px", "type": "dimension" },
+      "10": { "value": "40px", "type": "dimension" },
+      "12": { "value": "48px", "type": "dimension" },
+      "16": { "value": "64px", "type": "dimension" },
+      "20": { "value": "80px", "type": "dimension" },
+      "24": { "value": "96px", "type": "dimension" }
+    },
+    "radius": {
+      "base": { "value": "8px",  "type": "dimension", "note": "改这一个值，全站圆角跟随" },
+      "xs":   { "value": "4px",  "type": "dimension", "note": "徽章 / 标签" },
+      "sm":   { "value": "6px",  "type": "dimension", "note": "小按钮 / 缩略图" },
+      "md":   { "value": "8px",  "type": "dimension", "note": "按钮 / 输入框 / Select" },
+      "lg":   { "value": "12px", "type": "dimension", "note": "卡片 / 商品图容器（上限，禁止 >=24px）" },
+      "xl":   { "value": "16px", "type": "dimension", "note": "弹窗 / 抽屉内面板" },
+      "full": { "value": "9999px", "type": "dimension", "note": "头像 / 数字气泡" }
+    },
+    "container": {
+      "prose":   { "value": "672px",  "type": "dimension" },
+      "narrow":  { "value": "896px",  "type": "dimension", "note": "结账 / 表单" },
+      "content": { "value": "1280px", "type": "dimension", "note": "店面主体默认" },
+      "wide":    { "value": "1536px", "type": "dimension", "note": "编辑式满幅 / PDP 大图" },
+      "pad-x-mobile": { "value": "16px", "type": "dimension" },
+      "pad-x-desktop": { "value": "24px", "type": "dimension" }
+    },
+    "chrome": {
+      "header-height-mobile":  { "value": "56px", "type": "dimension" },
+      "header-height-desktop": { "value": "64px", "type": "dimension" },
+      "bottom-bar-mobile":     { "value": "72px", "type": "dimension", "note": "PDP / 购物车吸底结算条，另加 safe-area" }
+    },
+    "touch": {
+      "min-target":   { "value": "44px", "type": "dimension", "note": "WCAG 2.5.5，所有可点元素外扩到此尺寸" },
+      "min-gap":      { "value": "8px",  "type": "dimension", "note": "相邻可点元素最小间距" }
+    },
+    "icon": {
+      "inline": { "value": "16px", "type": "dimension", "strokeWidth": 1.75, "note": "行内元信息、表格单元格、标签后缀" },
+      "button": { "value": "20px", "type": "dimension", "strokeWidth": 2,    "note": "按钮内图标、输入框前后缀" },
+      "standalone": { "value": "24px", "type": "dimension", "strokeWidth": 2, "note": "导航、TabBar、空态插画位、独立图标按钮" }
+    },
+    "media": {
+      "product-ratio-primary": { "value": "4:5",  "type": "string", "note": "PDP 主图 / PLP 卡片，移动端首屏友好" },
+      "product-ratio-square":  { "value": "1:1",  "type": "string", "note": "购物车缩略图 / 订单行 / 后台列表" },
+      "product-ratio-wide":    { "value": "16:9", "type": "string", "note": "首页编辑式横条 / 品牌故事位" },
+      "banner-ratio":          { "value": "3:1",  "type": "string", "note": "仅 H5 顶部通告条 / 活动横条" }
+    }
+  },
+
+  "font": {
+    "family": {
+      "sans":    { "value": "Archivo, Noto Sans SC, PingFang SC, Hiragino Sans GB, Microsoft YaHei, system-ui, sans-serif", "type": "fontFamily" },
+      "display": { "value": "{font.family.sans}", "type": "fontFamily" },
+      "mono":    { "value": "JetBrains Mono, SFMono-Regular, Consolas, monospace", "type": "fontFamily", "note": "金额、SKU、订单号、API Key" }
+    },
+    "weight": {
+      "regular":  { "value": "400", "type": "fontWeight", "note": "正文" },
+      "medium":   { "value": "500", "type": "fontWeight", "note": "小标题、表头、按钮文字" },
+      "semibold": { "value": "600", "type": "fontWeight", "note": "页面标题、价格、CTA" }
+    },
+    "size": {
+      "eyebrow": { "value": "11px", "type": "dimension", "lineHeight": 1.2, "letterSpacing": "0.08em", "note": "全大写小标签，必须 >= 0.06em 字距" },
+      "xs":      { "value": "12px", "type": "dimension", "lineHeight": 1.5, "letterSpacing": "0.01em", "note": "角标、辅助元信息" },
+      "sm":      { "value": "14px", "type": "dimension", "lineHeight": 1.6, "letterSpacing": "0" },
+      "base":    { "value": "16px", "type": "dimension", "lineHeight": 1.6, "letterSpacing": "0", "note": "移动端正文基准，低于此值视为缺陷" },
+      "lg":      { "value": "18px", "type": "dimension", "lineHeight": 1.5, "letterSpacing": "0" },
+      "xl":      { "value": "20px", "type": "dimension", "lineHeight": 1.4, "letterSpacing": "-0.01em", "note": "卡片标题 / PDP 价格" },
+      "2xl":     { "value": "24px", "type": "dimension", "lineHeight": 1.3, "letterSpacing": "-0.01em" },
+      "3xl":     { "value": "28px", "type": "dimension", "lineHeight": 1.25, "letterSpacing": "-0.015em" },
+      "4xl":     { "value": "32px", "type": "dimension", "lineHeight": 1.2, "letterSpacing": "-0.02em" },
+      "5xl":     { "value": "40px", "type": "dimension", "lineHeight": 1.15, "letterSpacing": "-0.02em" },
+      "display": { "value": "clamp(32px, 1.5rem + 2.5vw, 48px)", "type": "dimension", "lineHeight": 1.1, "letterSpacing": "-0.025em" }
+    }
+  },
+
+  "shadow": {
+    "sm": { "value": "0 1px 2px 0 rgba(23, 23, 27, 0.06)", "type": "shadow", "note": "静置卡片（多数场景用 border 代替，不用阴影）" },
+    "md": { "value": "0 4px 12px -2px rgba(23, 23, 27, 0.10)", "type": "shadow", "note": "下拉、Popover、Toast" },
+    "lg": { "value": "0 12px 32px -8px rgba(23, 23, 27, 0.16)", "type": "shadow", "note": "抽屉、弹窗" }
+  },
+
+  "motion": {
+    "duration": {
+      "instant": { "value": "100ms", "type": "duration", "note": "按下、勾选、开关" },
+      "fast":    { "value": "150ms", "type": "duration", "note": "hover / 焦点 / 颜色（全站收敛基准值）" },
+      "base":    { "value": "200ms", "type": "duration", "note": "抽屉、下拉、Toast 进出" },
+      "slow":    { "value": "300ms", "type": "duration", "note": "结账步骤切换、图片淡入（上限，不得超出）" }
+    },
+    "easing": {
+      "standard":   { "value": "cubic-bezier(0.2, 0, 0, 1)", "type": "cubicBezier", "note": "入场" },
+      "exit":       { "value": "cubic-bezier(0.4, 0, 1, 1)", "type": "cubicBezier", "note": "退场" },
+      "emphasized": { "value": "cubic-bezier(0.2, 0, 0, 1)", "type": "cubicBezier", "note": "抽屉 / 弹窗" }
+    },
+    "forbidden": {
+      "bounce":   { "value": "cubic-bezier(0.68, -0.55, 0.265, 1.55)", "type": "cubicBezier", "note": "禁止弹跳缓动" },
+      "over400":  { "value": "400ms+", "type": "duration", "note": "除骨架屏脉冲外，任何动效不得超过 300ms" }
+    }
+  },
+
+  "zIndex": {
+    "base":    { "value": 0,  "type": "number" },
+    "sticky":  { "value": 30, "type": "number" },
+    "drawer":  { "value": 50, "type": "number" },
+    "modal":   { "value": 50, "type": "number" },
+    "toast":   { "value": 60, "type": "number" }
+  },
+
+  "component": {
+    "button": {
+      "height-sm":  { "value": "32px", "type": "dimension" },
+      "height-md":  { "value": "44px", "type": "dimension", "note": "移动端默认，满足 44x44 触摸下限" },
+      "height-lg":  { "value": "52px", "type": "dimension", "note": "结账主 CTA" },
+      "padding-x":  { "value": "16px", "type": "dimension" },
+      "radius":     { "value": "{dimension.radius.md}", "type": "dimension" },
+      "primary-bg": { "value": "{color.semantic.primary}", "type": "color" },
+      "primary-bg-hover": { "value": "{color.semantic.primary-hover}", "type": "color" },
+      "primary-bg-active": { "value": "{color.semantic.primary-active}", "type": "color" },
+      "disabled-opacity": { "value": "0.4", "type": "number" }
+    },
+    "input": {
+      "height":       { "value": "44px", "type": "dimension" },
+      "radius":       { "value": "{dimension.radius.md}", "type": "dimension" },
+      "border":       { "value": "{color.semantic.input}", "type": "color" },
+      "border-focus": { "value": "{color.semantic.ring}", "type": "color" },
+      "border-error": { "value": "{color.semantic.destructive}", "type": "color" },
+      "ring-width":   { "value": "3px", "type": "dimension", "note": "焦点环外扩 3px，半透明" }
+    },
+    "card": {
+      "radius":  { "value": "{dimension.radius.lg}", "type": "dimension" },
+      "padding": { "value": "20px", "type": "dimension" },
+      "border":  { "value": "1px solid {color.semantic.border}", "type": "border", "note": "1px 边框，不用默认阴影" }
+    },
+    "drawer": {
+      "width-desktop": { "value": "440px", "type": "dimension" },
+      "width-mobile":  { "value": "calc(100vw - 48px)", "type": "dimension", "note": "左侧留 48px 遮罩可点区" },
+      "overlay":       { "value": "rgba(23, 23, 27, 0.5)", "type": "color" },
+      "radius":        { "value": "{dimension.radius.xl}", "type": "dimension", "note": "仅左侧两角圆角" }
+    },
+    "badge": {
+      "radius":   { "value": "{dimension.radius.xs}", "type": "dimension" },
+      "height":   { "value": "20px", "type": "dimension" },
+      "font-size":{ "value": "12px", "type": "dimension" }
+    },
+    "table": {
+      "row-height":     { "value": "52px", "type": "dimension", "note": "后台。密度靠 1px 分隔线而非卡片盒子" },
+      "header-height":  { "value": "40px", "type": "dimension" },
+      "cell-padding-x": { "value": "12px", "type": "dimension" }
+    }
+  }
+}

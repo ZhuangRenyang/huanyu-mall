@@ -1,0 +1,79 @@
+import type { AbstractPaymentProvider } from "./abstract.js";
+import { FakePaymentProvider } from "./fake.js";
+import { WechatPaymentProvider } from "./wechat.js";
+import { AlipayPaymentProvider } from "./alipay.js";
+import { StripePaymentProvider } from "./stripe.js";
+import { PaypalPaymentProvider } from "./paypal.js";
+import type { PaymentProviderDescriptor } from "./types.js";
+
+type Ctor = new (config: Record<string, unknown>) => AbstractPaymentProvider;
+interface Registration {
+  descriptor: PaymentProviderDescriptor;
+  ctor: Ctor;
+}
+
+/** 编译期声明四家沙箱 Provider + Fake 兜底（ADR-008：声明不实例化、不触网）。 */
+const REGISTRY: Record<string, Registration> = {
+  pp_fake: {
+    descriptor: {
+      identifier: "pp_fake",
+      label: "Fake 兜底",
+      capabilities: { webhook: true, partialRefund: false, authorizeThenCapture: true, qrFlow: true, redirectFlow: false },
+      supportedCurrencies: ["CNY", "USD", "EUR", "HKD"],
+    },
+    ctor: FakePaymentProvider,
+  },
+  pp_wechat: {
+    descriptor: {
+      identifier: "pp_wechat",
+      label: "微信支付",
+      capabilities: { webhook: true, partialRefund: false, authorizeThenCapture: false, qrFlow: true, redirectFlow: false },
+      supportedCurrencies: ["CNY"],
+    },
+    ctor: WechatPaymentProvider,
+  },
+  pp_alipay: {
+    descriptor: {
+      identifier: "pp_alipay",
+      label: "支付宝",
+      capabilities: { webhook: true, partialRefund: false, authorizeThenCapture: false, qrFlow: false, redirectFlow: true },
+      supportedCurrencies: ["CNY"],
+    },
+    ctor: AlipayPaymentProvider,
+  },
+  pp_stripe: {
+    descriptor: {
+      identifier: "pp_stripe",
+      label: "Stripe",
+      capabilities: { webhook: true, partialRefund: false, authorizeThenCapture: true, qrFlow: false, redirectFlow: false },
+      supportedCurrencies: ["USD", "EUR", "HKD"],
+    },
+    ctor: StripePaymentProvider,
+  },
+  pp_paypal: {
+    descriptor: {
+      identifier: "pp_paypal",
+      label: "PayPal",
+      capabilities: { webhook: true, partialRefund: false, authorizeThenCapture: true, qrFlow: false, redirectFlow: true },
+      supportedCurrencies: ["USD", "EUR"],
+    },
+    ctor: PaypalPaymentProvider,
+  },
+};
+
+export class ProviderRegistry {
+  descriptors(): PaymentProviderDescriptor[] {
+    return Object.values(REGISTRY).map((r) => r.descriptor);
+  }
+
+  descriptor(identifier: string): PaymentProviderDescriptor | null {
+    return REGISTRY[identifier]?.descriptor ?? null;
+  }
+
+  /** 按需实例化：拿到解密后的配置才加载，构造函数不触网。 */
+  load(identifier: string, config: Record<string, unknown>): AbstractPaymentProvider {
+    const reg = REGISTRY[identifier];
+    if (!reg) throw new Error(`Unknown payment provider: ${identifier}`);
+    return new reg.ctor(config);
+  }
+}

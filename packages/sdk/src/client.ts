@@ -1,0 +1,206 @@
+/**
+ * @mall/sdk — 运行时 API 客户端（店面 + 后台共用）。
+ * 统一处理 { code, data, message } 信封、错误码→展示文案、鉴权头、401 自动刷新一次。
+ * 金额一律 amount_minor（number，int64 安全范围内）；展示层换算见 @mall/ui formatMoney。
+ */
+import type {
+  AddLineItemRequest,
+  CapturePaymentRequest,
+  ChangePasswordRequest,
+  CreateCartRequest,
+  CreatePaymentSessionRequest,
+  CreateProductRequest,
+  CreateRefundRequest,
+  CreateShipmentRequest,
+  CreateVariantRequest,
+  LoginRequest,
+  PutPricesRequest,
+  RegisterRequest,
+  UpdateInventoryLevelRequest,
+  UpdateLineItemRequest,
+  UpdatePaymentProviderRequest,
+  UpdateProductRequest,
+  UpdateSettingsRequest,
+  UpdateThemeRequest,
+  UpdateVariantRequest,
+} from "./requests";
+import type { Envelope, PaginatedResponse } from "@mall/types";
+
+export interface ClientOptions {
+  baseUrl: string;
+  /** 店面公开端点用（标识 channel）；后台不传。 */
+  publishableKey?: string;
+  /** 访问令牌（登录后传入）；缺省则匿名。 */
+  accessToken?: string;
+  /** 401 后自动用 refresh 换新 access 的回调（返回新 access 或抛错）。 */
+  onRefresh?: () => Promise<string>;
+  fetch?: typeof fetch;
+}
+
+/** 统一错误：携带后端错误码与文案。 */
+export class ApiError extends Error {
+  constructor(
+    public readonly code: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+type Query = Record<string, string | number | boolean | undefined | null>;
+
+function buildQuery(q?: Query): string {
+  if (!q) return "";
+  const parts = Object.entries(q)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`);
+  return parts.length ? `?${parts.join("&")}` : "";
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  opts: ClientOptions,
+  body?: unknown,
+  query?: Query,
+): Promise<T> {
+  const doFetch = async (): Promise<Response> => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (opts.publishableKey) headers["x-publishable-key"] = opts.publishableKey;
+    if (opts.accessToken) headers["authorization"] = `Bearer ${opts.accessToken}`;
+    const fetcher = opts.fetch ?? fetch;
+    return fetcher(`${opts.baseUrl}${path}${buildQuery(query)}`, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  };
+
+  let res = await doFetch();
+  // 401 自动刷新一次（仅当配了 onRefresh）
+  if (res.status === 401 && opts.onRefresh) {
+    const next = await opts.onRefresh();
+    opts.accessToken = next;
+    res = await doFetch();
+  }
+
+  let payload: Envelope<T> | null = null;
+  try {
+    payload = (await res.json()) as Envelope<T>;
+  } catch {
+    throw new ApiError(res.status, `HTTP ${res.status}`);
+  }
+  if (payload && payload.code !== 0) {
+    throw new ApiError(payload.code, payload.message || `业务错误 ${payload.code}`);
+  }
+  return (payload?.data ?? undefined) as T;
+}
+
+/** 店面客户端（x-publishable-key + 可选顾客 JWT）。 */
+export function createStoreClient(opts: ClientOptions) {
+  const base: ClientOptions = { fetch: opts.fetch, ...opts };
+  const get = <T>(p: string, q?: Query) => request<T>("GET", p, base, undefined, q);
+  const post = <T>(p: string, b?: unknown) => request<T>("POST", p, base, b);
+  const patch = <T>(p: string, b?: unknown) => request<T>("PATCH", p, base, b);
+  const del = <T>(p: string) => request<T>("DELETE", p, base);
+
+  return {
+    setAccessToken(t: string) {
+      base.accessToken = t;
+    },
+    bootstrap: () => get("/api/v1/store/bootstrap"),
+    listProducts: (q?: Query) => get("/api/v1/store/products", q),
+    getProduct: (handle: string) => get(`/api/v1/store/products/${handle}`),
+    listCategories: () => get("/api/v1/store/categories"),
+    createCart: (b: CreateCartRequest) => post("/api/v1/store/carts", b),
+    getCart: (id: string) => get(`/api/v1/store/carts/${id}`),
+    addLineItem: (cartId: string, b: AddLineItemRequest) =>
+      post(`/api/v1/store/carts/${cartId}/line-items`, b),
+    updateLineItem: (cartId: string, lineId: string, b: UpdateLineItemRequest) =>
+      patch(`/api/v1/store/carts/${cartId}/line-items/${lineId}`, b),
+    deleteLineItem: (cartId: string, lineId: string) =>
+      del(`/api/v1/store/carts/${cartId}/line-items/${lineId}`),
+    listShippingOptions: (q?: Query) => get("/api/v1/store/shipping-options", q),
+    listPaymentProviders: (cartId: string) =>
+      get("/api/v1/store/payment-providers", { cart_id: cartId }),
+    createPaymentSession: (b: CreatePaymentSessionRequest) =>
+      post("/api/v1/store/payment-sessions", b),
+    /** 授权支付会话（创建 payment 记录）。 */
+    authorizeSession: (sessionId: string) =>
+      post(`/api/v1/store/payment-sessions/${sessionId}/authorize`),
+    /** 扣款（幂等键必填）。 */
+    capturePayment: (paymentId: string, b: CapturePaymentRequest) =>
+      post(`/api/v1/store/payments/${paymentId}/capture`, b),
+    completeCart: (cartId: string, idempotencyKey?: string) =>
+      post(`/api/v1/store/carts/${cartId}/complete`, undefined),
+    getOrder: (id: string) => get(`/api/v1/store/orders/${id}`),
+    register: (b: RegisterRequest) => post("/api/v1/store/auth/register", b),
+    login: (b: LoginRequest) => post("/api/v1/store/auth/login", b),
+    refresh: (refreshToken: string) =>
+      post("/api/v1/store/auth/refresh", { refresh_token: refreshToken }),
+    logout: (refreshToken: string) =>
+      post("/api/v1/store/auth/logout", { refresh_token: refreshToken }),
+  };
+}
+
+/** 后台客户端（admin JWT + RBAC）。 */
+export function createAdminClient(opts: ClientOptions) {
+  const base: ClientOptions = { fetch: opts.fetch, ...opts };
+  const get = <T>(p: string, q?: Query) => request<T>("GET", p, base, undefined, q);
+  const post = <T>(p: string, b?: unknown) => request<T>("POST", p, base, b);
+  const patch = <T>(p: string, b?: unknown) => request<T>("PATCH", p, base, b);
+  const put = <T>(p: string, b?: unknown) => request<T>("PUT", p, base, b);
+  const del = <T>(p: string) => request<T>("DELETE", p, base);
+
+  return {
+    setAccessToken(t: string) {
+      base.accessToken = t;
+    },
+    login: (b: LoginRequest) => post("/api/v1/admin/auth/login", b),
+    refresh: (refreshToken: string) =>
+      post("/api/v1/admin/auth/refresh", { refresh_token: refreshToken }),
+    logout: (refreshToken: string) =>
+      post("/api/v1/admin/auth/logout", { refresh_token: refreshToken }),
+    /**
+     * 管理员自助改密：改密后端会撤销该管理员全部 refresh_token，
+     * 不签发新 token，调用方需清本地会话并跳登录页。
+     */
+    changePassword: (b: ChangePasswordRequest) =>
+      post("/api/v1/admin/auth/change-password", b),
+    listProducts: (q?: Query) => get("/api/v1/admin/products", q),
+    getProduct: (id: string) => get(`/api/v1/admin/products/${id}`),
+    createProduct: (b: CreateProductRequest) => post("/api/v1/admin/products", b),
+    updateProduct: (id: string, b: UpdateProductRequest) =>
+      patch(`/api/v1/admin/products/${id}`, b),
+    deleteProduct: (id: string) => del(`/api/v1/admin/products/${id}`),
+    createVariant: (productId: string, b: CreateVariantRequest) =>
+      post(`/api/v1/admin/products/${productId}/variants`, b),
+    updateVariant: (variantId: string, b: UpdateVariantRequest) =>
+      patch(`/api/v1/admin/variants/${variantId}`, b),
+    putPrices: (variantId: string, b: PutPricesRequest) =>
+      put(`/api/v1/admin/variants/${variantId}/prices`, b),
+    listOrders: (q?: Query) => get("/api/v1/admin/orders", q),
+    getOrder: (id: string) => get(`/api/v1/admin/orders/${id}`),
+    cancelOrder: (id: string) => post(`/api/v1/admin/orders/${id}/cancel`),
+    refundOrder: (id: string, b: CreateRefundRequest) =>
+      post(`/api/v1/admin/orders/${id}/refunds`, b),
+    createFulfillment: (orderId: string, b: { items: { order_line_item_id: string; quantity: number }[] }) =>
+      post(`/api/v1/admin/orders/${orderId}/fulfillments`, b),
+    createShipment: (fulfillmentId: string, b: CreateShipmentRequest) =>
+      post(`/api/v1/admin/fulfillments/${fulfillmentId}/shipments`, b),
+    listCustomers: (q?: Query) => get("/api/v1/admin/customers", q),
+    listInventoryItems: (q?: Query) => get("/api/v1/admin/inventory-items", q),
+    updateInventoryLevel: (levelId: string, b: UpdateInventoryLevelRequest) =>
+      put(`/api/v1/admin/inventory-levels/${levelId}`, b),
+    getSettings: () => get("/api/v1/admin/settings"),
+    updateSettings: (b: UpdateSettingsRequest) => patch("/api/v1/admin/settings", b),
+    getTheme: () => get("/api/v1/admin/settings/theme"),
+    updateTheme: (b: UpdateThemeRequest) => put("/api/v1/admin/settings/theme", b),
+    getPaymentProviders: () => get("/api/v1/admin/settings/payment-providers"),
+    updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
+      put(`/api/v1/admin/settings/payment-providers/${id}`, b),
+  };
+}
+
+export type { PaginatedResponse };

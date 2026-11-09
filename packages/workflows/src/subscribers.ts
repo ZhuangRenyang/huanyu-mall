@@ -1,0 +1,43 @@
+import { SubscriberRegistry, type DomainEvent } from "@mall/core";
+
+/** 订单状态迁移端口（subscriber 侧最小接口，组合根注入真实 order service）。 */
+export interface OrderTransitionPort {
+  transition(
+    orderId: string,
+    to: string,
+    meta: { actor: string; reason?: string },
+  ): Promise<unknown>;
+}
+
+export interface SubscriberResolve {
+  (name: string): unknown;
+}
+
+/**
+ * 注册一期 subscriber（架构 §5.7 / SPEC §12）。
+ * - order.placed：占位（一期替代「发邮件」，仅记录）
+ * - payment.captured：调 Order.transition(paid)，把支付与订单真正连起来（交易闭环关键一环）
+ * subscriber 必须幂等：at-least-once 投递下重复执行无害（transition 有状态机守卫，重复 paid 会被拒绝）。
+ */
+export function registerSubscribers(
+  registry: SubscriberRegistry,
+  resolve: SubscriberResolve,
+): void {
+  registry.register("order.placed", async (event: DomainEvent) => {
+    // 占位：一期不做真实通知（发邮件/短信 属服务商类，后台配置化后接）
+    const { orderId } = event.data as { orderId?: string };
+    if (!orderId) return;
+    // 记录即可，供二期 Notification 模块接入
+    void resolve;
+  });
+
+  registry.register("payment.captured", async (event: DomainEvent) => {
+    const { orderId } = event.data as { orderId?: string };
+    if (!orderId) return;
+    const order = resolve("order") as OrderTransitionPort;
+    const meta = { actor: "payment-webhook", reason: "payment captured" };
+    // 状态机 pending → awaiting_payment → paid；两段都走，transition 幂等（重复投递无害）
+    await order.transition(orderId, "awaiting_payment", meta);
+    await order.transition(orderId, "paid", meta);
+  });
+}

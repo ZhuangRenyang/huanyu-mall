@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1
+# 用于 api / worker / migrator：多阶段构建，build 阶段装依赖编译，runtime 阶段带产物。
+# 说明：pnpm monorepo 直接整仓拷贝（含 node_modules 软链与各包 dist），体积不最优但正确。
+FROM node:26-alpine AS build
+RUN npm i -g pnpm@12.18.0
+WORKDIR /repo
+COPY . .
+RUN pnpm install --no-frozen-lockfile
+# 构建 api + worker 及其全部依赖（core/types/modules/links/workflows）
+RUN pnpm turbo run build --filter="@mall/api..." --filter="@mall/worker..."
+
+FROM node:26-alpine AS runtime
+ENV NODE_ENV=production
+WORKDIR /repo
+COPY --from=build /repo ./
+EXPOSE 3000
+CMD ["node", "apps/api/dist/index.js"]

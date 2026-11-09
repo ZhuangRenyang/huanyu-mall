@@ -1,0 +1,29 @@
+{
+  "name": "@mall/storefront",
+  "version": "0.1.0",
+  "private": true,
+  "description": "商城店面（Next.js App Router，/ [locale]/[channel] 路由，移动优先）",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.4.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "lucide-react": "1.70.0",
+    "@mall/ui": "workspace:*",
+    "@mall/design-tokens": "workspace:*",
+    "@mall/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.5",
+    "tailwindcss": "4.3.5",
+    "typescript": "^5.9.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

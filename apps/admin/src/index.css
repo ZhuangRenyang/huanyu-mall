@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "@mall/design-tokens/tokens.css";
+
+/* 工作区 UI 包组件类名参与扫描（在 node_modules 之外，需显式声明） */
+@source "../../../packages/ui/src";
+
+html,
+body,
+#root {
+  height: 100%;
+}

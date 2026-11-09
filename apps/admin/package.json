@@ -1,0 +1,33 @@
+{
+  "name": "@mall/admin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "商城管理后台（React 19 + Vite，静态产物，Medusa Admin 形态）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router-dom": "7.18.5",
+    "lucide-react": "1.70.0",
+    "@mall/ui": "workspace:*",
+    "@mall/design-tokens": "workspace:*",
+    "@mall/sdk": "workspace:*",
+    "@mall/policy": "workspace:*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.5",
+    "tailwindcss": "4.3.5",
+    "vite": "8.3.6",
+    "@vitejs/plugin-react": "6.2.1",
+    "typescript": "^5.9.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@mall/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "商城 Store / Admin API 类型（openapi.yaml 提取），店面与后台共用",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mall/types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

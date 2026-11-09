@@ -1,0 +1,16 @@
+# syntax=docker/dockerfile:1
+# admin（Vite 静态产物 → nginx 托管）。SPA fallback 由 admin-nginx.conf 处理。
+FROM node:26-alpine AS build
+RUN npm i -g pnpm@12.18.0
+WORKDIR /repo
+COPY . .
+RUN pnpm install --no-frozen-lockfile
+# VITE_* 在构建期内联进客户端 bundle，数据源模式必须在 build 时决定
+ARG VITE_API_MODE=mock
+ENV VITE_API_MODE=${VITE_API_MODE}
+RUN pnpm turbo run build --filter="@mall/admin..."
+
+FROM nginx:1.27-alpine
+COPY --from=build /repo/apps/admin/dist /usr/share/nginx/html
+COPY deploy/docker/admin-nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80

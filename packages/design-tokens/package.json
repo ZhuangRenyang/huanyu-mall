@@ -1,0 +1,18 @@
+{
+  "name": "@mall/design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "商城设计令牌单一事实来源：CSS @theme 变量 + TS 常量，店面与后台共用",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "files": ["src"],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

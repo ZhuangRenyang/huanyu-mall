@@ -1,0 +1,45 @@
+{
+  "name": "@mall/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mall/core": "workspace:*",
+    "@mall/types": "workspace:*",
+    "@mall/region-channel": "workspace:*",
+    "@mall/product": "workspace:*",
+    "@mall/pricing": "workspace:*",
+    "@mall/tax": "workspace:*",
+    "@mall/customer": "workspace:*",
+    "@mall/file": "workspace:*",
+    "@mall/auth": "workspace:*",
+    "@mall/inventory": "workspace:*",
+    "@mall/cart": "workspace:*",
+    "@mall/order": "workspace:*",
+    "@mall/payment": "workspace:*",
+    "@mall/fulfillment": "workspace:*",
+    "@mall/theme": "workspace:*",
+    "@mall/workflows": "workspace:*",
+    "@mall/links": "workspace:*",
+    "@fastify/rate-limit": "catalog:",
+    "bullmq": "catalog:",
+    "fastify": "catalog:",
+    "ioredis": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "tsx": "catalog:",
+    "vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:"
+  }
+}

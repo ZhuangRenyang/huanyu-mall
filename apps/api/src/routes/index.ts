@@ -1,0 +1,40 @@
+import type { FastifyInstance } from "fastify";
+import type { AppDeps } from "../deps.js";
+import { healthRoutes } from "./health.js";
+import { bootstrapRoutes, productRoutes } from "./store/catalog.js";
+import { cartRoutes } from "./store/carts.js";
+import { shippingRoutes } from "./store/shipping.js";
+import { storePaymentRoutes } from "./store/payment.js";
+import { checkoutRoutes } from "./store/checkout.js";
+import { storeOrderRoutes } from "./store/orders.js";
+import { storeAuthRoutes } from "./store/auth.js";
+import { adminAuthRoutes } from "./admin/auth.js";
+import { adminProductRoutes } from "./admin/products.js";
+import { adminOrderRoutes } from "./admin/orders.js";
+import { adminCustomerRoutes } from "./admin/customers.js";
+import { adminInventoryRoutes } from "./admin/inventory.js";
+import { adminSettingsRoutes } from "./admin/settings.js";
+import { adminFileRoutes } from "./admin/files.js";
+import { adminAuditLogRoutes } from "./admin/audit-logs.js";
+
+export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
+  healthRoutes(app, deps.config);
+  // Store API（17）
+  bootstrapRoutes(app, deps);
+  productRoutes(app, deps);
+  cartRoutes(app, deps);
+  shippingRoutes(app, deps);
+  storePaymentRoutes(app, deps);
+  checkoutRoutes(app, deps);
+  storeOrderRoutes(app, deps);
+  storeAuthRoutes(app, deps);
+  // Admin API（21）
+  adminAuthRoutes(app, deps);
+  adminProductRoutes(app, deps);
+  adminOrderRoutes(app, deps);
+  adminCustomerRoutes(app, deps);
+  adminInventoryRoutes(app, deps);
+  adminSettingsRoutes(app, deps);
+  adminFileRoutes(app, deps);
+  adminAuditLogRoutes(app, deps);
+}

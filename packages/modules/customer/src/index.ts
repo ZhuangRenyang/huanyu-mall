@@ -1,0 +1,18 @@
+import { createDbFor, Module } from "@mall/core";
+import type { Pool } from "pg";
+import { linkable } from "./linkable.js";
+import * as schema from "./models/index.js";
+import { DrizzleCustomerRepository } from "./repositories/customer.repository.js";
+import { CustomerService } from "./services/customer.service.js";
+
+export * from "./types.js";
+export * from "./errors.js";
+export { linkable } from "./linkable.js";
+export { CustomerService } from "./services/customer.service.js";
+
+export default Module("customer", {
+  service: (ctx) =>
+    new CustomerService(new DrizzleCustomerRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
+  migrations: ["migrations/0001_init.sql"],
+  linkable,
+});

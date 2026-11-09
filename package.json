@@ -1,0 +1,26 @@
+{
+  "name": "mall",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.18.0",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "dev": "turbo run dev",
+    "check:module-graph": "tsx scripts/check-module-graph.ts",
+    "check:migrations": "tsx scripts/lint-migrations.ts",
+    "check:icons": "tsx scripts/scan-icons.ts"
+  },
+  "devDependencies": {
+    "drizzle-kit": "catalog:",
+    "tsx": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "@types/node": "catalog:"
+  }
+}
