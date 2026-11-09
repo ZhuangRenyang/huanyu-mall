@@ -1,43 +1,242 @@
-import { toMinor } from "@mall/core";
-import { SandboxPaymentProvider } from "./abstract.js";
-import { WebhookSignatureError } from "../errors.js";
-import { canonicalizeParams, rsaSha256Verify } from "./signature.js";
-import type { WebhookActionResult, WebhookPayload } from "./types.js";
+import { fromMinor, toMinor } from '@mall/core';
+import { AbstractPaymentProvider } from './abstract.js';
+import { AlipayApiError, AlipayClient, type AlipayClientConfig } from './alipay-client.js';
+import { WebhookSignatureError } from '../errors.js';
+import type {
+  AuthorizePaymentInput,
+  AuthorizePaymentOutput,
+  CancelPaymentInput,
+  CancelPaymentOutput,
+  CapturePaymentInput,
+  CapturePaymentOutput,
+  InitiatePaymentInput,
+  InitiatePaymentOutput,
+  RefundPaymentInput,
+  RefundPaymentOutput,
+  WebhookActionResult,
+  WebhookPayload,
+} from './types.js';
 
-/** 支付宝：RSA2 验签（参数按字典序拼接），金额字符串元 → bigint 分（Provider 边界转换）。 */
-export class AlipayPaymentProvider extends SandboxPaymentProvider {
-  constructor(config: Record<string, unknown>) {
-    super(config, "redirectUrl", "alipay_");
+const SANDBOX_GATEWAY = 'https://openapi-sandbox.dl.alipaydev.com/gateway.do';
+const LIVE_GATEWAY = 'https://openapi.alipay.com/gateway.do';
+
+/** `alipay.trade.query` / `refund` / `close` 的响应节点（只声明用到的字段）。 */
+interface AlipayTradeNode {
+  code?: string;
+  sub_code?: string;
+  sub_msg?: string;
+  trade_no?: string;
+  out_trade_no?: string;
+  trade_status?: string;
+  total_amount?: string;
+  refund_fee?: string;
+}
+
+/**
+ * 支付宝（电脑/手机网站支付，即时到账）。
+ *
+ * 与 Stripe/PayPal 的模型差异，是本文件最重要的背景：
+ * - **没有 authorize → capture 两阶段**：用户付完钱就到账（`TRADE_SUCCESS`）。
+ *   所以 `authorizePayment` 只能「查单确认」，`capturePayment` 也是查单确认后直接判 captured，
+ *   不存在「服务端再扣一次」的动作。
+ * - **回调是 form-encoded 而不是 JSON**：`rawBody` 是 `k=v&k=v`，必须用 URLSearchParams 解析。
+ *   （原实现用 JSON.parse，导致真实回调根本解析不出来。）
+ * - **金额是字符串主单位**（"206.00"），与 PayPal 一致、与 Stripe 相反，统一走 fromMinor/toMinor。
+ *
+ * 配置项：ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY / ALIPAY_PUBLIC_KEY /
+ *         ALIPAY_GATEWAY / ALIPAY_NOTIFY_URL(可选)
+ */
+export class AlipayPaymentProvider extends AbstractPaymentProvider {
+  private clientInstance: AlipayClient | null = null;
+
+  /** 构造函数保持不触网（ADR-008）。 */
+  private client(): AlipayClient {
+    if (this.clientInstance) return this.clientInstance;
+    this.clientInstance = new AlipayClient(this.readConfig());
+    return this.clientInstance;
+  }
+
+  private readConfig(): AlipayClientConfig {
+    const appId = String(this.config.appId ?? '').trim();
+    const privateKeyPem = normalizePem(String(this.config.privateKey ?? ''), 'PRIVATE');
+    const alipayPublicKeyPem = normalizePem(String(this.config.alipayPublicKey ?? ''), 'PUBLIC');
+    const mode = String(this.config.mode ?? 'sandbox') === 'live' ? 'live' : 'sandbox';
+    const gateway = String(this.config.gateway ?? '').trim() || (mode === 'live' ? LIVE_GATEWAY : SANDBOX_GATEWAY);
+    const notifyUrl = String(this.config.notifyUrl ?? '').trim() || undefined;
+    const returnUrl = String(this.config.returnUrl ?? '').trim() || undefined;
+
+    if (!appId || !privateKeyPem || !alipayPublicKeyPem) {
+      throw new Error(
+        '支付宝未配置：请在管理后台「支付方式」填写 APPID、应用私钥、支付宝公钥（沙箱控制台可直接获取，无需真实商户号）',
+      );
+    }
+    return { appId, privateKeyPem, alipayPublicKeyPem, gateway, notifyUrl, returnUrl };
+  }
+
+  async initiatePayment(input: InitiatePaymentInput): Promise<InitiatePaymentOutput> {
+    const url = this.client().buildPagePayUrl({
+      outTradeNo: input.sessionId,
+      totalAmount: fromMinor(input.amountMinor, input.currencyCode),
+      subject: String(input.metadata?.subject ?? `订单 ${input.sessionId}`),
+    });
+    return {
+      kind: 'redirectUrl',
+      redirectUrl: url,
+      providerReference: input.sessionId,
+      raw: { outTradeNo: input.sessionId, amount: fromMinor(input.amountMinor, input.currencyCode) },
+    };
+  }
+
+  async authorizePayment(input: AuthorizePaymentInput): Promise<AuthorizePaymentOutput> {
+    const outTradeNo = input.providerReference ?? input.sessionId;
+    try {
+      const node = await this.client().call<AlipayTradeNode>('alipay.trade.query', { out_trade_no: outTradeNo });
+      switch (node.trade_status) {
+        case 'TRADE_SUCCESS':
+        case 'TRADE_FINISHED':
+          return { status: 'authorized', providerReference: node.trade_no ?? outTradeNo, raw: { tradeStatus: node.trade_status } };
+        case 'WAIT_BUYER_PAY':
+          return { status: 'requires_more', providerReference: outTradeNo, raw: { tradeStatus: node.trade_status } };
+        case 'TRADE_CLOSED':
+          return { status: 'failed', providerReference: outTradeNo, raw: { tradeStatus: node.trade_status } };
+        default:
+          return { status: 'requires_more', providerReference: outTradeNo, raw: { tradeStatus: node.trade_status } };
+      }
+    } catch (err) {
+      /* 交易不存在 = 用户还没在收银台付款，属正常中间态，不当故障抛 */
+      if (err instanceof AlipayApiError && err.subCode === 'ACQ.TRADE_NOT_EXIST') {
+        return { status: 'requires_more', providerReference: outTradeNo, raw: { pending: true } };
+      }
+      throw err;
+    }
+  }
+
+  async capturePayment(input: CapturePaymentInput): Promise<CapturePaymentOutput> {
+    /*
+     * 支付宝即时到账没有服务端「捕获」动作：钱在用户付款时就已到账。
+     * 这里只做一次查单确认，把「确认成功」映射为 captured，保证接口语义与
+     * Stripe/PayPal 一致（上层 workflow 不感知渠道差异）。
+     */
+    const outTradeNo = input.providerReference ?? input.paymentId;
+    try {
+      const node = await this.client().call<AlipayTradeNode>('alipay.trade.query', { out_trade_no: outTradeNo });
+      const ok = node.trade_status === 'TRADE_SUCCESS' || node.trade_status === 'TRADE_FINISHED';
+      return {
+        status: ok ? 'captured' : 'failed',
+        providerReference: node.trade_no ?? outTradeNo,
+        raw: { tradeStatus: node.trade_status },
+      };
+    } catch (err) {
+      if (err instanceof AlipayApiError && err.businessRejection) {
+        return { status: 'failed', providerReference: outTradeNo, raw: { subCode: err.subCode } };
+      }
+      throw err;
+    }
+  }
+
+  async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentOutput> {
+    const outTradeNo = input.providerReference ?? input.paymentId;
+    try {
+      const node = await this.client().call<AlipayTradeNode>('alipay.trade.refund', {
+        out_trade_no: outTradeNo,
+        refund_amount: fromMinor(input.amountMinor, input.currencyCode),
+        /* 支付宝用 out_request_no 做退款幂等：同一个号重复提交不会重复退 */
+        out_request_no: input.idempotencyKey,
+        ...(input.reason ? { refund_reason: input.reason.slice(0, 256) } : {}),
+      });
+      return {
+        status: 'succeeded',
+        providerReference: node.trade_no ?? outTradeNo,
+        raw: { refundFee: node.refund_fee, tradeStatus: node.trade_status },
+      };
+    } catch (err) {
+      if (err instanceof AlipayApiError && err.businessRejection) {
+        return { status: 'failed', providerReference: outTradeNo, raw: { subCode: err.subCode } };
+      }
+      throw err;
+    }
+  }
+
+  async cancelPayment(input: CancelPaymentInput): Promise<CancelPaymentOutput> {
+    const outTradeNo = input.providerReference ?? input.paymentId;
+    try {
+      /* alipay.trade.close 只能关闭「未付款」的订单；已付款的必须走退款 */
+      await this.client().call<AlipayTradeNode>('alipay.trade.close', { out_trade_no: outTradeNo });
+      return { status: 'canceled' };
+    } catch (err) {
+      if (err instanceof AlipayApiError && err.businessRejection) return { status: 'failed' };
+      throw err;
+    }
   }
 
   async getWebhookActionAndData(payload: WebhookPayload): Promise<WebhookActionResult> {
-    const publicKeyPem = String(this.config.publicKeyPem ?? "");
-    const body = JSON.parse(payload.rawBody) as Record<string, string> & {
-      eventId: string;
-      trade_status: string;
-      out_trade_no: string;
-      trade_no: string;
-      total_amount?: string;
-    };
-    const canonical = canonicalizeParams(body);
-    if (!publicKeyPem || !rsaSha256Verify(publicKeyPem, canonical, body.sign ?? "")) {
-      throw new WebhookSignatureError("alipay signature invalid");
+    /*
+     * 支付宝异步通知是 application/x-www-form-urlencoded。
+     * rawBody 形如 `gmt_create=...&charset=utf-8&...&sign=xxx&sign_type=RSA2`。
+     * 必须用 URLSearchParams 解析（原实现用 JSON.parse，真实回调解析不出来）。
+     */
+    const params = Object.fromEntries(new URLSearchParams(payload.rawBody)) as Record<string, string>;
+
+    if (!this.client().verifyNotify(params)) {
+      throw new WebhookSignatureError('alipay notify signature invalid');
     }
+
+    const tradeStatus = params.trade_status ?? '';
     const action =
-      body.trade_status === "TRADE_SUCCESS" || body.trade_status === "TRADE_FINISHED"
-        ? "captured"
-        : body.trade_status === "TRADE_CLOSED"
-          ? "canceled"
-          : "not_supported";
+      tradeStatus === 'TRADE_SUCCESS' || tradeStatus === 'TRADE_FINISHED'
+        ? 'captured'
+        : tradeStatus === 'TRADE_CLOSED'
+          ? 'canceled'
+          : /* WAIT_BUYER_PAY 等：用户还没付完，不改变支付单状态 */
+            'not_supported';
+
+    let amountMinor: bigint | undefined;
+    if (params.total_amount) {
+      try {
+        amountMinor = toMinor(params.total_amount, 'CNY');
+      } catch {
+        amountMinor = undefined;
+      }
+    }
+
     return {
-      eventId: body.eventId,
+      /* 支付宝回调没有事件 id，用 trade_no + 状态拼一个稳定标识做幂等键 */
+      eventId: `${params.trade_no ?? params.out_trade_no ?? 'unknown'}:${tradeStatus}`,
       action,
       data: {
-        sessionId: body.out_trade_no,
-        paymentId: body.out_trade_no,
-        amountMinor: body.total_amount ? toMinor(body.total_amount, "CNY") : undefined,
-        reference: body.trade_no,
+        sessionId: params.out_trade_no,
+        paymentId: params.out_trade_no,
+        reference: params.trade_no,
+        amountMinor,
+        reason: tradeStatus,
       },
     };
   }
+
+  /** 探活：配置齐全即视为可用（不主动打支付宝接口，避免影响下单时延）。 */
+  override async healthCheck(): Promise<boolean> {
+    try {
+      this.readConfig();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
+ * 把配置里的密钥规范成 PEM。
+ *
+ * 用户在后台粘贴密钥时常见两种形态：完整 PEM，或只有 base64 主体（甚至把换行写成了 `\n`）。
+ * 这里统一兼容，避免「密钥明明填了却报签名失败」这种极难排查的问题。
+ */
+function normalizePem(raw: string, kind: 'PRIVATE' | 'PUBLIC'): string {
+  const text = raw.replace(/\\n/g, '\n').trim();
+  if (!text) return '';
+  if (text.includes('-----BEGIN')) return text;
+
+  const body = text.replace(/\s+/g, '');
+  const label = kind === 'PRIVATE' ? 'PRIVATE KEY' : 'PUBLIC KEY';
+  const chunks = body.match(/.{1,64}/g) ?? [body];
+  return `-----BEGIN ${label}-----\n${chunks.join('\n')}\n-----END ${label}-----`;
 }

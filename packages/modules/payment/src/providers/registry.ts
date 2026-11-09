@@ -36,7 +36,13 @@ const REGISTRY: Record<string, Registration> = {
     descriptor: {
       identifier: "pp_alipay",
       label: "支付宝",
-      capabilities: { webhook: true, partialRefund: false, authorizeThenCapture: false, qrFlow: false, redirectFlow: true },
+      /*
+       * partialRefund: true —— 退款接口 alipay.trade.refund 按 refund_amount 传金额，支持部分退款。
+       * authorizeThenCapture: false —— 支付宝是即时到账（TRADE_SUCCESS 即到账），
+       *   没有 Stripe/PayPal 那种「先授权再捕获」的两阶段，Provider 内部用查单确认代替。
+       * qrFlow: false —— 当前实现走电脑/手机网站支付（跳转收银台），未做当面付（precreate）。
+       */
+      capabilities: { webhook: true, partialRefund: true, authorizeThenCapture: false, qrFlow: false, redirectFlow: true },
       supportedCurrencies: ["CNY"],
     },
     ctor: AlipayPaymentProvider,

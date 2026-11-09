@@ -71,11 +71,19 @@ describe("Payment Providers 验签（四家沙箱）", () => {
     ).rejects.toBeInstanceOf(WebhookSignatureError);
   });
 
-  it("支付宝 RSA2：正确通过 / 篡改抛错（金额字符串元 → 分）", async () => {
+  it("支付宝 RSA2：form-encoded 回调验签通过 / 篡改抛错（金额字符串元 → 分）", async () => {
+    /*
+     * 注意回调是 **application/x-www-form-urlencoded**，不是 JSON。
+     * 原实现用 JSON.parse 解析，真实回调根本解析不出来 —— 这条用例现在按真实报文形态构造。
+     * 完整的支付宝契约（含空值参数、查单、退款）见 alipay.provider.spec.ts。
+     */
     const { publicKey, privateKey } = rsaKeys();
-    const provider = new AlipayPaymentProvider({ publicKeyPem: publicKey });
+    const provider = new AlipayPaymentProvider({
+      appId: "2021000000000001",
+      privateKey: rsaKeys().privateKey,
+      alipayPublicKey: publicKey,
+    });
     const params = {
-      eventId: "evt_ali",
       out_trade_no: "sess_1",
       trade_no: "ali_txn",
       trade_status: "TRADE_SUCCESS",
@@ -84,13 +92,16 @@ describe("Payment Providers 验签（四家沙箱）", () => {
     const sign = rsaSha256Sign(privateKey, canonicalizeParams(params));
     const ok = await provider.getWebhookActionAndData({
       headers: {},
-      rawBody: JSON.stringify({ ...params, sign }),
+      rawBody: new URLSearchParams({ ...params, sign, sign_type: "RSA2" }).toString(),
     });
     expect(ok.action).toBe("captured");
     expect(ok.data?.amountMinor).toBe(1000n);
 
     await expect(
-      provider.getWebhookActionAndData({ headers: {}, rawBody: JSON.stringify({ ...params, sign: "bad" }) }),
+      provider.getWebhookActionAndData({
+        headers: {},
+        rawBody: new URLSearchParams({ ...params, sign: "bad", sign_type: "RSA2" }).toString(),
+      }),
     ).rejects.toBeInstanceOf(WebhookSignatureError);
   });
 

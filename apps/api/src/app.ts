@@ -43,6 +43,30 @@ export async function buildApp(
     },
   );
 
+  /*
+   * 支付回调不只 JSON：支付宝（电脑/手机网站支付）用 application/x-www-form-urlencoded，
+   * 微信 V3 与 PayPal 才是 JSON。
+   *
+   * Fastify 默认**没有** form-encoded 解析器，不注册这一条的话支付宝回调会被直接 415 拒掉；
+   * 即使注册，若不在这里存 rawBody，验签时只能拿 `JSON.stringify(req.body)` 去还原，
+   * 而支付宝要求对「URL 解码后的原始 form 参数」签名 —— 两者不可能一致，验签必然失败。
+   *
+   * 自己写这 10 行而不是引 @fastify/formbody：项目对依赖有节制（铁律 11），
+   * 而这里需要的只是「存原文 + 转成对象」两件事。
+   */
+  app.addContentTypeParser(
+    "application/x-www-form-urlencoded",
+    { parseAs: "string" },
+    (req: FastifyRequest & { rawBody?: string }, body: string, done: (err: Error | null, parsed?: unknown) => void) => {
+      req.rawBody = body;
+      try {
+        done(null, Object.fromEntries(new URLSearchParams(body)));
+      } catch (err) {
+        done(err as Error);
+      }
+    },
+  );
+
   zodValidatorPlugin(app);
   corsPlugin(app, deps.config.corsOrigins);
   setupRequestId(app);
