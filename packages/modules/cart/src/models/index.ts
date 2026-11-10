@@ -1,4 +1,4 @@
-import { bigint, boolean, char, index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { bigint, char, index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const cart = pgTable(
@@ -51,10 +51,6 @@ export const cartLineItemAdjustment = pgTable(
     type: text("type").notNull(),
     amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
     description: text("description"),
-    // 目录促销行级折扣（阶段 2 扩展，见 ADR-012 §3）
-    promotionId: text("promotion_id"),
-    code: text("code"),
-    isTaxInclusive: boolean("is_tax_inclusive").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
