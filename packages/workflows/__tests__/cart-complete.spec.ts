@@ -40,10 +40,14 @@ function makePorts(
     },
   };
   const inventory: InventoryPort = {
-    async reserve(input) {
-      const id = `rsv_${++counter}`;
-      store.reservations.set(id, input.quantity);
-      return { reservationId: id };
+    async allocateAndReserve(input) {
+      // 契约：整单一次分配，仓由后端决定；测试替身按行项各生成一条预留
+      const reservationIds = input.items.map((item) => {
+        const id = `rsv_${++counter}`;
+        store.reservations.set(id, item.quantity);
+        return id;
+      });
+      return { reservationIds };
     },
     async releaseReservation(id) {
       store.reservations.delete(id);
@@ -113,7 +117,6 @@ const input: CartCompleteInput = {
       sku: "TEE",
       quantity: 2,
       unitPriceMinor: 9900n,
-      locationId: "loc_1",
       snapshot: { title: "T 恤" },
     },
   ],
@@ -129,6 +132,44 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
     expect(r.result.orderId).toMatch(/^ord_/);
     expect(store.orders.size).toBe(1);
     expect(store.reservations.size).toBe(1);
+  });
+
+  it("多行项整单一次分配：两行各一条预留", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
+    const ports = makePorts(store);
+    const { engine } = makeEngine(ports);
+
+    const multi: CartCompleteInput = {
+      ...input,
+      items: [
+        input.items[0]!,
+        { ...input.items[0]!, variantId: "var_2", quantity: 3 },
+      ],
+    };
+    await engine.run(cartCompleteWorkflow, multi, { idempotencyKey: "k-multi" });
+
+    // 一次 allocateAndReserve 覆盖整单，两行各生成一条预留
+    expect(store.reservations.size).toBe(2);
+  });
+
+  it("多行项预留后支付失败 → 全部预留被释放", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
+    const ports = makePorts(store, { failPayment: true });
+    const { engine } = makeEngine(ports);
+
+    const multi: CartCompleteInput = {
+      ...input,
+      items: [
+        input.items[0]!,
+        { ...input.items[0]!, variantId: "var_2", quantity: 3 },
+      ],
+    };
+    await expect(engine.run(cartCompleteWorkflow, multi, { idempotencyKey: "k-multi-fail" })).rejects.toThrow(
+      WorkflowFailedError,
+    );
+
+    expect(store.reservations.size).toBe(0);
+    expect(store.orders.size).toBe(0);
   });
 
   it("第三步（支付集合）失败 → 订单行与预留双回滚到基线", async () => {

@@ -23,3 +23,11 @@ export function reservationNotFound(id: string): DomainError {
 export function reservationStateInvalid(id: string, status: string): DomainError {
   return new DomainError({ code: 30002, message: `Reservation ${id} is ${status}, cannot transition` });
 }
+
+/** 数量必须是正整数（库存计数禁浮点/零/负）。 */
+export function invalidQuantity(variantId: string, quantity: number): DomainError {
+  return new DomainError({
+    code: 30002,
+    message: `库存数量非法：${variantId} 的 quantity=${quantity}（必须为正整数）`,
+  });
+}

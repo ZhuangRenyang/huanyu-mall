@@ -389,7 +389,19 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     inventory: {
       getAvailability: async ({ variantIds }: { variantIds: string[] }) =>
         variantIds.map((id) => ({ variantId: id, available: 12 })),
-      listStockLocations: async () => [{ id: "loc_1", name: "默认仓库", priority: 0 }],
+      // 仓由后端决定：路由不再取仓，整单一次分配（ADR-013）
+      allocateAndReserve: async (input: {
+        orderId: string;
+        items: Array<{ variantId: string; quantity: number }>;
+      }) => ({
+        reservationIds: input.items.map((_, i) => `rsv_${i + 1}`),
+        allocations: input.items.map((item) => ({
+          variantId: item.variantId,
+          stockLocationId: "loc_1",
+          quantity: item.quantity,
+        })),
+      }),
+      releaseReservation: async () => {},
       listInventoryItems: async () => ({
         items: [{ id: "invitem_1", sku: "SKU-1", title: "T恤", requires_shipping: true }],
         count: 1,

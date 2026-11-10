@@ -71,6 +71,20 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     return (res.rows as Array<Record<string, unknown>>).map((r) => String(r.id));
   }
 
+  /** 按订单查未释放的预留明细（幂等回放：已有预留直接返回，不重复扣减）。 */
+  async findReservationsByOrder(orderId: string): Promise<ReservationDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.reservationItem)
+      .where(
+        and(
+          eq(schema.reservationItem.orderId, orderId),
+          eq(schema.reservationItem.status, "reserved"),
+        ),
+      );
+    return rows.map(toReservationDTO);
+  }
+
   /** 列出可用仓库（按 priority 降序；一期单仓时取第一个即默认仓）。 */
   async listLocations(): Promise<StockLocationDTO[]> {
     const res = await this.db.execute(
@@ -109,19 +123,63 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     return rows[0] ? toLevelDTO(rows[0]) : null;
   }
 
-  async updateLevel(
-    levelId: string,
-    patch: { stockedQuantity: number; reservedQuantity: number; availableQuantity: number },
-  ): Promise<void> {
-    await this.db
-      .update(schema.inventoryLevel)
-      .set({
-        stockedQuantity: patch.stockedQuantity,
-        reservedQuantity: patch.reservedQuantity,
-        availableQuantity: patch.availableQuantity,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.inventoryLevel.id, levelId));
+  /**
+   * 原子占用：条件与增量在同一条 UPDATE 里，杜绝「先读 available 再写绝对值」的丢更新。
+   * 返回 false 表示可用量不足（或行不存在/已软删），调用方据此拒绝整单。
+   */
+  async tryReserveLevel(levelId: string, quantity: number): Promise<boolean> {
+    const res = await this.db.execute(
+      sql`UPDATE inventory_level
+             SET reserved_quantity = reserved_quantity + ${quantity},
+                 available_quantity = available_quantity - ${quantity},
+                 updated_at = now()
+           WHERE id = ${levelId}
+             AND available_quantity >= ${quantity}
+             AND deleted_at IS NULL
+         RETURNING id`,
+    );
+    return res.rows.length > 0;
+  }
+
+  /** 原子释放：reserved 减到 0 为下限，available 由 stocked - reserved 现算。 */
+  async releaseLevelQuantity(levelId: string, quantity: number): Promise<void> {
+    await this.db.execute(
+      sql`UPDATE inventory_level
+             SET reserved_quantity = GREATEST(0, reserved_quantity - ${quantity}),
+                 available_quantity = stocked_quantity - GREATEST(0, reserved_quantity - ${quantity}),
+                 updated_at = now()
+           WHERE id = ${levelId} AND deleted_at IS NULL`,
+    );
+  }
+
+  /** 原子出库：stocked/reserved 同减，available 由新值现算。 */
+  async commitLevelQuantity(levelId: string, quantity: number): Promise<void> {
+    await this.db.execute(
+      sql`UPDATE inventory_level
+             SET stocked_quantity = stocked_quantity - ${quantity},
+                 reserved_quantity = GREATEST(0, reserved_quantity - ${quantity}),
+                 available_quantity = (stocked_quantity - ${quantity}) - GREATEST(0, reserved_quantity - ${quantity}),
+                 updated_at = now()
+           WHERE id = ${levelId} AND deleted_at IS NULL`,
+    );
+  }
+
+  /** 原子调整在库量（相对增量），available 由 stocked - reserved 现算。 */
+  async adjustLevelQuantity(levelId: string, delta: number): Promise<void> {
+    await this.db.execute(
+      sql`UPDATE inventory_level
+             SET stocked_quantity = stocked_quantity + ${delta},
+                 available_quantity = (stocked_quantity + ${delta}) - reserved_quantity,
+                 updated_at = now()
+           WHERE id = ${levelId} AND deleted_at IS NULL`,
+    );
+  }
+
+  /** 同一事务内执行：分配计算、条件占用、写预留要么全成、要么全回滚。 */
+  async withTransaction<T>(fn: (repo: InventoryRepository) => Promise<T>): Promise<T> {
+    return this.db.transaction(async (tx) =>
+      fn(new DrizzleInventoryRepository(tx as unknown as Db)),
+    );
   }
 
   async createReservation(input: {

@@ -49,6 +49,8 @@ export const fulfillment = pgTable(
   {
     id: text("id").primaryKey(),
     orderId: text("order_id").notNull(),
+    /** 所属仓（ADR-013 §3）；历史数据为 null。跨模块不加外键。 */
+    stockLocationId: text("stock_location_id"),
     status: text("status").notNull().default("not_fulfilled"),
     trackingLinks: jsonb("tracking_links"),
     metadata: jsonb("metadata"),

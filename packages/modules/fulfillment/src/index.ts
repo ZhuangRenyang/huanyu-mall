@@ -27,6 +27,6 @@ export default Module("fulfillment", {
       inventory: inventoryPort,
     });
   },
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_location.sql"],
   linkable,
 });

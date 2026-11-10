@@ -143,9 +143,12 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     cancelOrder: (orderId: string) => services.order.cancelOrder(orderId),
   };
   const inventoryPort = {
-    reserve: async (input: unknown) => {
-      const r = await services.inventory.reserve(input as never);
-      return { reservationId: r.id };
+    allocateAndReserve: async (input: {
+      orderId: string;
+      items: Array<{ variantId: string; quantity: number }>;
+    }) => {
+      const r = await services.inventory.allocateAndReserve(input);
+      return { reservationIds: r.reservationIds };
     },
     releaseReservation: (id: string) => services.inventory.releaseReservation(id),
   };

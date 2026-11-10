@@ -26,23 +26,64 @@ class InMemoryInventoryRepository implements InventoryRepository {
     }
     return m;
   }
+  async listItems(q: { limit: number; offset: number }): Promise<{ items: InventoryItemDTO[]; count: number }> {
+    const all = [...this.items.values()];
+    return { items: all.slice(q.offset, q.offset + q.limit), count: all.length };
+  }
   async findLevelsByItemIds(itemIds: string[]): Promise<InventoryLevelDTO[]> {
     return [...this.levels.values()].filter((l) => itemIds.includes(l.inventory_item_id));
+  }
+  async listLocations(): Promise<StockLocationDTO[]> {
+    return [...this.locations.values()];
+  }
+  async reservationIdsByOrder(orderId: string): Promise<string[]> {
+    return [...this.reservations.values()]
+      .filter((r) => r.order_id === orderId && r.status === "reserved")
+      .map((r) => r.id);
+  }
+  async findReservationsByOrder(orderId: string): Promise<ReservationDTO[]> {
+    return [...this.reservations.values()].filter(
+      (r) => r.order_id === orderId && r.status === "reserved",
+    );
   }
   async findLevel(itemId: string, locationId: string): Promise<InventoryLevelDTO | null> {
     return this.levels.get(`${itemId}:${locationId}`) ?? null;
   }
-  async updateLevel(
-    levelId: string,
-    patch: { stockedQuantity: number; reservedQuantity: number; availableQuantity: number },
-  ): Promise<void> {
-    for (const l of this.levels.values()) {
-      if (l.id === levelId) {
-        l.stocked_quantity = patch.stockedQuantity;
-        l.reserved_quantity = patch.reservedQuantity;
-        l.available_quantity = patch.availableQuantity;
-      }
-    }
+  async findLevelById(levelId: string): Promise<InventoryLevelDTO | null> {
+    return [...this.levels.values()].find((l) => l.id === levelId) ?? null;
+  }
+  /**
+   * 模拟数据库「条件 UPDATE」的原子性：检查与写入之间无 await，
+   * 等价于单条 SQL 的 WHERE available >= qty 原子生效。
+   */
+  async tryReserveLevel(levelId: string, quantity: number): Promise<boolean> {
+    const level = [...this.levels.values()].find((l) => l.id === levelId);
+    if (!level || level.available_quantity < quantity) return false;
+    level.reserved_quantity += quantity;
+    level.available_quantity -= quantity;
+    return true;
+  }
+  async releaseLevelQuantity(levelId: string, quantity: number): Promise<void> {
+    const level = [...this.levels.values()].find((l) => l.id === levelId);
+    if (!level) return;
+    level.reserved_quantity = Math.max(0, level.reserved_quantity - quantity);
+    level.available_quantity = level.stocked_quantity - level.reserved_quantity;
+  }
+  async commitLevelQuantity(levelId: string, quantity: number): Promise<void> {
+    const level = [...this.levels.values()].find((l) => l.id === levelId);
+    if (!level) return;
+    level.stocked_quantity -= quantity;
+    level.reserved_quantity = Math.max(0, level.reserved_quantity - quantity);
+    level.available_quantity = level.stocked_quantity - level.reserved_quantity;
+  }
+  async adjustLevelQuantity(levelId: string, delta: number): Promise<void> {
+    const level = [...this.levels.values()].find((l) => l.id === levelId);
+    if (!level) return;
+    level.stocked_quantity += delta;
+    level.available_quantity = level.stocked_quantity - level.reserved_quantity;
+  }
+  async withTransaction<T>(fn: (repo: InventoryRepository) => Promise<T>): Promise<T> {
+    return fn(this);
   }
   async createReservation(input: {
     inventoryItemId: string;
@@ -123,7 +164,7 @@ describe("InventoryService（M07，K1 reservation 独立记账）", () => {
   });
 
   it("reserve → release 回滚到基线", async () => {
-    const { service, item, loc } = await setup(10);
+    const { service, loc } = await setup(10);
     const rsv = await service.reserve({
       variantId: "var_1",
       locationId: loc.id,
@@ -138,7 +179,6 @@ describe("InventoryService（M07，K1 reservation 独立记账）", () => {
     await service.releaseReservation(rsv.id);
     const afterRelease = await service.getAvailability({ variantIds: ["var_1"] });
     expect(afterRelease[0]?.available).toBe(10);
-    void item;
   });
 
   it("reserve → commit 出库（stocked/reserved 同减，available 不变）", async () => {
@@ -163,5 +203,128 @@ describe("InventoryService（M07，K1 reservation 独立记账）", () => {
     await expect(
       service.reserve({ variantId: "var_1", locationId: loc.id, quantity: 11, lineItemId: "cli_1" }),
     ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("并发 reserve 抢最后 1 件：只有一个成功，不超卖", async () => {
+    const { service, repo, item, loc } = await setup(1);
+    const results = await Promise.allSettled([
+      service.reserve({ variantId: "var_1", locationId: loc.id, quantity: 1, lineItemId: "cli_a" }),
+      service.reserve({ variantId: "var_1", locationId: loc.id, quantity: 1, lineItemId: "cli_b" }),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(DomainError);
+
+    const level = repo.levels.get(`${item.id}:${loc.id}`)!;
+    expect(level.reserved_quantity).toBe(1);
+    expect(level.available_quantity).toBe(0);
+    expect(repo.reservations.size).toBe(1);
+  });
+
+  it("数量非正整数被拒（禁浮点/零/负）", async () => {
+    const { service, loc } = await setup(10);
+    await expect(
+      service.reserve({ variantId: "var_1", locationId: loc.id, quantity: 1.5, lineItemId: "cli_f" }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+});
+
+describe("InventoryService.allocateAndReserve（ADR-013 多仓分配）", () => {
+  /** 两仓：loc_a priority 1 / loc_b priority 2，分别入不同在库量。 */
+  async function setupTwoWarehouses(a: number, b: number) {
+    const repo = new InMemoryInventoryRepository();
+    const service = new InventoryService(repo);
+    const item = await repo.createInventoryItem({ sku: "SKU-MULTI" });
+    const locA = await repo.createStockLocation({ name: "A 仓", priority: 1 });
+    const locB = await repo.createStockLocation({ name: "B 仓", priority: 2 });
+    await repo.createLevel({ inventoryItemId: item.id, stockLocationId: locA.id, stockedQuantity: a });
+    await repo.createLevel({ inventoryItemId: item.id, stockLocationId: locB.id, stockedQuantity: b });
+    await repo.linkVariant(item.id, "var_1");
+    return { repo, service, item, locA, locB };
+  }
+
+  it("单仓满足：只产生一条预留", async () => {
+    const { service, locA } = await setupTwoWarehouses(10, 0);
+    const result = await service.allocateAndReserve({
+      orderId: "ord_1",
+      items: [{ variantId: "var_1", quantity: 3 }],
+    });
+
+    expect(result.allocations).toEqual([
+      { variantId: "var_1", stockLocationId: locA.id, quantity: 3 },
+    ]);
+    expect(result.reservationIds).toHaveLength(1);
+  });
+
+  it("跨两仓按 priority 拆分：两条预留、两仓各自扣减", async () => {
+    const { service, repo, item, locA, locB } = await setupTwoWarehouses(3, 4);
+    const result = await service.allocateAndReserve({
+      orderId: "ord_2",
+      items: [{ variantId: "var_1", quantity: 6 }],
+    });
+
+    expect(result.allocations).toEqual([
+      { variantId: "var_1", stockLocationId: locA.id, quantity: 3 },
+      { variantId: "var_1", stockLocationId: locB.id, quantity: 3 },
+    ]);
+    expect(result.reservationIds).toHaveLength(2);
+
+    const levelA = repo.levels.get(`${item.id}:${locA.id}`)!;
+    const levelB = repo.levels.get(`${item.id}:${locB.id}`)!;
+    expect([levelA.reserved_quantity, levelA.available_quantity]).toEqual([3, 0]);
+    expect([levelB.reserved_quantity, levelB.available_quantity]).toEqual([3, 1]);
+  });
+
+  it("合计不足 → 抛 insufficientStock，且不产生任何预留、库存不动", async () => {
+    const { service, repo, item, locA, locB } = await setupTwoWarehouses(2, 3);
+
+    await expect(
+      service.allocateAndReserve({ orderId: "ord_3", items: [{ variantId: "var_1", quantity: 6 }] }),
+    ).rejects.toBeInstanceOf(DomainError);
+
+    expect(repo.reservations.size).toBe(0);
+    expect(repo.levels.get(`${item.id}:${locA.id}`)!.available_quantity).toBe(2);
+    expect(repo.levels.get(`${item.id}:${locB.id}`)!.available_quantity).toBe(3);
+  });
+
+  it("幂等：同 orderId 重放返回同一批 reservationIds，不重复扣减", async () => {
+    const { service, repo, item, locA } = await setupTwoWarehouses(10, 0);
+    const first = await service.allocateAndReserve({
+      orderId: "ord_4",
+      items: [{ variantId: "var_1", quantity: 4 }],
+    });
+    const second = await service.allocateAndReserve({
+      orderId: "ord_4",
+      items: [{ variantId: "var_1", quantity: 4 }],
+    });
+
+    expect(second.reservationIds).toEqual(first.reservationIds);
+    expect(second.allocations).toEqual(first.allocations);
+    expect(repo.reservations.size).toBe(1);
+    expect(repo.levels.get(`${item.id}:${locA.id}`)!.available_quantity).toBe(6);
+  });
+
+  it("整单多 SKU：任一 SKU 不足则整单失败，另一 SKU 也不占用", async () => {
+    const { service, repo, item, locA } = await setupTwoWarehouses(10, 0);
+    const item2 = await repo.createInventoryItem({ sku: "SKU-2" });
+    await repo.createLevel({ inventoryItemId: item2.id, stockLocationId: locA.id, stockedQuantity: 1 });
+    await repo.linkVariant(item2.id, "var_2");
+
+    await expect(
+      service.allocateAndReserve({
+        orderId: "ord_5",
+        items: [
+          { variantId: "var_1", quantity: 2 },
+          { variantId: "var_2", quantity: 5 },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+
+    expect(repo.reservations.size).toBe(0);
+    expect(repo.levels.get(`${item.id}:${locA.id}`)!.available_quantity).toBe(10);
+    expect(repo.levels.get(`${item2.id}:${locA.id}`)!.available_quantity).toBe(1);
   });
 });

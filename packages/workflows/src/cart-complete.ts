@@ -1,6 +1,6 @@
 import { defineStep, defineWorkflow, StepResponse, type WorkflowRegistry } from "@mall/core";
 
-/** cart-complete 输入：订单载荷 + 预留行（locationId）。 */
+/** cart-complete 输入：订单载荷 + 行项（仓由后端 inventory 分配，客户端不传）。 */
 export interface CartCompleteInput {
   cartId: string;
   email: string;
@@ -25,7 +25,6 @@ export interface CartCompleteInput {
     sku: string;
     quantity: number;
     unitPriceMinor: bigint;
-    locationId: string;
     snapshot: Record<string, unknown>;
   }>;
 }
@@ -35,15 +34,14 @@ export interface OrderPort {
   cancelOrder(orderId: string): Promise<void>;
 }
 export interface InventoryPort {
-  reserve(input: {
-    variantId: string;
-    locationId: string;
-    quantity: number;
-    lineItemId: string;
-    workflowRunId: string;
-    /** 归属订单（发货时按订单找预留转出库）。 */
-    orderId?: string;
-  }): Promise<{ reservationId: string }>;
+  /**
+   * 整单分配 + 预留：仓选择只由后端（inventory 模块）决定，客户端与路由不传仓库（铁律 13）。
+   * 可跨仓拆单；同一 orderId 幂等。返回全部预留 id（补偿时逐个释放）。
+   */
+  allocateAndReserve(input: {
+    orderId: string;
+    items: Array<{ variantId: string; quantity: number }>;
+  }): Promise<{ reservationIds: string[] }>;
   releaseReservation(id: string): Promise<void>;
 }
 export interface PaymentPort {
@@ -99,18 +97,11 @@ export const reserveInventoryStep = defineStep({
   compensationClass: "R",
   async invoke(input: { orderId: string; items: CartCompleteInput["items"] }, ctx) {
     const inv = ctx.resolve<InventoryPort>("inventory");
-    const reservationIds: string[] = [];
-    for (const item of input.items) {
-      const r = await inv.reserve({
-        variantId: item.variantId,
-        locationId: item.locationId,
-        quantity: item.quantity,
-        lineItemId: `${input.orderId}:${item.variantId}`,
-        workflowRunId: input.orderId,
-        orderId: input.orderId,
-      });
-      reservationIds.push(r.reservationId);
-    }
+    // 整单一次分配：inventory 模块内部按仓 priority 贪心，可跨仓拆成多条预留
+    const { reservationIds } = await inv.allocateAndReserve({
+      orderId: input.orderId,
+      items: input.items.map((item) => ({ variantId: item.variantId, quantity: item.quantity })),
+    });
     return new StepResponse({ reservationIds }, reservationIds);
   },
   async compensate(reservationIds: string[], ctx) {

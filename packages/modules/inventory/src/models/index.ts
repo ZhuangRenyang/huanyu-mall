@@ -67,3 +67,25 @@ export const reservationItem = pgTable(
     index("idx_rsv_status").on(t.status),
   ],
 );
+
+/** 仓间调拨流水（ADR-013 §4）：只搬运 stocked，不动 reserved。 */
+export const inventoryTransfer = pgTable(
+  "inventory_transfer",
+  {
+    id: text("id").primaryKey(),
+    fromLocationId: text("from_location_id").notNull().references(() => stockLocation.id),
+    toLocationId: text("to_location_id").notNull().references(() => stockLocation.id),
+    inventoryItemId: text("inventory_item_id").notNull().references(() => inventoryItem.id),
+    quantity: integer("quantity").notNull(),
+    status: text("status").notNull().default("pending"),
+    note: text("note"),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_transfer_from").on(t.fromLocationId),
+    index("idx_transfer_to").on(t.toLocationId),
+    index("idx_transfer_item").on(t.inventoryItemId),
+  ],
+);

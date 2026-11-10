@@ -1,4 +1,3 @@
-import { errors } from "@mall/core";
 import type { FastifyInstance } from "fastify";
 import { cartCompleteWorkflow } from "@mall/workflows";
 import type { AppDeps } from "../../deps.js";
@@ -26,10 +25,7 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
 
     const cart = await deps.services.cart.retrieveCart(id);
-    // 仓库动态取（一期单仓：priority 最高的即默认仓），不硬编码
-    const locations = await deps.services.inventory.listStockLocations();
-    const locationId = locations[0]?.id;
-    if (!locationId) throw errors.notFound("未配置库存仓库");
+    // 仓选择只由后端 inventory 模块决定（ADR-013 §5 / 铁律 13）：路由不再取仓、不再下发 locationId。
 
     const input = {
       cartId: id,
@@ -55,7 +51,6 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
         sku: li.variant_id,
         quantity: li.quantity,
         unitPriceMinor: li.unit_price_minor,
-        locationId,
         snapshot: {},
       })),
     };
