@@ -233,13 +233,13 @@ describe("InventoryService（M07，K1 reservation 独立记账）", () => {
 });
 
 describe("InventoryService.allocateAndReserve（ADR-013 多仓分配）", () => {
-  /** 两仓：loc_a priority 1 / loc_b priority 2，分别入不同在库量。 */
+  /** 两仓：loc_a priority 2 / loc_b priority 1（大者优先，A 是主仓），分别入不同在库量。 */
   async function setupTwoWarehouses(a: number, b: number) {
     const repo = new InMemoryInventoryRepository();
     const service = new InventoryService(repo);
     const item = await repo.createInventoryItem({ sku: "SKU-MULTI" });
-    const locA = await repo.createStockLocation({ name: "A 仓", priority: 1 });
-    const locB = await repo.createStockLocation({ name: "B 仓", priority: 2 });
+    const locA = await repo.createStockLocation({ name: "A 仓", priority: 2 });
+    const locB = await repo.createStockLocation({ name: "B 仓", priority: 1 });
     await repo.createLevel({ inventoryItemId: item.id, stockLocationId: locA.id, stockedQuantity: a });
     await repo.createLevel({ inventoryItemId: item.id, stockLocationId: locB.id, stockedQuantity: b });
     await repo.linkVariant(item.id, "var_1");

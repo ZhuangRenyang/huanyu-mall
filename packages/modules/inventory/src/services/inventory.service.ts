@@ -100,7 +100,9 @@ export class InventoryService implements IInventoryModuleService {
       const itemIds = [...new Set([...itemByVariant.values()])];
       const levels = await repo.findLevelsByItemIds(itemIds);
       const locations = await repo.listLocations();
+      // priority 大者优先；同优先级按 listLocations 的下标（= 创建顺序，老仓在前）兜底。
       const priorityByLocation = new Map(locations.map((l) => [l.id, l.priority]));
+      const orderByLocation = new Map(locations.map((l, i) => [l.id, i]));
 
       // 只考虑未软删的仓（listLocations 已过滤），仓级优先级用于排序
       const snapshots: LevelSnapshot[] = levels
@@ -109,6 +111,7 @@ export class InventoryService implements IInventoryModuleService {
           inventoryItemId: l.inventory_item_id,
           stockLocationId: l.stock_location_id,
           priority: priorityByLocation.get(l.stock_location_id)!,
+          order: orderByLocation.get(l.stock_location_id) ?? 0,
           availableQuantity: l.available_quantity,
         }));
 
@@ -120,7 +123,14 @@ export class InventoryService implements IInventoryModuleService {
       );
 
       const reservationIds: string[] = [];
-      for (const allocation of plan.allocations) {
+      // 统一按 level id 升序占用：两单若各持一把锁再互相等，会 ABBA 死锁。
+      // 全局一致的加锁顺序可消除它（分配的对外顺序仍用 plan.allocations）。
+      const applyOrder = [...plan.allocations].sort((a, b) => {
+        const ka = `${itemByVariant.get(a.variantId)}:${a.stockLocationId}`;
+        const kb = `${itemByVariant.get(b.variantId)}:${b.stockLocationId}`;
+        return (levelIdByKey.get(ka) ?? "").localeCompare(levelIdByKey.get(kb) ?? "");
+      });
+      for (const allocation of applyOrder) {
         const itemId = itemByVariant.get(allocation.variantId)!;
         const levelId = levelIdByKey.get(`${itemId}:${allocation.stockLocationId}`);
         if (!levelId) throw levelNotFound(itemId, allocation.stockLocationId);

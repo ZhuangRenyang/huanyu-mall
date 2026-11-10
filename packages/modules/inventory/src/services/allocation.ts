@@ -2,7 +2,9 @@
  * 多仓分配算法（ADR-013 §1）：纯函数，不碰数据库、不抛领域错误。
  *
  * 规则：
- * 1. 仓按 priority 升序（小者优先）逐个扣减可用量；
+ * 1. 仓按 priority **降序**（大者优先，与既有 `listLocations()` 的 ORDER BY priority DESC 一致）
+ *    逐个扣减可用量；同优先级按调用方给的 `order`（仓库创建顺序）升序，老仓优先——
+ *    保证默认仓不会被后来新建的同优先级仓抢走；
  * 2. 单行项可跨多仓 → 每条 allocation 一个 location；
  * 3. 任一 SKU 所有仓合计可用量不足 → 整单失败（ok:false），不留部分分配；
  * 4. 同一 variant 在 items 中出现多次时先按 variant 汇总需求量。
@@ -16,8 +18,10 @@ export interface AllocationItem {
 export interface LevelSnapshot {
   inventoryItemId: string;
   stockLocationId: string;
-  /** 小者优先。 */
+  /** 大者优先（与既有 listLocations 的 priority DESC 一致）。 */
   priority: number;
+  /** 同优先级的次序（仓库创建顺序，老仓在前），由调用方按 listLocations 顺序给。 */
+  order?: number;
   availableQuantity: number;
 }
 
@@ -48,11 +52,13 @@ export function planAllocation(
     list.push(level);
     levelsByItem.set(level.inventoryItemId, list);
   }
-  // priority 升序；同优先级按 locationId 字典序，保证结果确定可测
+  // priority 降序（大者优先）；同优先级按 order 升序（老仓优先），最后按 locationId 兜底确定性
   for (const list of levelsByItem.values()) {
     list.sort(
       (a, b) =>
-        a.priority - b.priority || a.stockLocationId.localeCompare(b.stockLocationId),
+        b.priority - a.priority ||
+        (a.order ?? 0) - (b.order ?? 0) ||
+        a.stockLocationId.localeCompare(b.stockLocationId),
     );
   }
 

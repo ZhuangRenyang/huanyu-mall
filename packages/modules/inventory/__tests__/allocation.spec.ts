@@ -9,8 +9,9 @@ function level(
   priority: number,
   availableQuantity: number,
   inventoryItemId = "invitem_1",
+  order = 0,
 ): LevelSnapshot {
-  return { inventoryItemId, stockLocationId, priority, availableQuantity };
+  return { inventoryItemId, stockLocationId, priority, order, availableQuantity };
 }
 
 describe("planAllocation（ADR-013 §1：按 priority 贪心，可跨仓拆单）", () => {
@@ -22,10 +23,10 @@ describe("planAllocation（ADR-013 §1：按 priority 贪心，可跨仓拆单�
     });
   });
 
-  it("跨两仓按 priority 升序拆分：小者先扣，顺序与数量正确", () => {
+  it("跨两仓按 priority 降序拆分：大者先扣（与既有 listLocations DESC 一致）", () => {
     const plan = planAllocation(
-      // 故意乱序传入，验证按 priority 排序
-      [level("loc_b", 2, 4), level("loc_a", 1, 3)],
+      // 故意乱序传入，验证按 priority 降序排序
+      [level("loc_b", 1, 4), level("loc_a", 2, 3)],
       [{ variantId: "var_1", quantity: 6 }],
       itemByVariant,
     );
@@ -35,6 +36,18 @@ describe("planAllocation（ADR-013 §1：按 priority 贪心，可跨仓拆单�
         { variantId: "var_1", stockLocationId: "loc_a", quantity: 3 },
         { variantId: "var_1", stockLocationId: "loc_b", quantity: 3 },
       ],
+    });
+  });
+
+  it("同优先级按 order 升序：老仓先扣，默认仓不会被新仓抢走", () => {
+    const plan = planAllocation(
+      [level("loc_new", 0, 5, "invitem_1", 1), level("loc_old", 0, 5, "invitem_1", 0)],
+      [{ variantId: "var_1", quantity: 2 }],
+      itemByVariant,
+    );
+    expect(plan).toEqual({
+      ok: true,
+      allocations: [{ variantId: "var_1", stockLocationId: "loc_old", quantity: 2 }],
     });
   });
 
