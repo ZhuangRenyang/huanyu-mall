@@ -60,6 +60,32 @@ export class DrizzlePaymentRepository implements PaymentRepository {
     return rows[0] ? toCollectionDTO(rows[0]) : null;
   }
 
+  /**
+   * 按支付集合反查支付单。
+   *
+   * 为什么需要这个：支付商回调里带回的 `paymentId` 是**支付商侧交易号**
+   * （支付宝 trade_no / PayPal capture id），与我们内部的 `payment.id`（pay_xxx）
+   * **不在同一个 ID 空间**。直接拿它去 updatePaymentStatus 会更新不到任何行 ——
+   * 症状是「回调返回 200、审计表有记录，但订单永远停在 pending/unpaid」，极难察觉。
+   *
+   * 可信锚点是**商户单号**：发起支付时我们把 `payment_collection.id` 当商户单号传给了
+   * 支付商（支付宝 out_trade_no / PayPal custom_id），支付商会原样回传，
+   * 经 collection 反查就能定位到真正的支付单。
+   */
+  async findPaymentByCollectionId(collectionId: string): Promise<PaymentDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.payment)
+      .where(
+        and(
+          eq(schema.payment.paymentCollectionId, collectionId),
+          isNull(schema.payment.deletedAt),
+        ),
+      )
+      .limit(1);
+    return rows[0] ? toPaymentDTO(rows[0]) : null;
+  }
+
   async updateCollectionStatus(id: string, status: CollectionStatus): Promise<void> {
     await this.db.update(schema.paymentCollection).set({ status, updatedAt: new Date() }).where(eq(schema.paymentCollection.id, id));
   }

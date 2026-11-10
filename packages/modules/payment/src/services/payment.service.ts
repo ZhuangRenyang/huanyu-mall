@@ -235,25 +235,98 @@ export class PaymentService implements IPaymentModuleService {
       raw: raw.rawBody,
     });
     if (!inserted) return { eventId: result.eventId, action: result.action, duplicate: true };
-    await this.applyWebhookAction(result);
+    await this.applyWebhookAction(result, providerId);
     await this.deps.repo.markWebhookProcessed(providerId, result.eventId);
     return { eventId: result.eventId, action: result.action, duplicate: false };
   }
 
-  private async applyWebhookAction(result: WebhookActionResult): Promise<void> {
+  private async applyWebhookAction(
+    result: WebhookActionResult,
+    providerId: string,
+  ): Promise<void> {
     const data = result.data ?? {};
-    if (result.action === "captured" && data.paymentId) {
-      await this.deps.repo.updatePaymentStatus(data.paymentId, "captured", new Date());
-      await this.emitCaptured(data);
+    if (result.action === "captured") {
+      let payment = await this.resolvePaymentForWebhook(data);
+      if (!payment) {
+        /*
+         * 回调到达时可能**还没有** payment 记录 —— 支付宝/PayPal 这类「付款即成功」的渠道，
+         * 授权阶段只是查单确认（不创建支付单），而支付单是在 authorizeSession 授权成功后才创建的；
+         * 时序上用户完全可能先付款、回调先到。
+         *
+         * 这里按商户单号（= collection.id，支付商原样回传）补建一条已支付的支付单。
+         * 幂等由 eventId 去重保证（同一事件只会处理一次）。
+         */
+        if (!data.sessionId) {
+          throw new Error(
+            `支付回调无法定位支付单（支付商交易号=${data.paymentId ?? '-'}，商户单号缺失）`,
+          );
+        }
+        const collection = await this.deps.repo.findCollection(data.sessionId);
+        if (!collection) {
+          throw new Error(`支付回调无法定位支付集合（商户单号=${data.sessionId}）`);
+        }
+        const existing = await this.deps.repo.findPaymentByCollectionId(data.sessionId);
+        payment =
+          existing ??
+          (await this.deps.repo.insertPayment({
+            id: prefixedUlid("pay"),
+            paymentCollectionId: collection.id,
+            sessionId: null,
+            amountMinor: collection.amount_minor,
+            currencyCode: collection.currency_code,
+            status: "captured",
+            providerId,
+            providerReference: data.paymentId ?? null,
+          }));
+      }
+      await this.deps.repo.updatePaymentStatus(payment.id, "captured", new Date());
+      await this.emitCaptured({ ...data, paymentId: payment.id });
       return;
     }
     if (result.action === "authorized" && data.sessionId) {
       await this.deps.repo.updateSessionStatus(data.sessionId, "authorized");
       return;
     }
-    if ((result.action === "failed" || result.action === "canceled") && data.paymentId) {
-      await this.deps.repo.updatePaymentStatus(data.paymentId, result.action === "failed" ? "failed" : "canceled");
+    if (result.action === "failed" || result.action === "canceled") {
+      /*
+       * 失败/取消终态：定位不到时不影响资金（本来就没付成功），不抛错避免支付商无谓重试；
+       * 该事件已经写进审计表（action + payload 可查），不算静默。
+       */
+      const payment = await this.resolvePaymentForWebhook(data);
+      if (payment) {
+        await this.deps.repo.updatePaymentStatus(
+          payment.id,
+          result.action === "failed" ? "failed" : "canceled",
+        );
+      }
     }
+  }
+
+  /**
+   * 定位回调对应的支付单。
+   *
+   * 关键：**Provider 回传的 `paymentId` 是支付商侧交易号**（支付宝 trade_no、
+   * PayPal capture id），与我们内部的 `payment.id`（pay_xxx）**不在同一 ID 空间**，
+   * 拿它直接 updatePaymentStatus 什么也更新不到。
+   *
+   * 可信锚点是 `data.sessionId` —— 那正是发起支付时我们传给支付商的**商户单号**
+   * （= `payment_collection.id`，支付宝 out_trade_no / PayPal custom_id），支付商原样回传，
+   * 经 collection 反查即可定位到真正的支付单。
+   *
+   * 先按内部 id 直接命中一次，是为了兼容那些可能回传内部 id 的 provider。
+   */
+  private async resolvePaymentForWebhook(
+    data: NonNullable<WebhookActionResult["data"]>,
+  ): Promise<PaymentDTO | null> {
+    if (data.paymentId) {
+      const byId = await this.deps.repo.findPayment(data.paymentId);
+      if (byId) return byId;
+    }
+    if (data.sessionId) {
+      const byCollection = await this.deps.repo.findPaymentByCollectionId(data.sessionId);
+      if (byCollection) return byCollection;
+    }
+    return null;
   }
 
   /** 扣款成功 → 发 payment.captured 领域事件（由 subscriber 驱动 order.transition(paid)，payment 不依赖 order）。 */

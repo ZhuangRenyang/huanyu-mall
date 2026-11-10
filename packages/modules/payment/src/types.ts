@@ -111,6 +111,14 @@ export interface PaymentRepository {
     providerReference?: string | null;
   }): Promise<PaymentDTO>;
   findPayment(id: string): Promise<PaymentDTO | null>;
+  /**
+   * 按支付集合（商户单号）反查支付单。
+   *
+   * 支付商回调带回的 `paymentId` 是**支付商侧交易号**（支付宝 trade_no / PayPal capture id），
+   * 与我们内部的 `payment.id`（pay_xxx）不在同一 ID 空间；可靠锚点是商户单号
+   * （= `payment_collection.id`，发起支付时原样传给支付商、回调原样带回）。
+   */
+  findPaymentByCollectionId(collectionId: string): Promise<PaymentDTO | null>;
   updatePaymentStatus(id: string, status: PaymentStatus, capturedAt?: Date | null): Promise<void>;
   insertTransaction(input: InsertTransactionInput): Promise<void>;
   insertRefund(input: {

@@ -108,6 +108,12 @@ export class InMemoryPaymentRepository implements PaymentRepository {
   async findPayment(id: string): Promise<PaymentDTO | null> {
     return this.payments.get(id) ?? null;
   }
+  async findPaymentByCollectionId(collectionId: string): Promise<PaymentDTO | null> {
+    for (const p of this.payments.values()) {
+      if (p.payment_collection_id === collectionId) return p;
+    }
+    return null;
+  }
   async updatePaymentStatus(id: string, status: PaymentStatus, capturedAt?: Date | null): Promise<void> {
     const p = this.payments.get(id);
     if (p) {

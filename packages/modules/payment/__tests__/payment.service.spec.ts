@@ -62,6 +62,76 @@ describe("PaymentService（M06，Fake 闭环 + 幂等 + webhook 去重）", () =
     expect(repo.payments.get(payment.id)?.status).toBe("captured");
   });
 
+  it("回调只带支付商交易号时，靠商户单号（sessionId）反查定位支付单", async () => {
+    /*
+     * 真实场景：支付商回传的 `paymentId` 是**支付商侧交易号**（支付宝 trade_no、
+     * PayPal capture id），与我们内部的 payment.id（pay_xxx）不在同一 ID 空间。
+     * 早先的实现直接拿它 updatePaymentStatus → 更新不到任何行，
+     * 症状是「回调 200、审计表有记录，但订单永远停在 pending/unpaid」，极难察觉。
+     * 可靠锚点是商户单号：发起支付时传给支付商的 collection.id，回调原样带回。
+     */
+    const { repo, service } = setup();
+    const collection = await service.createPaymentCollection({
+      orderId: "ord_pp_1",
+      currencyCode: "CNY",
+      amountMinor: 20600n,
+    });
+    const session = await service.createSession({ paymentCollectionId: collection.id, providerId: "pp_fake" });
+    const payment = await service.authorizeSession(session.id);
+
+    const body = JSON.stringify({
+      id: "evt_pp_1",
+      event: "captured",
+      paymentId: "TRADE_NO_FROM_ALIPAY", // 支付商侧交易号（内部查不到）
+      sessionId: collection.id, // 商户单号（= collection.id，回调原样带回）
+      amountMinor: 20600,
+    });
+    const r = await service.handleProviderWebhook("pp_fake", { headers: {}, rawBody: body });
+    expect(r.duplicate).toBe(false);
+    expect(repo.payments.get(payment.id)?.status).toBe("captured");
+  });
+
+  it("回调先于授权到达（还没有 payment 记录）→ 按商户单号补建支付单并置为已支付", async () => {
+    /*
+     * 支付宝/PayPal 是「付款即成功」：授权阶段只查单确认、不创建支付单，
+     * 支付单是在 authorizeSession 授权成功后才创建的。时序上用户完全可能先付款、
+     * 回调先到 —— 这时回调里没有任何 payment 记录可更新。
+     */
+    const { repo, service } = setup();
+    const collection = await service.createPaymentCollection({
+      orderId: "ord_pp_2",
+      currencyCode: "CNY",
+      amountMinor: 20600n,
+    });
+    // 故意不调 createSession / authorizeSession：模拟"用户先付款、回调先到"
+    const body = JSON.stringify({
+      id: "evt_pp_3",
+      event: "captured",
+      paymentId: "TRADE_NO_FROM_ALIPAY",
+      sessionId: collection.id,
+      amountMinor: 20600,
+    });
+    const r = await service.handleProviderWebhook("pp_fake", { headers: {}, rawBody: body });
+    expect(r.duplicate).toBe(false);
+    const payment = await repo.findPaymentByCollectionId(collection.id);
+    expect(payment?.status).toBe("captured");
+    expect(payment?.amount_minor).toBe(20600n);
+  });
+
+  it("商户单号对不上（支付集合都找不到）→ 抛错（不静默放过，否则订单永远停在 unpaid）", async () => {
+    const { service } = setup();
+    const body = JSON.stringify({
+      id: "evt_pp_2",
+      event: "captured",
+      paymentId: "UNKNOWN_TRADE_NO",
+      sessionId: "UNKNOWN_COLLECTION_ID",
+      amountMinor: 100,
+    });
+    await expect(service.handleProviderWebhook("pp_fake", { headers: {}, rawBody: body })).rejects.toThrow(
+      /无法定位支付集合/,
+    );
+  });
+
   it("验签失败 → 401（DomainError 40005）且不落库", async () => {
     const { repo, service } = setup({ pp_stripe: { webhookSecret: "whsec_test" } });
     const body = JSON.stringify({
