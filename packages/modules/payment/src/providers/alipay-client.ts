@@ -106,8 +106,20 @@ export class AlipayClient {
     if (this.config.returnUrl) params.return_url = this.config.returnUrl;
 
     const sign = this.sign(params);
-    /* sign 单独参与 URL 编码；biz_content 的 JSON 字符也由 URLSearchParams 统一编码 */
-    const query = new URLSearchParams({ ...params, sign }).toString();
+    /*
+     * 拼 query string 时必须把 `+` 换成 `%20`。
+     *
+     * `URLSearchParams.toString()` 按 application/x-www-form-urlencoded 规则把空格编码成 `+`，
+     * 而支付宝解析 **query string** 时不做 `+`→空格转换 —— 实测结果就是
+     * 「错误代码 missing-timestamp / 缺少时间戳参数」（它收到的 timestamp 是
+     * `2026-11-10+08:53:22`，带字面加号，判定非法）。
+     *
+     * 改成 `%20` 后两种解析规则（query 的 %20 解码、form 的 + 解码）都能得到正确值，更稳。
+     *
+     * ⚠️ 注意这只针对**浏览器跳转的 URL**。下面的 `call()` 用 POST form body 提交，
+     * 必须保持 `+`（标准 form 编码），不要一起改。
+     */
+    const query = new URLSearchParams({ ...params, sign }).toString().replace(/\+/g, '%20');
     return `${this.config.gateway}?${query}`;
   }
 

@@ -20,9 +20,17 @@ log() { printf '[pack] %s\n' "$*"; }
 
 log "准备暂存目录: $STAGE"
 # 复制源码（排除依赖与构建产物）
+#
+# ⚠️ 排除列表是**独立于 .gitignore** 的（tar 不读 .gitignore）。
+#    两边必须同步维护：只在 .gitignore 里加规则，这个脚本完全不受影响 ——
+#    真实踩过：.gitignore 加了 .tmp-*/，但打包时 .tmp-ali/ 里的私钥照样进了包。
+#    所以这里除了排除，还会在打包后再做一次「敏感文件扫描」兜底（见文件末尾）。
 tar -cf - \
   --exclude=node_modules --exclude=dist --exclude=.turbo --exclude=.next \
   --exclude=.git --exclude=.workbuddy --exclude=coverage \
+  --exclude='.tmp-*' --exclude='*.tmp' \
+  --exclude='*.pem' --exclude='*.key' --exclude='*.p12' --exclude='*.pfx' \
+  --exclude='.env' --exclude='.env.local' --exclude='.env.production' \
   -C "$REPO_ROOT" . | (cd "$STAGE" && tar -xf -)
 
 # 归一化行尾：文本文件统一 LF
@@ -52,4 +60,20 @@ log "自检通过"
 
 log "打包 → $OUT"
 tar -czf "$OUT" -C "$STAGE" .
+
+# 兜底：扫描产物里有没有敏感文件。
+# 排除列表永远可能漏项（新增目录、新增密钥类型、.gitignore 与本脚本不同步…），
+# 所以最后再扫一遍产物内容，命中就直接失败并删掉产物 —— 宁可打包失败，也不能把密钥发出去。
+log "自检：产物中是否含敏感文件"
+SENSITIVE=$(tar -tzf "$OUT" \
+  | grep -iE '(^|/)(\.env$|\.env\.(local|production)$|[^/]*\.(pem|key|p12|pfx)$|secrets?\.json$|id_rsa)' \
+  || true)
+if [[ -n "$SENSITIVE" ]]; then
+  echo "[pack][ERROR] 产物包含敏感文件，已中止并删除产物：" >&2
+  printf '%s\n' "$SENSITIVE" | sed 's/^/  - /' >&2
+  rm -f "$OUT"
+  exit 1
+fi
+log "自检通过"
+
 log "完成：$(du -h "$OUT" | cut -f1)  $(cd "$STAGE" && find . -type f | wc -l) 个文件"

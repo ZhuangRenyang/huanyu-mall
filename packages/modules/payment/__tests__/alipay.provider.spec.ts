@@ -93,6 +93,27 @@ describe('发起支付', () => {
     expect(biz.product_code).toBe('FAST_INSTANT_TRADE_PAY');
   });
 
+  it('query string 里的空格必须是 %20 而非 +（否则支付宝报 missing-timestamp）', async () => {
+    /*
+     * URLSearchParams 按 form 规则把空格编码成 `+`，而支付宝解析 query string 时
+     * 不做 `+`→空格转换 → 它收到的 timestamp 是 `2026-11-10+08:53:22`，报 missing-timestamp。
+     * 所以跳转 URL 必须用 %20。
+     *
+     * 反过来，POST form body 那边必须保持 `+`（标准 form 编码），两处不能混。
+     * 注意 base64 签名里的 `+` 会被 URLSearchParams 编成 %2B，所以全局替换 + 是安全的。
+     */
+    const res = await makeProvider().initiatePayment({
+      sessionId: 's',
+      amountMinor: 100n,
+      currencyCode: 'CNY',
+      metadata: { subject: '测试 订单' },
+    });
+    expect(res.redirectUrl).toMatch(/timestamp=\d{4}-\d{2}-\d{2}%20/);
+    expect(res.redirectUrl).not.toMatch(/timestamp=\d{4}-\d{2}-\d{2}\+/);
+    /* 签名里的 base64 加号会被编成 %2B，不会被误伤 */
+    expect(res.redirectUrl).not.toContain('+');
+  });
+
   it('时间戳是北京时间格式 yyyy-MM-dd HH:mm:ss（不是 ISO）', () => {
     const ts = alipayTimestamp(new Date('2026-11-09T16:00:00Z'));
     expect(ts).toBe('2026-11-10 00:00:00');
@@ -208,6 +229,8 @@ describe('查单与退款（mock fetch）', () => {
     expect(out.status).toBe('succeeded');
 
     const body = String((fetchMock.mock.calls[0][1] as RequestInit).body);
+    /* POST form body 保持标准 form 编码：空格是 `+`（与跳转 URL 的 %20 相反） */
+    expect(body).toMatch(/timestamp=\d{4}-\d{2}-\d{2}\+\d{2}%3A\d{2}%3A\d{2}/);
     const form = new URLSearchParams(body);
     const biz = JSON.parse(form.get('biz_content') ?? '{}');
     expect(biz.refund_amount).toBe('206.00');
