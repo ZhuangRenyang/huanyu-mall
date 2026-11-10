@@ -7,15 +7,21 @@ import {
   type InventoryPort,
   type OrderPort,
   type PaymentPort,
+  type PromotionPort,
 } from "../src/index.js";
 import { InMemoryDeadLetter, InMemoryJournal } from "./helpers/in-memory-journal.js";
 
 interface Store {
   orders: Map<string, { lineCount: number; discountMinor: bigint; discounts?: CartCompleteInput["discounts"] }>;
   reservations: Map<string, number>;
+  consumedCodes: string[];
+  releasedCodes: string[];
 }
 
-function makePorts(store: Store, opts: { failPayment?: boolean } = {}) {
+function makePorts(
+  store: Store,
+  opts: { failPayment?: boolean; failVoucher?: boolean } = {},
+) {
   let counter = 0;
   const order: OrderPort = {
     async createOrder(input) {
@@ -47,7 +53,16 @@ function makePorts(store: Store, opts: { failPayment?: boolean } = {}) {
       return { paymentCollectionId: `paycol_${++counter}` };
     },
   };
-  return { order, inventory, payment };
+  const promotion: PromotionPort = {
+    async consumeVoucherCodes(codes) {
+      if (opts.failVoucher) throw new Error("voucher limit exceeded");
+      store.consumedCodes.push(...codes);
+    },
+    async releaseVoucherCodes(codes) {
+      store.releasedCodes.push(...codes);
+    },
+  };
+  return { order, inventory, payment, promotion };
 }
 
 function makeEngine(ports: ReturnType<typeof makePorts>) {
@@ -60,7 +75,15 @@ function makeEngine(ports: ReturnType<typeof makePorts>) {
     registry,
     logger: createLogger({ level: "silent" }),
     resolve: (name) =>
-      name === "order" ? ports.order : name === "inventory" ? ports.inventory : name === "payment" ? ports.payment : undefined,
+      name === "order"
+        ? ports.order
+        : name === "inventory"
+          ? ports.inventory
+          : name === "payment"
+            ? ports.payment
+            : name === "promotion"
+              ? ports.promotion
+              : undefined,
   });
   return { engine, journal, deadLetter };
 }
@@ -89,7 +112,7 @@ const input: CartCompleteInput = {
 
 describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   it("happy path：订单 + 预留落库，workflow completed", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map() };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
     const ports = makePorts(store);
     const { engine } = makeEngine(ports);
 
@@ -100,7 +123,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("第三步（支付集合）失败 → 订单行与预留双回滚到基线", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map() };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
     const ports = makePorts(store, { failPayment: true });
     const { engine } = makeEngine(ports);
 
@@ -114,7 +137,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("幂等重放：同 idempotencyKey 不重复建单", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map() };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
     const ports = makePorts(store);
     const { engine } = makeEngine(ports);
 
@@ -125,7 +148,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("discountMinor + discounts 从 input 透传到 OrderPort.createOrder", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map() };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
     const ports = makePorts(store);
     const { engine } = makeEngine(ports);
 
@@ -142,5 +165,59 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
     const created = store.orders.get(r.result.orderId);
     expect(created?.discountMinor).toBe(3980n);
     expect(created?.discounts).toEqual(withDiscount.discounts);
+  });
+
+  it("voucher 命中：下单成功后 consumeVoucherCodes 核销券码", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const ports = makePorts(store);
+    const { engine } = makeEngine(ports);
+
+    const withVoucher: CartCompleteInput = {
+      ...input,
+      discountMinor: 2000n,
+      discounts: [{ type: "voucher", promotionId: "vouch_1", code: "SAVE20", amountMinor: 2000n }],
+    };
+    await engine.run(cartCompleteWorkflow, withVoucher, { idempotencyKey: "k-vouch" });
+    expect(store.consumedCodes).toEqual(["SAVE20"]);
+    expect(store.releasedCodes).toEqual([]);
+  });
+
+  it("voucher 核销失败（并发超限）→ 订单与预留回滚，无已核销码", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const ports = makePorts(store, { failVoucher: true });
+    const { engine } = makeEngine(ports);
+
+    const withVoucher: CartCompleteInput = {
+      ...input,
+      discountMinor: 2000n,
+      discounts: [{ type: "voucher", promotionId: "vouch_1", code: "SAVE20", amountMinor: 2000n }],
+    };
+    await expect(
+      engine.run(cartCompleteWorkflow, withVoucher, { idempotencyKey: "k-vouch-fail" }),
+    ).rejects.toThrow(WorkflowFailedError);
+
+    // createOrderStep 已成功 → 补偿 cancelOrder；reserveInventoryStep 尚未执行
+    expect(store.orders.size).toBe(0);
+    expect(store.reservations.size).toBe(0);
+  });
+
+  it("voucher 核销成功后后续步骤失败 → releaseVoucherCodes 回退 used", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const ports = makePorts(store, { failPayment: true });
+    const { engine } = makeEngine(ports);
+
+    const withVoucher: CartCompleteInput = {
+      ...input,
+      discountMinor: 2000n,
+      discounts: [{ type: "voucher", promotionId: "vouch_1", code: "SAVE20", amountMinor: 2000n }],
+    };
+    await expect(
+      engine.run(cartCompleteWorkflow, withVoucher, { idempotencyKey: "k-vouch-payfail" }),
+    ).rejects.toThrow(WorkflowFailedError);
+
+    expect(store.consumedCodes).toEqual(["SAVE20"]);
+    expect(store.releasedCodes).toEqual(["SAVE20"]);
+    expect(store.orders.size).toBe(0);
+    expect(store.reservations.size).toBe(0);
   });
 });

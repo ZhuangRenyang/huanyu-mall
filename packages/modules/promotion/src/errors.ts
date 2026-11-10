@@ -41,3 +41,7 @@ export function voucherExpired(id: string): DomainError {
 export function voucherUsageLimitReached(code: string): DomainError {
   return new DomainError({ code: 30002, message: `Voucher usage limit reached: ${code}` });
 }
+
+export function voucherCodeAlreadyExists(code: string): DomainError {
+  return new DomainError({ code: 30005, message: `Voucher code already exists: ${code}` });
+}

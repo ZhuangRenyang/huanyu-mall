@@ -16,6 +16,7 @@ import { adminInventoryRoutes } from "./admin/inventory.js";
 import { adminSettingsRoutes } from "./admin/settings.js";
 import { adminFileRoutes } from "./admin/files.js";
 import { adminAuditLogRoutes } from "./admin/audit-logs.js";
+import { adminPromotionRoutes } from "./admin/promotions.js";
 
 export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   healthRoutes(app, deps.config);
@@ -37,4 +38,5 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   adminSettingsRoutes(app, deps);
   adminFileRoutes(app, deps);
   adminAuditLogRoutes(app, deps);
+  adminPromotionRoutes(app, deps);
 }

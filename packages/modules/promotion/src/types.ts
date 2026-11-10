@@ -171,6 +171,8 @@ export interface ComputeDiscountsResult {
   /** 命中的订单促销明细（多命中取折扣最大的一条，见 ADR-012 §3）。供下单侧固化进 order_discount 留痕。 */
   orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
   voucherDiscountMinor: bigint;
+  /** 命中的 Voucher 明细（多码命中取折扣最大的一条）。供下单侧固化进 order_discount 留痕（type='voucher'）。 */
+  voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
   giftCardAppliedMinor: bigint;
 }
 
@@ -208,8 +210,22 @@ export interface PromotionRepository {
   insertVoucherCode(input: CreateVoucherCodeInput & { id: string }): Promise<VoucherCodeDTO>;
   findVoucherCodeById(id: string): Promise<VoucherCodeDTO | null>;
   findVoucherCodeByCode(code: string): Promise<VoucherCodeDTO | null>;
+  /** 按 code 联查 voucher_code + 其归属 voucher（computeDiscounts 单次查询，禁 N+1）。 */
+  findVoucherCodeWithVoucherByCode(
+    code: string,
+  ): Promise<{ code: VoucherCodeDTO; voucher: VoucherDTO } | null>;
   listCodesByVoucher(voucherId: string): Promise<VoucherCodeDTO[]>;
+  updateVoucherCode(codeId: string, patch: { isActive?: boolean }): Promise<VoucherCodeDTO | null>;
   softDeleteVoucherCode(id: string): Promise<void>;
+  /**
+   * 原子自增 voucher_code.used（行锁 + 事务，防并发超用，资金安全硬约束 3）。
+   * 返回自增后的 used、券的 usage_limit、以及是否超限（超限时**不**自增）。
+   */
+  incrementVoucherCodeUsed(
+    codeId: string,
+  ): Promise<{ used: number; usageLimit: number | null; exceeded: boolean }>;
+  /** 原子回退一次 used（workflow 补偿用），下限 0。 */
+  releaseVoucherCodeUsed(codeId: string): Promise<void>;
 
   // gift_card
   insertGiftCard(input: CreateGiftCardInput & { id: string }): Promise<GiftCardDTO>;
@@ -255,7 +271,14 @@ export interface IPromotionModuleService {
   // voucher_code
   addVoucherCode(input: CreateVoucherCodeInput): Promise<VoucherCodeDTO>;
   listVoucherCodes(voucherId: string): Promise<VoucherCodeDTO[]>;
+  retrieveVoucherCodeByCode(code: string): Promise<VoucherCodeDTO | null>;
+  updateVoucherCode(codeId: string, patch: { isActive?: boolean }): Promise<VoucherCodeDTO>;
   deleteVoucherCode(codeId: string): Promise<void>;
+
+  // voucher 核销（阶段 4：下单成功时原子自增 used；超限抛 voucherUsageLimitReached）
+  consumeVoucherCodes(codes: string[]): Promise<void>;
+  /** workflow 补偿：回退一次 used。 */
+  releaseVoucherCodes(codes: string[]): Promise<void>;
 
   // gift_card
   createGiftCard(input: CreateGiftCardInput): Promise<GiftCardDTO>;

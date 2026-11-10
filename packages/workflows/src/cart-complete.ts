@@ -53,6 +53,20 @@ export interface PaymentPort {
     currencyCode: string;
   }): Promise<{ paymentCollectionId: string }>;
 }
+export interface PromotionPort {
+  /** 下单成功时原子核销券码（超限抛错，触发整单回滚）。 */
+  consumeVoucherCodes(codes: string[]): Promise<void>;
+  /** 补偿：回退一次 used。 */
+  releaseVoucherCodes(codes: string[]): Promise<void>;
+}
+
+/** 从折扣留痕明细里提取命中的 voucher 券码（下单成功后要原子核销，防超用）。 */
+export function voucherCodesFromDiscounts(
+  discounts: CartCompleteInput["discounts"],
+): string[] {
+  if (!discounts) return [];
+  return discounts.filter((d) => d.type === "voucher" && d.code).map((d) => d.code as string);
+}
 
 export const createOrderStep = defineStep({
   id: "cart-complete.create-order",
@@ -103,10 +117,31 @@ export const createPaymentCollectionStep = defineStep({
   },
 });
 
+/**
+ * 券码核销（阶段 4）：下单成功后原子自增 used。若并发下某码超限（exceeded），
+ * invoke 抛错 → 引擎补偿已成功的 createOrderStep（cancelOrder），
+ * 保证「不会收了钱但券超用了」（资金安全硬约束 3）。
+ * 补偿：回退已自增的 used（releaseVoucherCodes），供后续步骤失败时回滚。
+ */
+export const consumeVoucherCodesStep = defineStep({
+  id: "cart-complete.consume-voucher-codes",
+  compensationClass: "R",
+  async invoke(input: { codes: string[] }, ctx) {
+    if (input.codes.length === 0) return new StepResponse({}, []);
+    await ctx.resolve<PromotionPort>("promotion").consumeVoucherCodes(input.codes);
+    return new StepResponse({}, input.codes);
+  },
+  async compensate(codes: string[], ctx) {
+    if (codes.length === 0) return;
+    await ctx.resolve<PromotionPort>("promotion").releaseVoucherCodes(codes);
+  },
+});
+
 export const cartCompleteWorkflow = defineWorkflow<CartCompleteInput, { orderId: string }>(
   { id: "cart-complete" },
   async (ctx, input) => {
     const order = await ctx.step(createOrderStep, input);
+    await ctx.step(consumeVoucherCodesStep, { codes: voucherCodesFromDiscounts(input.discounts) });
     await ctx.step(reserveInventoryStep, { orderId: order.orderId, items: input.items });
     await ctx.step(createPaymentCollectionStep, {
       orderId: order.orderId,
@@ -122,5 +157,6 @@ export function registerCartComplete(registry: WorkflowRegistry): void {
   registry.registerStep(createOrderStep);
   registry.registerStep(reserveInventoryStep);
   registry.registerStep(createPaymentCollectionStep);
+  registry.registerStep(consumeVoucherCodesStep);
   registry.registerWorkflow(cartCompleteWorkflow);
 }

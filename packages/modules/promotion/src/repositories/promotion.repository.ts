@@ -1,5 +1,6 @@
 import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "@mall/core";
+import { voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
 import type {
   CreateGiftCardInput,
@@ -315,6 +316,26 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     return rows[0] ? toVoucherCodeDTO(rows[0]) : null;
   }
 
+  async findVoucherCodeWithVoucherByCode(
+    code: string,
+  ): Promise<{ code: VoucherCodeDTO; voucher: VoucherDTO } | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.voucherCode)
+      .innerJoin(schema.voucher, eq(schema.voucher.id, schema.voucherCode.voucherId))
+      .where(
+        and(
+          eq(schema.voucherCode.code, code),
+          isNull(schema.voucherCode.deletedAt),
+          isNull(schema.voucher.deletedAt),
+        ),
+      )
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return { code: toVoucherCodeDTO(row.voucher_code), voucher: toVoucherDTO(row.voucher) };
+  }
+
   async listCodesByVoucher(voucherId: string): Promise<VoucherCodeDTO[]> {
     const rows = await this.db
       .select()
@@ -325,11 +346,63 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     return rows.map(toVoucherCodeDTO);
   }
 
+  async updateVoucherCode(codeId: string, patch: { isActive?: boolean }): Promise<VoucherCodeDTO | null> {
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (patch.isActive !== undefined) set.isActive = patch.isActive;
+    const rows = await this.db
+      .update(schema.voucherCode)
+      .set(set)
+      .where(eq(schema.voucherCode.id, codeId))
+      .returning();
+    return rows[0] ? toVoucherCodeDTO(rows[0]) : null;
+  }
+
   async softDeleteVoucherCode(id: string): Promise<void> {
     await this.db
       .update(schema.voucherCode)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.voucherCode.id, id));
+  }
+
+  async incrementVoucherCodeUsed(
+    codeId: string,
+  ): Promise<{ used: number; usageLimit: number | null; exceeded: boolean }> {
+    /*
+     * 资金安全硬约束 3：检查限额 + 自增必须原子，不能「先查后写」产生竞态。
+     * 事务内用 `FOR UPDATE OF vc` 对 voucher_code 行加锁：并发下单同码时，
+     * 后到事务阻塞在前一个事务提交后，重读到的 used 已是自增后的值，
+     * 从而保证「同一 code 不会超用」。
+     */
+    return this.db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        SELECT vc.used, v.usage_limit
+        FROM voucher_code vc
+        JOIN voucher v ON v.id = vc.voucher_id
+        WHERE vc.id = ${codeId} AND vc.deleted_at IS NULL
+        FOR UPDATE OF vc
+      `);
+      const row = locked.rows[0] as { used: number; usage_limit: number | null } | undefined;
+      if (!row) throw voucherCodeNotFound(codeId);
+      if (row.usage_limit !== null && row.used >= row.usage_limit) {
+        return { used: row.used, usageLimit: row.usage_limit, exceeded: true };
+      }
+      const updated = await tx.execute(sql`
+        UPDATE voucher_code
+        SET used = used + 1, updated_at = now()
+        WHERE id = ${codeId}
+        RETURNING used
+      `);
+      const used = (updated.rows[0] as { used: number }).used;
+      return { used, usageLimit: row.usage_limit, exceeded: false };
+    });
+  }
+
+  async releaseVoucherCodeUsed(codeId: string): Promise<void> {
+    await this.db.execute(sql`
+      UPDATE voucher_code
+      SET used = GREATEST(used - 1, 0), updated_at = now()
+      WHERE id = ${codeId}
+    `);
   }
 
   // —— gift_card ——

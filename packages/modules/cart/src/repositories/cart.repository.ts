@@ -49,6 +49,13 @@ export class DrizzleCartRepository implements CartRepository {
     await this.db.update(schema.cart).set({ status, updatedAt: new Date() }).where(eq(schema.cart.id, id));
   }
 
+  async updateVoucherCodes(id: string, codes: string[]): Promise<void> {
+    await this.db
+      .update(schema.cart)
+      .set({ voucherCodes: codes, updatedAt: new Date() })
+      .where(eq(schema.cart.id, id));
+  }
+
   async softDelete(id: string): Promise<void> {
     await this.db
       .update(schema.cart)
@@ -151,8 +158,15 @@ function toCartDTO(r: typeof schema.cart.$inferSelect): CartDTO {
     customer_id: r.customerId ?? null,
     email: r.email ?? null,
     status: r.status as CartStatus,
+    voucher_codes: parseVoucherCodes(r.voucherCodes),
     totals: parseTotals(r.totals),
   };
+}
+
+/** voucher_codes 是 string[] 的 jsonb；空/非数组一律按 []（容忍脏数据）。 */
+function parseVoucherCodes(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((c): c is string => typeof c === "string");
 }
 
 function parseTotals(raw: unknown): CartTotals | null {

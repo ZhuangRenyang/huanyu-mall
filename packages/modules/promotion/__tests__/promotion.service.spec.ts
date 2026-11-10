@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { voucherCodeNotFound } from "../src/errors.js";
 import { PromotionService } from "../src/services/promotion.service.js";
 import type {
   CreateGiftCardInput,
@@ -188,11 +189,44 @@ class InMemoryPromotionRepository implements PromotionRepository {
   async findVoucherCodeByCode(code: string): Promise<VoucherCodeDTO | null> {
     return [...this.voucherCodes.values()].find((c) => c.code === code) ?? null;
   }
+  async findVoucherCodeWithVoucherByCode(
+    code: string,
+  ): Promise<{ code: VoucherCodeDTO; voucher: VoucherDTO } | null> {
+    const vc = [...this.voucherCodes.values()].find((c) => c.code === code);
+    if (!vc) return null;
+    const voucher = this.vouchers.get(vc.voucher_id);
+    if (!voucher) return null;
+    return { code: vc, voucher };
+  }
   async listCodesByVoucher(voucherId: string): Promise<VoucherCodeDTO[]> {
     return [...this.voucherCodes.values()].filter((c) => c.voucher_id === voucherId);
   }
+  async updateVoucherCode(codeId: string, patch: { isActive?: boolean }): Promise<VoucherCodeDTO | null> {
+    const cur = this.voucherCodes.get(codeId);
+    if (!cur) return null;
+    const next: VoucherCodeDTO = { ...cur, is_active: patch.isActive ?? cur.is_active };
+    this.voucherCodes.set(codeId, next);
+    return next;
+  }
   async softDeleteVoucherCode(id: string): Promise<void> {
     this.voucherCodes.delete(id);
+  }
+  async incrementVoucherCodeUsed(
+    codeId: string,
+  ): Promise<{ used: number; usageLimit: number | null; exceeded: boolean }> {
+    const vc = this.voucherCodes.get(codeId);
+    if (!vc) throw voucherCodeNotFound(codeId);
+    const voucher = this.vouchers.get(vc.voucher_id);
+    const usageLimit = voucher?.usage_limit ?? null;
+    if (usageLimit !== null && vc.used >= usageLimit) {
+      return { used: vc.used, usageLimit, exceeded: true };
+    }
+    vc.used += 1;
+    return { used: vc.used, usageLimit, exceeded: false };
+  }
+  async releaseVoucherCodeUsed(codeId: string): Promise<void> {
+    const vc = this.voucherCodes.get(codeId);
+    if (vc && vc.used > 0) vc.used -= 1;
   }
 
   async insertGiftCard(input: CreateGiftCardInput & { id: string }): Promise<GiftCardDTO> {
@@ -629,5 +663,188 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
     const service = new PromotionService(repo);
     await expect(service.retrieveVoucher("vouch_missing")).rejects.toThrow(/Voucher not found/);
     await expect(service.retrieveGiftCard("gcard_missing")).rejects.toThrow(/Gift card not found/);
+  });
+
+  // —— 阶段 4：Voucher ——
+
+  it("computeDiscounts：voucher fixed 命中返回 voucherDiscountMinor + 明细", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({
+      name: "满 100 减 20",
+      discountType: "fixed",
+      discountValue: 2000n,
+      minSpent: 10000n,
+    });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "SAVE20" });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 2, unitPriceMinor: 9900n }],
+      subtotalMinor: 19800n,
+      shippingMinor: 800n,
+      voucherCodes: ["SAVE20"],
+      giftCardCodes: [],
+    });
+    expect(res.voucherDiscountMinor).toBe(2000n);
+    expect(res.voucherDiscounts).toEqual([{ promotionId: voucher.id, code: "SAVE20", amountMinor: 2000n }]);
+  });
+
+  it("computeDiscounts：voucher percentage = round(小计×bps/10000)", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({
+      name: "8 折券",
+      discountType: "percentage",
+      discountValue: 2000n, // 20% 折扣
+    });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "P20" });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 2, unitPriceMinor: 9900n }],
+      subtotalMinor: 19800n,
+      shippingMinor: 0n,
+      voucherCodes: ["P20"],
+      giftCardCodes: [],
+    });
+    // 19800 × 2000 / 10000 = 3960
+    expect(res.voucherDiscountMinor).toBe(3960n);
+  });
+
+  it("computeDiscounts：min_spent 未达标不命中", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({
+      name: "满 200 减 50",
+      discountType: "fixed",
+      discountValue: 5000n,
+      minSpent: 20000n,
+    });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "BIG50" });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: ["BIG50"],
+      giftCardCodes: [],
+    });
+    expect(res.voucherDiscountMinor).toBe(0n);
+    expect(res.voucherDiscounts).toHaveLength(0);
+  });
+
+  it("computeDiscounts：停用/过期/券码停用/超限 均不命中（即时生效）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+
+    const disabled = await service.createVoucher({ name: "已停用", discountType: "fixed", discountValue: 1000n });
+    await service.updateVoucher(disabled.id, { status: "disabled" });
+    await service.addVoucherCode({ voucherId: disabled.id, code: "OFF" });
+
+    const expired = await service.createVoucher({
+      name: "已过期",
+      discountType: "fixed",
+      discountValue: 1000n,
+      endsAt: new Date("2020-01-01"),
+    });
+    await service.addVoucherCode({ voucherId: expired.id, code: "OLD" });
+
+    const inactiveCode = await service.createVoucher({ name: "码停用", discountType: "fixed", discountValue: 1000n });
+    await service.addVoucherCode({ voucherId: inactiveCode.id, code: "SLEEP", isActive: false });
+
+    const limited = await service.createVoucher({ name: "限 1 次", discountType: "fixed", discountValue: 1000n, usageLimit: 1 });
+    const limitedCode = await service.addVoucherCode({ voucherId: limited.id, code: "ONCE" });
+    await repo.incrementVoucherCodeUsed(limitedCode.id);
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: ["OFF", "OLD", "SLEEP", "ONCE"],
+      giftCardCodes: [],
+    });
+    expect(res.voucherDiscountMinor).toBe(0n);
+  });
+
+  it("computeDiscounts：多码命中取折扣最大的一条（与其他促销一致）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const a = await service.createVoucher({ name: "减 10", discountType: "fixed", discountValue: 1000n });
+    await service.addVoucherCode({ voucherId: a.id, code: "A10" });
+    const b = await service.createVoucher({ name: "减 30", discountType: "fixed", discountValue: 3000n });
+    await service.addVoucherCode({ voucherId: b.id, code: "B30" });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: ["A10", "B30"],
+      giftCardCodes: [],
+    });
+    expect(res.voucherDiscountMinor).toBe(3000n);
+    expect(res.voucherDiscounts).toEqual([{ promotionId: b.id, code: "B30", amountMinor: 3000n }]);
+  });
+
+  it("computeDiscounts：voucher 折扣封顶到小计（不超应付）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({ name: "超额券", discountType: "fixed", discountValue: 999999n });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "BIG" });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: ["BIG"],
+      giftCardCodes: [],
+    });
+    expect(res.voucherDiscountMinor).toBe(9900n);
+  });
+
+  it("consumeVoucherCodes：原子自增 used，超限抛 voucherUsageLimitReached 且不自增", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({ name: "限 1 次", discountType: "fixed", discountValue: 1000n, usageLimit: 1 });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "ONCE" });
+
+    await service.consumeVoucherCodes(["ONCE"]);
+    const codes = await service.listVoucherCodes(voucher.id);
+    expect(codes[0]?.used).toBe(1);
+
+    await expect(service.consumeVoucherCodes(["ONCE"])).rejects.toThrow(/usage limit reached/);
+    expect((await service.listVoucherCodes(voucher.id))[0]?.used).toBe(1);
+  });
+
+  it("releaseVoucherCodes：回退 used（补偿幂等，下限 0）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({ name: "补偿券", discountType: "fixed", discountValue: 1000n });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "RB" });
+
+    await service.consumeVoucherCodes(["RB"]);
+    await service.releaseVoucherCodes(["RB"]);
+    expect((await service.listVoucherCodes(voucher.id))[0]?.used).toBe(0);
+
+    // 二次释放不再变负
+    await service.releaseVoucherCodes(["RB"]);
+    expect((await service.listVoucherCodes(voucher.id))[0]?.used).toBe(0);
+  });
+
+  it("retrieveVoucherCodeByCode / updateVoucherCode 启停券码", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({ name: "码启停", discountType: "fixed", discountValue: 1000n });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "TOGGLE" });
+
+    const found = await service.retrieveVoucherCodeByCode("TOGGLE");
+    expect(found?.code).toBe("TOGGLE");
+
+    const disabled = await service.updateVoucherCode(found!.id, { isActive: false });
+    expect(disabled.is_active).toBe(false);
   });
 });

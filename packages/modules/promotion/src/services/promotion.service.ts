@@ -5,6 +5,7 @@ import {
   promotionRuleNotFound,
   voucherCodeNotFound,
   voucherNotFound,
+  voucherUsageLimitReached,
 } from "../errors.js";
 import type {
   ComputeDiscountsInput,
@@ -116,10 +117,39 @@ export class PromotionService implements IPromotionModuleService {
     return this.repo.listCodesByVoucher(voucherId);
   }
 
+  async retrieveVoucherCodeByCode(code: string): Promise<VoucherCodeDTO | null> {
+    return this.repo.findVoucherCodeByCode(code);
+  }
+
+  async updateVoucherCode(codeId: string, patch: { isActive?: boolean }): Promise<VoucherCodeDTO> {
+    const code = await this.repo.findVoucherCodeById(codeId);
+    if (!code) throw voucherCodeNotFound(codeId);
+    const updated = await this.repo.updateVoucherCode(codeId, patch);
+    return updated!;
+  }
+
   async deleteVoucherCode(codeId: string): Promise<void> {
     const code = await this.repo.findVoucherCodeById(codeId);
     if (!code) throw voucherCodeNotFound(codeId);
     await this.repo.softDeleteVoucherCode(codeId);
+  }
+
+  // —— voucher 核销（阶段 4）——
+  async consumeVoucherCodes(codes: string[]): Promise<void> {
+    for (const code of codes) {
+      const vc = await this.repo.findVoucherCodeByCode(code);
+      if (!vc) throw voucherCodeNotFound(code);
+      const res = await this.repo.incrementVoucherCodeUsed(vc.id);
+      if (res.exceeded) throw voucherUsageLimitReached(code);
+    }
+  }
+
+  async releaseVoucherCodes(codes: string[]): Promise<void> {
+    for (const code of codes) {
+      const vc = await this.repo.findVoucherCodeByCode(code);
+      if (!vc) continue; // 补偿幂等：券码已删则不回退
+      await this.repo.releaseVoucherCodeUsed(vc.id);
+    }
   }
 
   // —— gift_card ——
@@ -234,11 +264,43 @@ export class PromotionService implements IPromotionModuleService {
       });
     }
 
+    // —— Voucher（阶段 4）：输码的订单级折扣，多码命中取折扣金额最大的一条（ADR-012 §3）。——
+    let voucherDiscountMinor = 0n;
+    const voucherDiscounts: ComputeDiscountsResult["voucherDiscounts"] = [];
+    if (ctx.voucherCodes.length > 0) {
+      let bestVoucher: { promotionId: string; code: string; amountMinor: bigint } | null = null;
+      for (const code of ctx.voucherCodes) {
+        const found = await this.repo.findVoucherCodeWithVoucherByCode(code);
+        if (!found) continue; // 券码不存在 → 静默跳过（预览语义，不抛错）
+        const { code: vc, voucher } = found;
+        if (!vc.is_active) continue;
+        if (voucher.status !== "active") continue; // 停用即时生效（硬约束 6）
+        if (voucher.starts_at && voucher.starts_at.getTime() > now.getTime()) continue;
+        if (voucher.ends_at && voucher.ends_at.getTime() < now.getTime()) continue;
+        if (voucher.usage_limit !== null && vc.used >= voucher.usage_limit) continue;
+        if (voucher.min_spent !== null && ctx.subtotalMinor < voucher.min_spent) continue;
+
+        const amount = computeVoucherDiscount(voucher, ctx.subtotalMinor);
+        if (amount <= 0n) continue;
+        if (bestVoucher === null || amount > bestVoucher.amountMinor) {
+          bestVoucher = { promotionId: voucher.id, code: vc.code, amountMinor: amount };
+        }
+      }
+
+      // 封顶到小计（硬约束 3/7）。
+      if (bestVoucher) {
+        const clamped = bestVoucher.amountMinor > ctx.subtotalMinor ? ctx.subtotalMinor : bestVoucher.amountMinor;
+        voucherDiscountMinor = clamped;
+        voucherDiscounts.push({ promotionId: bestVoucher.promotionId, code: bestVoucher.code, amountMinor: clamped });
+      }
+    }
+
     return {
       lineAdjustments,
       orderDiscountMinor,
       orderDiscounts,
-      voucherDiscountMinor: 0n,
+      voucherDiscountMinor,
+      voucherDiscounts,
       giftCardAppliedMinor: 0n,
     };
   }
@@ -275,5 +337,20 @@ function computeOrderRuleDiscount(rule: PromotionRuleDTO, subtotalMinor: bigint)
   }
   // percentage（bps）：round half up。
   const numerator = subtotalMinor * rule.reward_value;
+  return (numerator + 5000n) / 10000n;
+}
+
+/**
+ * Voucher 单码的订单级折扣金额（ADR-012 §1 / 资金安全硬约束 1：全程 bigint，禁浮点）。
+ * - discount_type='fixed'：折扣 = discount_value（minor unit）
+ * - discount_type='percentage'：折扣 = round(subtotalMinor × discount_value / 10000)，discount_value 为万分比 bps
+ * 结果恒 >= 0；封顶到小计由调用方负责。
+ */
+function computeVoucherDiscount(voucher: VoucherDTO, subtotalMinor: bigint): bigint {
+  if (voucher.discount_type === "fixed") {
+    return voucher.discount_value;
+  }
+  // percentage（bps）：round half up。
+  const numerator = subtotalMinor * voucher.discount_value;
   return (numerator + 5000n) / 10000n;
 }

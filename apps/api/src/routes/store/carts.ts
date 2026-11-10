@@ -16,6 +16,10 @@ const updateLineItemBody = z.object({ quantity: z.number().int().min(1).max(999)
 const shippingMethodBody = z.object({
   shipping_option_id: z.string(),
 });
+/** 输码：只收券码凭证（string[]），折扣金额由后端 computeDiscounts 算（铁律 13，防客户端传价）。 */
+const voucherCodesBody = z.object({
+  codes: z.array(z.string().min(1)).max(50),
+});
 
 function mapLineItem(li: CartLineItemDTO) {
   return {
@@ -42,6 +46,7 @@ export function mapCart(cart: CartDetailDTO) {
     customer_id: cart.customer_id,
     email: cart.email,
     status: cart.status,
+    voucher_codes: cart.voucher_codes,
     line_items: cart.items.map(mapLineItem),
     shipping_method: cart.shipping_method,
     totals: cart.totals,
@@ -118,6 +123,18 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const cart = await deps.services.cart.setShippingMethod(id, {
         shippingOptionId: b.shipping_option_id,
       });
+      reply.ok(mapCart(cart));
+    },
+  );
+
+  // 输码/清码：覆盖式设置顾客输入的 voucher codes（阶段 4，只传凭证）。
+  app.put(
+    "/api/v1/store/carts/:id/voucher-codes",
+    { schema: { body: voucherCodesBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof voucherCodesBody>;
+      const cart = await deps.services.cart.setVoucherCodes(id, b.codes);
       reply.ok(mapCart(cart));
     },
   );

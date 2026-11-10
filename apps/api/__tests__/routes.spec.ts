@@ -200,6 +200,113 @@ describe("API routes（fastify.inject）", () => {
     });
   });
 
+  it("13. voucher 后台管理：建券(自动生成码)/列表/详情/启停/加码，全部 RBAC + 审计", async () => {
+    await withApp(async (app, deps) => {
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/auth/login",
+        headers: { "content-type": "application/json" },
+        payload: { email: "admin@x.com", password: "pw123456" },
+      });
+      expect(login.statusCode).toBe(200);
+
+      // 未带 JWT → 401
+      const noAuth = await app.inject({ method: "GET", url: "/api/v1/admin/promotions/vouchers" });
+      expect(noAuth.statusCode).toBe(401);
+
+      // staff → 403（无 settings 权限）
+      const staff = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/promotions/vouchers",
+        headers: { authorization: "Bearer staff" },
+      });
+      expect(staff.statusCode).toBe(403);
+
+      // 建券（不传 codes → 后端生成）
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/promotions/vouchers",
+        headers: { authorization: "Bearer admin", "content-type": "application/json" },
+        payload: { name: "满 100 减 20", discount_type: "fixed", discount_value: 2000, min_spent: 10000 },
+      });
+      expect(create.statusCode).toBe(201);
+      const created = create.json().data;
+      expect(created.id).toBe("vouch_1");
+      expect(created.discount_value).toBe(2000);
+      expect(created.codes).toHaveLength(1);
+      expect(created.codes[0].code).toMatch(/^[0-9A-F]{12}$/);
+
+      // 详情
+      const detail = await app.inject({
+        method: "GET",
+        url: `/api/v1/admin/promotions/vouchers/${created.id}`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json().data.name).toBe("满 100 减 20");
+
+      // 更新
+      const update = await app.inject({
+        method: "PUT",
+        url: `/api/v1/admin/promotions/vouchers/${created.id}`,
+        headers: { authorization: "Bearer admin", "content-type": "application/json" },
+        payload: { usage_limit: 100 },
+      });
+      expect(update.statusCode).toBe(200);
+      expect(update.json().data.usage_limit).toBe(100);
+
+      // 停用/启用
+      const disable = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/promotions/vouchers/${created.id}/disable`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(disable.statusCode).toBe(200);
+      expect(disable.json().data.status).toBe("disabled");
+      const enable = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/promotions/vouchers/${created.id}/enable`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(enable.statusCode).toBe(200);
+      expect(enable.json().data.status).toBe("active");
+
+      // 加码
+      const addCodes = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/promotions/vouchers/${created.id}/codes`,
+        headers: { authorization: "Bearer admin", "content-type": "application/json" },
+        payload: { codes: ["SAVE20"] },
+      });
+      expect(addCodes.statusCode).toBe(201);
+
+      // 列表券码
+      const listCodes = await app.inject({
+        method: "GET",
+        url: `/api/v1/admin/promotions/vouchers/${created.id}/codes`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(listCodes.statusCode).toBe(200);
+      expect(listCodes.json().data.items.length).toBe(2);
+
+      // 审计留痕：voucher.create 已记录
+      expect(deps.auditRepo.rows.some((r) => r.action === "voucher.create")).toBe(true);
+    });
+  });
+
+  it("14. 店面输码：PUT voucher-codes 返回含 voucher_codes 的购物车", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/v1/store/carts/cart_1/voucher-codes",
+        headers: { "content-type": "application/json" },
+        payload: { codes: ["SAVE20"] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.voucher_codes).toEqual(["SAVE20"]);
+    });
+  });
+
   it("6. limit>100 → 400；错误体含 {code,message}", async () => {
     await withApp(async (app) => {
       const res = await app.inject({ method: "GET", url: "/api/v1/store/products?limit=200&offset=0" });

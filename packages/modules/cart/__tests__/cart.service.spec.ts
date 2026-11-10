@@ -23,6 +23,7 @@ class InMemoryCartRepository implements CartRepository {
   readonly deletedItems = new Set<string>();
   readonly shipping = new Map<string, CartShippingMethodDTO>();
   readonly customerLinks = new Map<string, string>();
+  readonly voucherCodes = new Map<string, string[]>();
   private counter = 0;
 
   async insert(input: CreateCartInput & { id: string }): Promise<CartDTO> {
@@ -34,6 +35,7 @@ class InMemoryCartRepository implements CartRepository {
       customer_id: input.customerId ?? null,
       email: input.email ?? null,
       status: "open",
+      voucher_codes: [],
       totals: null,
     };
     this.carts.set(dto.id, dto);
@@ -41,11 +43,16 @@ class InMemoryCartRepository implements CartRepository {
   }
   async findById(id: string): Promise<CartDTO | null> {
     if (this.deleted.has(id)) return null;
-    return this.carts.get(id) ?? null;
+    const cart = this.carts.get(id);
+    if (!cart) return null;
+    return { ...cart, voucher_codes: this.voucherCodes.get(id) ?? [] };
   }
   async updateStatus(id: string, status: CartStatus): Promise<void> {
     const c = this.carts.get(id);
     if (c) c.status = status;
+  }
+  async updateVoucherCodes(id: string, codes: string[]): Promise<void> {
+    this.voucherCodes.set(id, codes);
   }
   async softDelete(id: string): Promise<void> {
     this.deleted.add(id);
@@ -158,11 +165,13 @@ class FakeShippingLookup implements ShippingLookupPort {
   }
 }
 
-/** 促销端口桩：目录促销行级折扣（对每行返回固定折扣金额）+ 订单级折扣。 */
+/** 促销端口桩：目录促销行级折扣（对每行返回固定折扣金额）+ 订单级折扣 + voucher 折扣。 */
 class FakePromotionLookup implements PromotionLookupPort {
   constructor(
     private readonly fixedDiscountMinor: bigint = 0n,
     private readonly orderDiscountMinor: bigint = 0n,
+    private readonly voucherDiscountMinor: bigint = 0n,
+    private readonly voucherCode: string = "V20",
   ) {}
   async computeDiscounts(ctx: {
     currencyCode: string;
@@ -191,11 +200,17 @@ class FakePromotionLookup implements PromotionLookupPort {
       this.orderDiscountMinor > 0n
         ? [{ promotionId: "promo_ord", code: "ORDER20", amountMinor: this.orderDiscountMinor }]
         : [];
+    // voucher 折扣只在顾客输入了券码时才命中（模拟 promotion 侧校验）。
+    const voucherDiscounts =
+      this.voucherDiscountMinor > 0n && ctx.voucherCodes.length > 0
+        ? [{ promotionId: "vouch_1", code: this.voucherCode, amountMinor: this.voucherDiscountMinor }]
+        : [];
     return {
       lineAdjustments,
       orderDiscountMinor: this.orderDiscountMinor,
       orderDiscounts,
-      voucherDiscountMinor: 0n,
+      voucherDiscountMinor: voucherDiscounts[0]?.amountMinor ?? 0n,
+      voucherDiscounts,
       giftCardAppliedMinor: 0n,
     };
   }
@@ -209,6 +224,7 @@ function setup(
     categoryIdsByProduct?: Map<string, string[]>;
     fixedDiscountMinor?: bigint;
     orderDiscountMinor?: bigint;
+    voucherDiscountMinor?: bigint;
   } = {},
 ) {
   const repo = new InMemoryCartRepository();
@@ -217,7 +233,11 @@ function setup(
     product: new FakeProductLookup(opts.productStatus, opts.categoryIdsByProduct ?? new Map()),
     pricing: new FakePricingLookup(opts.price === undefined ? 9900n : opts.price),
     shipping: new FakeShippingLookup(opts.freeOverThreshold ?? null),
-    promotion: new FakePromotionLookup(opts.fixedDiscountMinor ?? 0n, opts.orderDiscountMinor ?? 0n),
+    promotion: new FakePromotionLookup(
+      opts.fixedDiscountMinor ?? 0n,
+      opts.orderDiscountMinor ?? 0n,
+      opts.voucherDiscountMinor ?? 0n,
+    ),
   });
   return { repo, service };
 }
@@ -375,5 +395,37 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup();
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await expect(service.addLineItem(cart.id, { variantId: "var_1", quantity: 0 })).rejects.toThrow();
+  });
+
+  it("setVoucherCodes 持久化券码（去重）并传入 computeDiscounts", async () => {
+    const { repo, service } = setup({ voucherDiscountMinor: 2000n });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 }); // 小计 19800
+    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }); // 运费 800
+
+    const detail = await service.setVoucherCodes(cart.id, ["V20", "V20", ""]);
+    expect(detail.voucher_codes).toEqual(["V20"]);
+    // 刷新不丢：repo 持久化
+    expect(repo.voucherCodes.get(cart.id)).toEqual(["V20"]);
+
+    // voucher 折扣进 totals
+    expect(detail.totals?.discount_minor).toBe(2000n);
+    expect(detail.totals?.total_minor).toBe(19800n + 800n - 2000n);
+    // 明细含 voucher 留痕
+    expect(detail.discounts).toEqual([
+      { type: "voucher", promotion_id: "vouch_1", code: "V20", amount_minor: 2000n },
+    ]);
+  });
+
+  it("未输码时 voucher 折扣为 0，合计不变", async () => {
+    const { service } = setup({ voucherDiscountMinor: 2000n });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
+    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+
+    const detail = await service.retrieveCart(cart.id);
+    expect(detail.totals?.discount_minor).toBe(0n);
+    expect(detail.totals?.total_minor).toBe(20600n);
+    expect(detail.discounts).toEqual([]);
   });
 });

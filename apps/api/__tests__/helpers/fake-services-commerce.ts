@@ -7,6 +7,79 @@ import { checkPasswordStrength } from "@mall/auth";
 import type { FakeServicesState } from "./fake-services-state.js";
 
 export function makeFakeCommerceServices(state: FakeServicesState) {
+  // —— 促销/优惠券内存替身（阶段 4 后台管理路由用）——
+  const vouchers = new Map<string, Record<string, unknown>>();
+  const voucherCodes = new Map<string, Record<string, unknown>>();
+  let vCounter = 0;
+  let vcCounter = 0;
+  const promotion = {
+    listVouchers: async ({ limit, offset }: { limit: number; offset: number }) => {
+      const items = [...vouchers.values()].slice(offset, offset + limit);
+      return { items, count: vouchers.size };
+    },
+    createVoucher: async (input: Record<string, unknown>) => {
+      const id = `vouch_${++vCounter}`;
+      const v = {
+        id,
+        name: input.name,
+        type: input.type ?? "entire_order",
+        usage_limit: input.usageLimit ?? null,
+        starts_at: input.startsAt ?? null,
+        ends_at: input.endsAt ?? null,
+        discount_type: input.discountType,
+        discount_value: input.discountValue,
+        min_spent: input.minSpent ?? null,
+        status: "active",
+      };
+      vouchers.set(id, v);
+      return v;
+    },
+    retrieveVoucher: async (id: string) => {
+      const v = vouchers.get(id);
+      if (!v) throw errors.notFound("voucher not found");
+      return v;
+    },
+    updateVoucher: async (id: string, patch: Record<string, unknown>) => {
+      const cur = vouchers.get(id);
+      if (!cur) throw errors.notFound("voucher not found");
+      const next: Record<string, unknown> = { ...cur };
+      if (patch.name !== undefined) next.name = patch.name;
+      if (patch.type !== undefined) next.type = patch.type;
+      if (patch.usageLimit !== undefined) next.usage_limit = patch.usageLimit;
+      if (patch.startsAt !== undefined) next.starts_at = patch.startsAt;
+      if (patch.endsAt !== undefined) next.ends_at = patch.endsAt;
+      if (patch.discountType !== undefined) next.discount_type = patch.discountType;
+      if (patch.discountValue !== undefined) next.discount_value = patch.discountValue;
+      if (patch.minSpent !== undefined) next.min_spent = patch.minSpent;
+      if (patch.status !== undefined) next.status = patch.status;
+      vouchers.set(id, next);
+      return next;
+    },
+    retrieveVoucherCodeByCode: async (code: string) => {
+      for (const c of voucherCodes.values()) if (c.code === code) return c;
+      return null;
+    },
+    addVoucherCode: async ({ voucherId, code }: { voucherId: string; code: string }) => {
+      const id = `vcode_${++vcCounter}`;
+      const c = { id, voucher_id: voucherId, code, used: 0, is_active: true };
+      voucherCodes.set(id, c);
+      return c;
+    },
+    listVoucherCodes: async (voucherId: string) => {
+      return [...voucherCodes.values()].filter((c) => c.voucher_id === voucherId);
+    },
+    deleteVoucherCode: async () => {},
+    updateVoucherCode: async (id: string, patch: { isActive?: boolean }) => {
+      const cur = voucherCodes.get(id);
+      if (!cur) throw errors.notFound("voucher code not found");
+      const next = { ...cur, is_active: patch.isActive ?? cur.is_active };
+      voucherCodes.set(id, next);
+      return next;
+    },
+    consumeVoucherCodes: async () => {},
+    releaseVoucherCodes: async () => {},
+  };
+
   const orderItem = {
     id: "oli_1",
     order_id: "ord_1",
@@ -43,6 +116,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   };
 
   return {
+    promotion,
     customer: {
       retrieveCustomer: async () => ({
         id: "cust_1",
@@ -171,6 +245,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         customer_id: null,
         email: "a@b.com",
         status: "open",
+        voucher_codes: [],
         items: [
           {
             id: "cli_1",
@@ -181,6 +256,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
             quantity: 1,
             unit_price_minor: 9900n,
             currency_code: "CNY",
+            discount_minor: 0n,
           },
         ],
         shipping_method: null,
@@ -191,8 +267,41 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           total_minor: 9900n,
           discount_minor: 0n,
         },
+        discounts: [],
       }),
       createCart: async () => ({ id: "cart_1" }),
+      setVoucherCodes: async (_id: string, codes: string[]) => ({
+        id: "cart_1",
+        channel_id: "chn_cn",
+        region_id: "reg_1",
+        currency_code: "CNY",
+        customer_id: null,
+        email: "a@b.com",
+        status: "open",
+        voucher_codes: codes,
+        items: [
+          {
+            id: "cli_1",
+            cart_id: "cart_1",
+            variant_id: "var_1",
+            product_id: "prod_1",
+            title: "T恤",
+            quantity: 1,
+            unit_price_minor: 9900n,
+            currency_code: "CNY",
+            discount_minor: 0n,
+          },
+        ],
+        shipping_method: null,
+        totals: {
+          subtotal_minor: 9900n,
+          shipping_minor: 0n,
+          tax_minor: 0n,
+          total_minor: 9900n,
+          discount_minor: 0n,
+        },
+        discounts: [],
+      }),
       // checkout 下单成功后会作废购物车（一车一单）。测试里幂等重放/下单路径不依赖它的副作用，
       // 只要求接口存在、不抛错。
       completeCart: async () => {},

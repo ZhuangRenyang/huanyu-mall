@@ -13,6 +13,8 @@ export const cart = pgTable(
     status: text("status").notNull().default("open"),
     totals: jsonb("totals"),
     metadata: jsonb("metadata"),
+    /** 顾客输入的 voucher codes（string[]），持久化，刷新不丢；金额由 promotion 侧读时算。 */
+    voucherCodes: jsonb("voucher_codes"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

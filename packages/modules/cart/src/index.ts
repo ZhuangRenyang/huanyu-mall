@@ -28,6 +28,6 @@ export default Module("cart", {
       // 目录促销行级折扣：后端算金额（铁律 13）
       promotion: ctx.resolve<PromotionLookupPort>("promotion"),
     }),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_voucher_codes.sql"],
   linkable,
 });
