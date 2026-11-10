@@ -35,5 +35,8 @@ catalog:
   "@radix-ui/react-select": 2.4.1
   "@radix-ui/react-slot": 1.5.0
   sonner: 2.0.8
+  # 测试栈：Radix 的 Portal 在 SSR 下不产出节点，焦点/Escape/aria 关联必须用真实 DOM 验证
+  "@testing-library/react": 16.3.3
+  jsdom: 31.0.0
 
 # 允许运行 install 构建脚本的依赖（原生二进制：esbuild / msgpackr-extract）

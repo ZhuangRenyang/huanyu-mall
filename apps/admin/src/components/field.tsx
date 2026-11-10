@@ -123,7 +123,16 @@ export type TextAreaFieldProps = React.TextareaHTMLAttributes<HTMLTextAreaElemen
 export function TextAreaField({ id, label, error, required, className, ...props }: TextAreaFieldProps) {
   return (
     <Field id={id} label={label} required={required} error={error}>
-      {(aria) => <Textarea {...aria} aria-required={required} className={cn('min-h-[64px] py-2', className)} {...props} />}
+      {(aria) => (
+        <Textarea
+          {...aria}
+          aria-required={required}
+          /* rows=2 与迁移前的原生 textarea 一致（视觉零变化门禁要求） */
+          rows={2}
+          className={cn('min-h-[64px] py-2', className)}
+          {...props}
+        />
+      )}
     </Field>
   );
 }

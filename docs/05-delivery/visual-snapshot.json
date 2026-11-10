@@ -1,0 +1,1069 @@
+{
+  "generatedBy": "packages/ui/scripts/visual-snapshot.ts",
+  "surfaces": [
+    {
+      "id": "dialog-overlay",
+      "page": "admin-orders / admin-products",
+      "source": "迁移前 apps/admin/src/components/focus-modal.tsx:32",
+      "before": "absolute inset-0 bg-neutral-900/40",
+      "after": "fixed inset-0 z-[var(--z-modal)] bg-neutral-900/40",
+      "base": {
+        "position": "fixed",
+        "inset": "0px",
+        "z-index": "var(--z-modal)",
+        "background-color": "color-mix(in oklab, #17171B 40%, transparent);"
+      }
+    },
+    {
+      "id": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "source": "迁移前 apps/admin/src/components/focus-modal.tsx:33",
+      "before": "relative w-full max-w-md rounded-xl bg-card p-5 shadow-lg",
+      "after": "fixed top-1/2 left-1/2 z-[var(--z-modal)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl bg-card p-5 text-card-foreground shadow-lg",
+      "base": {
+        "position": "fixed",
+        "top": "calc(1 / 2 * 100%)",
+        "left": "calc(1 / 2 * 100%)",
+        "z-index": "var(--z-modal)",
+        "width": "calc(100% - 2rem)",
+        "max-width": "var(--container-md)",
+        "--tw-translate-x": "calc(calc(1 / 2 * 100%) * -1)",
+        "translate": "var(--tw-translate-x) var(--tw-translate-y)",
+        "--tw-translate-y": "calc(calc(1 / 2 * 100%) * -1)",
+        "border-radius": "calc(var(--radius) * 2)",
+        "background-color": "var(--card)",
+        "padding": "calc(0.25rem * 5)",
+        "color": "var(--card-foreground)",
+        "--tw-shadow": "0 12px 32px -8px rgba(23, 23, 27, 0.16)",
+        "box-shadow": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)"
+      }
+    },
+    {
+      "id": "dialog-footer",
+      "page": "admin-orders",
+      "source": "迁移前 apps/admin/src/components/focus-modal.tsx:42",
+      "before": "mt-5 flex justify-end gap-2",
+      "after": "mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+      "base": {
+        "margin-top": "calc(0.25rem * 5)",
+        "display": "flex",
+        "flex-direction": "column-reverse",
+        "gap": "calc(0.25rem * 2)"
+      }
+    },
+    {
+      "id": "dialog-title",
+      "page": "admin-orders",
+      "source": "迁移前 apps/admin/src/components/focus-modal.tsx:35",
+      "before": "text-base font-semibold text-foreground",
+      "after": "text-base font-semibold text-foreground",
+      "base": {
+        "font-size": "1rem",
+        "line-height": "1.6",
+        "letter-spacing": "0",
+        "--tw-font-weight": "var(--font-weight-semibold)",
+        "font-weight": "var(--font-weight-semibold)",
+        "color": "var(--foreground)"
+      }
+    },
+    {
+      "id": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "source": "迁移前 apps/admin/src/components/focus-modal.tsx:36（IconButton size=md）",
+      "before": "grid place-items-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground size-11",
+      "after": "absolute right-2 top-2 grid size-11 place-items-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+      "base": {
+        "position": "absolute",
+        "right": "calc(0.25rem * 2)",
+        "top": "calc(0.25rem * 2)",
+        "display": "grid",
+        "width": "calc(0.25rem * 11)",
+        "height": "calc(0.25rem * 11)",
+        "place-items": "center",
+        "border-radius": "var(--radius)",
+        "color": "var(--muted-foreground)",
+        "transition-property": "color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to",
+        "transition-timing-function": "var(--default-transition-timing-function)",
+        "transition-duration": "150ms",
+        "--tw-duration": "150ms"
+      }
+    },
+    {
+      "id": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "source": "迁移前 apps/admin/src/components/sheet.tsx:37",
+      "before": "absolute right-0 top-0 flex h-full w-full max-w-xl flex-col bg-card shadow-lg",
+      "after": "fixed z-[var(--z-drawer)] flex flex-col bg-card text-card-foreground shadow-lg transition-transform duration-200 ease-emphasized inset-y-0 right-0 h-full w-full max-w-xl starting:translate-x-full",
+      "base": {
+        "position": "fixed",
+        "z-index": "var(--z-drawer)",
+        "display": "flex",
+        "flex-direction": "column",
+        "background-color": "var(--card)",
+        "color": "var(--card-foreground)",
+        "--tw-shadow": "0 12px 32px -8px rgba(23, 23, 27, 0.16)",
+        "box-shadow": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)",
+        "transition-property": "transform, translate, scale, rotate",
+        "transition-timing-function": "var(--motion-ease-emphasized)",
+        "transition-duration": "200ms",
+        "--tw-duration": "200ms",
+        "--tw-ease": "var(--motion-ease-emphasized)",
+        "inset-block": "0px",
+        "right": "0px",
+        "height": "100%",
+        "width": "100%",
+        "max-width": "var(--container-xl)"
+      }
+    },
+    {
+      "id": "sheet-header",
+      "page": "admin-orders / admin-products",
+      "source": "迁移前 apps/admin/src/components/sheet.tsx:39",
+      "before": "flex items-center justify-between border-b border-border px-5 py-3",
+      "after": "shrink-0 border-b border-border px-5 py-3 pr-12",
+      "base": {
+        "flex-shrink": "0",
+        "border-bottom-style": "var(--tw-border-style)",
+        "border-bottom-width": "1px",
+        "border-color": "var(--border)",
+        "padding-inline": "calc(0.25rem * 5)",
+        "padding-block": "calc(0.25rem * 3)",
+        "padding-right": "calc(0.25rem * 12)"
+      }
+    },
+    {
+      "id": "sheet-body",
+      "page": "admin-orders / admin-products",
+      "source": "迁移前 apps/admin/src/components/sheet.tsx:45",
+      "before": "flex-1 overflow-y-auto p-5",
+      "after": "flex-1 overflow-y-auto p-5",
+      "base": {
+        "flex": "1",
+        "overflow-y": "auto",
+        "padding": "calc(0.25rem * 5)"
+      }
+    },
+    {
+      "id": "sheet-footer",
+      "page": "admin-products",
+      "source": "迁移前 apps/admin/src/components/sheet.tsx:46",
+      "before": "flex items-center justify-end gap-2 border-t border-border p-4",
+      "after": "shrink-0 border-t border-border p-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+      "base": {
+        "flex-shrink": "0",
+        "border-top-style": "var(--tw-border-style)",
+        "border-top-width": "1px",
+        "border-color": "var(--border)",
+        "padding": "calc(0.25rem * 4)",
+        "display": "flex",
+        "flex-direction": "column-reverse",
+        "gap": "calc(0.25rem * 2)"
+      }
+    },
+    {
+      "id": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "source": "迁移前 apps/admin/src/pages/settings.tsx:43-44",
+      "before": "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors duration-150 border-primary font-medium text-primary",
+      "after": "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors duration-150 border-transparent text-muted-foreground data-[state=active]:border-primary data-[state=active]:font-medium data-[state=active]:text-primary data-[state=inactive]:hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40",
+      "base": {
+        "margin-bottom": "-1px",
+        "display": "flex",
+        "align-items": "center",
+        "gap": "calc(0.25rem * 1.5)",
+        "border-bottom-style": "var(--tw-border-style)",
+        "border-bottom-width": "2px",
+        "padding-inline": "calc(0.25rem * 3)",
+        "padding-block": "calc(0.25rem * 2)",
+        "font-size": "0.875rem",
+        "line-height": "1.6",
+        "letter-spacing": "0",
+        "transition-property": "color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to",
+        "transition-timing-function": "var(--default-transition-timing-function)",
+        "transition-duration": "150ms",
+        "--tw-duration": "150ms",
+        "border-color": "transparent",
+        "color": "var(--muted-foreground)"
+      }
+    },
+    {
+      "id": "input",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "source": "迁移前 apps/admin/src/components/field.tsx:40-41",
+      "before": "h-9 w-full rounded-md border bg-background px-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground border-input focus:border-ring",
+      "after": "h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground focus:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:border-destructive",
+      "base": {
+        "height": "calc(0.25rem * 9)",
+        "width": "100%",
+        "border-radius": "var(--radius)",
+        "border-style": "var(--tw-border-style)",
+        "border-width": "1px",
+        "border-color": "var(--input)",
+        "background-color": "var(--background)",
+        "padding-inline": "calc(0.25rem * 3)",
+        "font-size": "0.875rem",
+        "line-height": "1.6",
+        "letter-spacing": "0",
+        "color": "var(--foreground)",
+        "--tw-outline-style": "none",
+        "outline-style": "none",
+        "transition-property": "color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to",
+        "transition-timing-function": "var(--default-transition-timing-function)",
+        "transition-duration": "150ms",
+        "--tw-duration": "150ms"
+      }
+    },
+    {
+      "id": "textarea",
+      "page": "admin-products（商品描述）",
+      "source": "迁移前 apps/admin/src/components/field.tsx:40-41 + 95",
+      "before": "w-full rounded-md border bg-background px-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground border-input focus:border-ring min-h-[64px] py-2",
+      "after": "min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground focus:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:border-destructive min-h-[64px]",
+      "base": {
+        "min-height": "64px",
+        "width": "100%",
+        "border-radius": "var(--radius)",
+        "border-style": "var(--tw-border-style)",
+        "border-width": "1px",
+        "border-color": "var(--input)",
+        "background-color": "var(--background)",
+        "padding-inline": "calc(0.25rem * 3)",
+        "padding-block": "calc(0.25rem * 2)",
+        "font-size": "0.875rem",
+        "line-height": "1.6",
+        "letter-spacing": "0",
+        "color": "var(--foreground)",
+        "--tw-outline-style": "none",
+        "outline-style": "none",
+        "transition-property": "color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to",
+        "transition-timing-function": "var(--default-transition-timing-function)",
+        "transition-duration": "150ms",
+        "--tw-duration": "150ms"
+      }
+    },
+    {
+      "id": "label",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "source": "迁移前 apps/admin/src/components/field.tsx:20",
+      "before": "mb-1 block text-sm font-medium text-foreground",
+      "after": "mb-1 block text-sm font-medium text-foreground peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
+      "base": {
+        "margin-bottom": "0.25rem",
+        "display": "block",
+        "font-size": "0.875rem",
+        "line-height": "1.6",
+        "letter-spacing": "0",
+        "--tw-font-weight": "var(--font-weight-medium)",
+        "font-weight": "var(--font-weight-medium)",
+        "color": "var(--foreground)"
+      }
+    },
+    {
+      "id": "error-text",
+      "page": "admin-orders / admin-products",
+      "source": "迁移前 apps/admin/src/components/field.tsx:30",
+      "before": "mt-1 text-xs text-destructive",
+      "after": "mt-1 text-xs text-destructive",
+      "base": {
+        "margin-top": "0.25rem",
+        "font-size": "0.75rem",
+        "line-height": "1.5",
+        "letter-spacing": "0.01em",
+        "color": "var(--destructive)"
+      }
+    },
+    {
+      "id": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "source": "迁移前 apps/admin/src/components/field.tsx:40-41（原生 <select>）",
+      "before": "w-full rounded-md border bg-background px-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground border-input focus:border-ring h-9",
+      "after": "flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground focus:border-ring focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:border-destructive data-[placeholder]:text-muted-foreground",
+      "base": {
+        "display": "flex",
+        "height": "calc(0.25rem * 9)",
+        "width": "100%",
+        "align-items": "center",
+        "justify-content": "space-between",
+        "gap": "calc(0.25rem * 2)",
+        "border-radius": "var(--radius)",
+        "border-style": "var(--tw-border-style)",
+        "border-width": "1px",
+        "border-color": "var(--input)",
+        "background-color": "var(--background)",
+        "padding-inline": "calc(0.25rem * 3)",
+        "font-size": "0.875rem",
+        "line-height": "1.6",
+        "letter-spacing": "0",
+        "color": "var(--foreground)",
+        "--tw-outline-style": "none",
+        "outline-style": "none",
+        "transition-property": "color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, --tw-gradient-from, --tw-gradient-via, --tw-gradient-to",
+        "transition-timing-function": "var(--default-transition-timing-function)",
+        "transition-duration": "150ms",
+        "--tw-duration": "150ms"
+      }
+    },
+    {
+      "id": "cart-drawer-panel",
+      "page": "storefront-cart",
+      "source": "packages/ui/src/cart-drawer.tsx:130-134（本次迁移未改动其类名）",
+      "before": "fixed right-0 top-0 z-[var(--z-drawer)] flex h-full w-[min(440px,calc(100vw-48px))] flex-col bg-card shadow-lg transition-transform duration-200 ease-emphasized",
+      "after": "fixed right-0 top-0 z-[var(--z-drawer)] flex h-full w-[min(440px,calc(100vw-48px))] flex-col bg-card shadow-lg transition-transform duration-200 ease-emphasized",
+      "base": {
+        "position": "fixed",
+        "right": "0px",
+        "top": "0px",
+        "z-index": "var(--z-drawer)",
+        "display": "flex",
+        "height": "100%",
+        "width": "min(440px, calc(100vw - 48px))",
+        "flex-direction": "column",
+        "background-color": "var(--card)",
+        "--tw-shadow": "0 12px 32px -8px rgba(23, 23, 27, 0.16)",
+        "box-shadow": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)",
+        "transition-property": "transform, translate, scale, rotate",
+        "transition-timing-function": "var(--motion-ease-emphasized)",
+        "transition-duration": "200ms",
+        "--tw-duration": "200ms",
+        "--tw-ease": "var(--motion-ease-emphasized)"
+      }
+    }
+  ],
+  "diffs": [
+    {
+      "surface": "dialog-overlay",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "position",
+      "before": "absolute",
+      "after": "fixed",
+      "expected": true,
+      "note": "旧实现是 absolute 挂在 p-4 容器里，新实现是 Radix Portal 的 fixed 全屏遮罩 —— 覆盖范围相同（都是视口），定位方式不同"
+    },
+    {
+      "surface": "dialog-overlay",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "z-index",
+      "after": "var(--z-modal)",
+      "expected": true,
+      "note": "旧实现的层级在包裹容器上，新实现在遮罩自身 —— 同一令牌（--z-modal = 50），层级一致"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "position",
+      "before": "relative",
+      "after": "fixed",
+      "expected": true,
+      "note": "旧实现靠 grid place-items-center 居中，新实现靠 fixed + translate 居中 —— 最终位置等价"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "width",
+      "before": "100%",
+      "after": "calc(100% - 2rem)",
+      "expected": true,
+      "note": "旧实现 w-full 是在 p-4（左右各 16px）容器里，实际宽 = 视口 - 32px；新实现直接写 calc(100% - 2rem) —— 等价"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "top",
+      "after": "calc(1 / 2 * 100%)",
+      "expected": true,
+      "note": "居中锚点不同（50% vs 容器居中），最终视觉位置等价"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "left",
+      "after": "calc(1 / 2 * 100%)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "z-index",
+      "after": "var(--z-modal)",
+      "expected": true,
+      "note": "旧实现的层级在包裹容器上（z-[var(--z-modal)]），新实现在弹层自身 —— 同一令牌，层级一致"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "--tw-translate-x",
+      "after": "calc(calc(1 / 2 * 100%) * -1)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "translate",
+      "after": "var(--tw-translate-x) var(--tw-translate-y)",
+      "expected": true,
+      "note": "同上（Tailwind v4 的 translate 合成属性）"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "--tw-translate-y",
+      "after": "calc(calc(1 / 2 * 100%) * -1)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "dialog-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "color",
+      "after": "var(--card-foreground)",
+      "expected": true,
+      "note": "新增 text-card-foreground：card-foreground 与 foreground 同为 #17171B，等价"
+    },
+    {
+      "surface": "dialog-footer",
+      "page": "admin-orders",
+      "kind": "base",
+      "prop": "justify-content",
+      "before": "flex-end",
+      "expected": true,
+      "note": "旧实现始终右对齐，新实现只在 sm 断点右对齐（移动端纵向堆叠时左对齐更合理）"
+    },
+    {
+      "surface": "dialog-footer",
+      "page": "admin-orders",
+      "kind": "base",
+      "prop": "flex-direction",
+      "after": "column-reverse",
+      "expected": true,
+      "note": "shadcn 默认在 <640px 纵向堆叠，后台为桌面端（≥sm）实际渲染仍是横向一行"
+    },
+    {
+      "surface": "dialog-footer",
+      "page": "admin-orders",
+      "kind": "variant",
+      "variant": "sm",
+      "prop": "flex-direction",
+      "after": "row",
+      "expected": true,
+      "note": "shadcn 默认在 <640px 纵向堆叠，后台为桌面端（≥sm）实际渲染仍是横向一行"
+    },
+    {
+      "surface": "dialog-footer",
+      "page": "admin-orders",
+      "kind": "variant",
+      "variant": "sm",
+      "prop": "justify-content",
+      "after": "flex-end",
+      "expected": true,
+      "note": "旧实现始终右对齐，新实现只在 sm 断点右对齐（移动端纵向堆叠时左对齐更合理）"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "position",
+      "after": "absolute",
+      "expected": true,
+      "note": "旧实现是标题行里的 flex 子项（justify-between 推到最右），新实现是右上角绝对定位 —— 位置不同，尺寸/颜色/悬停态一致"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "right",
+      "after": "calc(0.25rem * 2)",
+      "expected": true,
+      "note": "旧实现距面板右边 20px（p-5 内边距），新实现 8px（right-2）"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "top",
+      "after": "calc(0.25rem * 2)",
+      "expected": true,
+      "note": "旧实现与标题同行垂直居中，新实现贴顶（top-2）"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-shadow",
+      "after": "var(--tw-ring-inset, ) 0 0 0 calc(2px + var(--tw-ring-offset-width)) currentcolor",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "box-shadow",
+      "after": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)",
+      "expected": true,
+      "note": "新增 focus-visible 焦点环 —— 仅键盘聚焦时出现"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-color",
+      "after": "var(--ring)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-outline-style",
+      "after": "none",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "dialog-close",
+      "page": "admin-orders / admin-products",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "outline-style",
+      "after": "none",
+      "expected": true,
+      "note": "新增 focus-visible:outline-none —— 与全局焦点环契约一致"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "position",
+      "before": "absolute",
+      "after": "fixed",
+      "expected": true,
+      "note": "旧实现是 fixed 容器内的 absolute，新实现是 Portal 里的 fixed —— 覆盖范围等价"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "top",
+      "before": "0px",
+      "expected": true,
+      "note": "旧的 top-0 等价于新的 inset-y-0（上下同时贴边）"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "z-index",
+      "after": "var(--z-drawer)",
+      "expected": true,
+      "note": "旧实现写在容器上，新实现写在面板自身 —— 同一令牌（--z-drawer = 50），层级一致"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "color",
+      "after": "var(--card-foreground)",
+      "expected": true,
+      "note": "新增 text-card-foreground：与 foreground 同值 #17171B，等价"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "transition-property",
+      "after": "transform, translate, scale, rotate",
+      "expected": true,
+      "note": "新增滑入动效（200ms / ease-emphasized），旧实现无动效 —— 只影响打开瞬间"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "transition-timing-function",
+      "after": "var(--motion-ease-emphasized)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "transition-duration",
+      "after": "200ms",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "--tw-duration",
+      "after": "200ms",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "--tw-ease",
+      "after": "var(--motion-ease-emphasized)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "inset-block",
+      "after": "0px",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "variant",
+      "variant": "starting",
+      "prop": "--tw-translate-x",
+      "after": "100%",
+      "expected": true,
+      "note": "进场起始位移（@starting-style），静止态等价"
+    },
+    {
+      "surface": "sheet-panel",
+      "page": "admin-orders / admin-products",
+      "kind": "variant",
+      "variant": "starting",
+      "prop": "translate",
+      "after": "var(--tw-translate-x) var(--tw-translate-y)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "sheet-header",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "display",
+      "before": "flex",
+      "expected": true,
+      "note": "旧实现是 flex 容器，新实现是普通块（标题单行）"
+    },
+    {
+      "surface": "sheet-header",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "align-items",
+      "before": "center",
+      "expected": true,
+      "note": "旧实现垂直居中，新实现默认 stretch（单行文本，视觉等价）"
+    },
+    {
+      "surface": "sheet-header",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "justify-content",
+      "before": "space-between",
+      "expected": true,
+      "note": "旧实现把关闭按钮推到右端，新实现的关闭按钮是绝对定位 —— 标题位置不变"
+    },
+    {
+      "surface": "sheet-header",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "flex-shrink",
+      "after": "0",
+      "expected": true,
+      "note": "新增 shrink-0：抽屉头在矮屏下不被压缩（与 body 的 flex-1 配合）"
+    },
+    {
+      "surface": "sheet-header",
+      "page": "admin-orders / admin-products",
+      "kind": "base",
+      "prop": "padding-right",
+      "after": "calc(0.25rem * 12)",
+      "expected": true,
+      "note": "旧实现靠 justify-between 把关闭按钮推到右侧，新实现用 pr-12 预留等宽空间 —— 内容区宽度等价"
+    },
+    {
+      "surface": "sheet-footer",
+      "page": "admin-products",
+      "kind": "base",
+      "prop": "align-items",
+      "before": "center",
+      "expected": true,
+      "note": "旧实现垂直居中按钮，新实现由 items-stretch 默认值代替 —— 按钮高度自适应，视觉等价"
+    },
+    {
+      "surface": "sheet-footer",
+      "page": "admin-products",
+      "kind": "base",
+      "prop": "justify-content",
+      "before": "flex-end",
+      "expected": true,
+      "note": "旧实现始终右对齐，新实现只在 sm 断点右对齐（移动端纵向堆叠时左对齐更合理）"
+    },
+    {
+      "surface": "sheet-footer",
+      "page": "admin-products",
+      "kind": "base",
+      "prop": "flex-shrink",
+      "after": "0",
+      "expected": true,
+      "note": "新增 shrink-0：抽屉底栏不被压缩"
+    },
+    {
+      "surface": "sheet-footer",
+      "page": "admin-products",
+      "kind": "base",
+      "prop": "flex-direction",
+      "after": "column-reverse",
+      "expected": true,
+      "note": "shadcn 默认在 <640px 纵向堆叠（flex-col-reverse），后台为桌面端（≥sm）实际渲染仍是横向一行"
+    },
+    {
+      "surface": "sheet-footer",
+      "page": "admin-products",
+      "kind": "variant",
+      "variant": "sm",
+      "prop": "flex-direction",
+      "after": "row",
+      "expected": true,
+      "note": "shadcn 默认在 <640px 纵向堆叠（flex-col-reverse），后台为桌面端（≥sm）实际渲染仍是横向一行"
+    },
+    {
+      "surface": "sheet-footer",
+      "page": "admin-products",
+      "kind": "variant",
+      "variant": "sm",
+      "prop": "justify-content",
+      "after": "flex-end",
+      "expected": true,
+      "note": "旧实现始终右对齐，新实现只在 sm 断点右对齐（移动端纵向堆叠时左对齐更合理）"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "data-[state=inactive]:hover",
+      "prop": "color",
+      "after": "var(--foreground)",
+      "expected": true,
+      "note": "旧实现把 hover:text-foreground 放在「未选中」分支，新实现用 data-[state=inactive]:hover —— 行为等价（选中项悬停不变色）"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-shadow",
+      "after": "var(--tw-ring-inset, ) 0 0 0 calc(2px + var(--tw-ring-offset-width)) currentcolor",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "box-shadow",
+      "after": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)",
+      "expected": true,
+      "note": "新增 focus-visible 焦点环 —— 仅键盘聚焦时出现"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-color",
+      "after": "var(--ring)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-outline-style",
+      "after": "none",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "outline-style",
+      "after": "none",
+      "expected": true,
+      "note": "新增 focus-visible:outline-none —— 与全局焦点环契约一致"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "pointer-events",
+      "after": "none",
+      "expected": true,
+      "note": "新增 disabled:pointer-events-none —— 仅禁用态"
+    },
+    {
+      "surface": "tab-trigger-active",
+      "page": "admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "opacity",
+      "after": "40%",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "input",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-shadow",
+      "after": "var(--tw-ring-inset, ) 0 0 0 calc(2px + var(--tw-ring-offset-width)) currentcolor",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "input",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "box-shadow",
+      "after": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)",
+      "expected": true,
+      "note": "新增 focus-visible 焦点环（品牌蓝 2px + 24% 外扩）—— 只在键盘聚焦时出现，是无障碍增强"
+    },
+    {
+      "surface": "input",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-color",
+      "after": "var(--ring)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "input",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "cursor",
+      "after": "not-allowed",
+      "expected": true,
+      "note": "新增 disabled:cursor-not-allowed —— 仅禁用态"
+    },
+    {
+      "surface": "input",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "opacity",
+      "after": "40%",
+      "expected": true,
+      "note": "新增 disabled:opacity-40 —— 仅禁用态"
+    },
+    {
+      "surface": "input",
+      "page": "admin-orders / admin-products / admin-settings-theme / admin-settings-account",
+      "kind": "variant",
+      "variant": "aria-invalid",
+      "prop": "border-color",
+      "after": "var(--destructive)",
+      "expected": true,
+      "note": "新增 aria-invalid:border-destructive —— 错误态边框（旧的实现用条件类 border-destructive，等价）"
+    },
+    {
+      "surface": "textarea",
+      "page": "admin-products（商品描述）",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-shadow",
+      "after": "var(--tw-ring-inset, ) 0 0 0 calc(2px + var(--tw-ring-offset-width)) currentcolor",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "textarea",
+      "page": "admin-products（商品描述）",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "box-shadow",
+      "after": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)",
+      "expected": true,
+      "note": "新增 focus-visible 焦点环（键盘聚焦才出现）"
+    },
+    {
+      "surface": "textarea",
+      "page": "admin-products（商品描述）",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-color",
+      "after": "var(--ring)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "textarea",
+      "page": "admin-products（商品描述）",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "cursor",
+      "after": "not-allowed",
+      "expected": true,
+      "note": "新增 disabled:cursor-not-allowed —— 仅禁用态"
+    },
+    {
+      "surface": "textarea",
+      "page": "admin-products（商品描述）",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "opacity",
+      "after": "40%",
+      "expected": true,
+      "note": "新增 disabled:opacity-40 —— 仅禁用态"
+    },
+    {
+      "surface": "textarea",
+      "page": "admin-products（商品描述）",
+      "kind": "variant",
+      "variant": "aria-invalid",
+      "prop": "border-color",
+      "after": "var(--destructive)",
+      "expected": true,
+      "note": "新增 aria-invalid:border-destructive —— 错误态边框（旧的实现用条件类 border-destructive，等价）"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "base",
+      "prop": "display",
+      "after": "flex",
+      "expected": true,
+      "note": "触发器是 flex 行（左侧值 + 右侧 ChevronDown 图标），原生 select 是浏览器控件"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "base",
+      "prop": "align-items",
+      "after": "center",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "base",
+      "prop": "justify-content",
+      "after": "space-between",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "base",
+      "prop": "gap",
+      "after": "calc(0.25rem * 2)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-shadow",
+      "after": "var(--tw-ring-inset, ) 0 0 0 calc(2px + var(--tw-ring-offset-width)) currentcolor",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "box-shadow",
+      "after": "var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow)",
+      "expected": true,
+      "note": "新增 focus-visible 焦点环"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "variant",
+      "variant": "focus-visible",
+      "prop": "--tw-ring-color",
+      "after": "var(--ring)",
+      "expected": true,
+      "note": "同上"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "cursor",
+      "after": "not-allowed",
+      "expected": true,
+      "note": "新增 disabled:cursor-not-allowed —— 仅禁用态"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "variant",
+      "variant": "disabled",
+      "prop": "opacity",
+      "after": "40%",
+      "expected": true,
+      "note": "新增 disabled:opacity-40 —— 仅禁用态"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "variant",
+      "variant": "aria-invalid",
+      "prop": "border-color",
+      "after": "var(--destructive)",
+      "expected": true,
+      "note": "新增 aria-invalid:border-destructive —— 错误态边框（旧的实现用条件类 border-destructive，等价）"
+    },
+    {
+      "surface": "select-trigger",
+      "page": "admin-products（商品状态）",
+      "kind": "variant",
+      "variant": "data-[placeholder]",
+      "prop": "color",
+      "after": "var(--muted-foreground)",
+      "expected": true,
+      "note": "新增 data-[placeholder]:text-muted-foreground —— 未选择时的占位色（旧的实现用 placeholder:text-muted-foreground，等价）"
+    }
+  ]
+}

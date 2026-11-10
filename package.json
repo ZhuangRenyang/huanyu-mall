@@ -14,7 +14,8 @@
     "dev": "turbo run dev",
     "check:module-graph": "tsx scripts/check-module-graph.ts",
     "check:migrations": "tsx scripts/lint-migrations.ts",
-    "check:icons": "tsx scripts/scan-icons.ts"
+    "check:icons": "tsx scripts/scan-icons.ts",
+    "check:visual": "tsx packages/ui/scripts/visual-snapshot.ts"
   },
   "devDependencies": {
     "drizzle-kit": "catalog:",

@@ -34,7 +34,10 @@ function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPr
       data-slot="tabs-trigger"
       className={cn(
         '-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors duration-150',
-        'border-transparent text-muted-foreground hover:text-foreground',
+        'border-transparent text-muted-foreground',
+        /* 悬停变前景色只作用于「未选中」的 tab：迁移前选中项是纯 text-primary，
+           悬停不变色；这里用 data-[state=inactive] 复刻同样的行为。 */
+        'data-[state=inactive]:hover:text-foreground',
         'data-[state=active]:border-primary data-[state=active]:font-medium data-[state=active]:text-primary',
         'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
         'disabled:pointer-events-none disabled:opacity-40',

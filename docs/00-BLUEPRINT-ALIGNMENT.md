@@ -95,7 +95,8 @@
 - **迁移形态**：采用 shadcn/ui 的**实现体系** —— Radix primitives + `class-variance-authority` + `tailwind-merge` + CSS 变量语义；组件源码存放于 `@mall/ui` 供前后台共用
 - **有意保留**：不采用 shadcn 默认皮肤（配色走 `@mall/design-tokens`）；`Button` 等对外 API 与尺寸（32/44/52px）不变；`Skeleton` 继续用带 300ms 延迟的 `.skeleton` 类（shadcn 的 `animate-pulse` 是降级）
 - **实际收益**：后台自写的 `focus-modal.tsx` / `sheet.tsx` 已删除并收编为 `Dialog` / `Sheet`（补上焦点陷阱）；设置页手写 tablist 换成 `Tabs`（补方向键导航与 `aria-controls`）；`field.tsx` 底层换 `Input`/`Select`/`Textarea` + `Label`
-- **遗留项（已登记 ADR-011，不要当作已解决）**：`CartDrawer` 仍依赖 `@mall/ui` 内部 `Button`（容器带移动端定制，未硬换）；彻底解耦需 headless + 插槽，留待模板系统阶段。Radix 使 admin bundle 增长至 459 kB（gzip 145 kB），前台引入需关注 LCP 预算
+- **遗留项（已登记 ADR-011，不要当作已解决）**：`CartDrawer` 仍依赖 `@mall/ui` 内部 `Button`（容器带移动端定制，未硬换 —— Radix 的 `forceMount` 会对整页加 `aria-hidden`，不可用）；彻底解耦需 headless + 插槽，留待模板系统阶段。Radix 使 admin bundle 增长至 459 kB（gzip 145 kB），前台引入需关注 LCP 预算
+- **配套门禁**（没有这三项，"迁移完成"只是口头结论）：`@mall/ui` 的 jsdom 测试（35 用例，覆盖焦点移入 / Escape / aria 关联）、Token 纪律测试（禁硬编码颜色与自造 z-index）、计算样式级视觉快照（`pnpm exec tsx packages/ui/scripts/visual-snapshot.ts`，16 个表面 / 0 条未登记差异）
 
 ### 2. 支付 Provider 深度不足（一期唯一硬缺口）
 

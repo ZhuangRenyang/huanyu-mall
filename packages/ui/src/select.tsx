@@ -91,7 +91,7 @@ function SelectContent({
         data-slot="select-content"
         position={position}
         className={cn(
-          'relative z-50 max-h-72 min-w-[8rem] overflow-hidden rounded-md border border-border',
+          'relative z-[var(--z-modal)] max-h-72 min-w-[8rem] overflow-hidden rounded-md border border-border',
           'bg-popover text-popover-foreground shadow-md',
           position === 'popper' && 'w-full min-w-[var(--radix-select-trigger-width)]',
           className,

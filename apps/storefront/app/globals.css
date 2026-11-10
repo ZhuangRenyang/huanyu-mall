@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "@mall/design-tokens/tokens.css";
+/* Toast（sonner）基础样式 + Token 主题接管；应用根需要挂 <Toaster /> */
+@import "@mall/ui/sonner.css";
 
 /* 工作区 UI 包组件类名参与扫描（在 node_modules 之外，需显式声明） */
 @source "../../../packages/ui/src";

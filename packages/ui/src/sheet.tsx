@@ -15,15 +15,28 @@ import { cn } from './lib/cn';
  * 台面用途：后台的集中任务面板、店面的购物车抽屉 —— 两者共用这一份实现，
  * 避免"后台一套 Modal、前台一套 Drawer"的重复。
  */
+/**
+ * 四向抽屉的定位与进出方向。
+ *
+ * 动效约定（对齐 UIUX 动效表「抽屉 200ms / --ease-emphasized」）：
+ * - 进场用 Tailwind v4 的 `starting:` 变体 —— 它生成 `@starting-style`，
+ *   元素被插入 DOM 时从偏移位过渡到原位（不依赖任何 keyframes 文件）；
+ * - 出场由 Radix 的 Presence 卸载节点，**没有退场动画**（Radix 只在检测到
+ *   CSS `animation` 时才延迟卸载）。如需退场滑出，得给 design-tokens 增加
+ *   keyframes —— 属于令牌层改动，不在组件层硬塞。
+ */
 const sheetVariants = cva(
-  'fixed z-50 flex flex-col gap-4 bg-card text-card-foreground shadow-lg transition ease-in-out',
+  [
+    'fixed z-[var(--z-drawer)] flex flex-col bg-card text-card-foreground shadow-lg',
+    'transition-transform duration-200 ease-emphasized',
+  ],
   {
     variants: {
       side: {
-        right: 'inset-y-0 right-0 h-full w-full max-w-xl border-l border-border',
-        left: 'inset-y-0 left-0 h-full w-full max-w-xl border-r border-border',
-        top: 'inset-x-0 top-0 h-auto max-h-[80vh] border-b border-border',
-        bottom: 'inset-x-0 bottom-0 h-auto max-h-[80vh] rounded-t-xl border-t border-border',
+        right: 'inset-y-0 right-0 h-full w-full max-w-xl starting:translate-x-full',
+        left: 'inset-y-0 left-0 h-full w-full max-w-xl starting:-translate-x-full',
+        top: 'inset-x-0 top-0 h-auto max-h-[80vh] starting:-translate-y-full',
+        bottom: 'inset-x-0 bottom-0 h-auto max-h-[80vh] rounded-t-xl starting:translate-y-full',
       },
     },
     defaultVariants: { side: 'right' },
@@ -46,7 +59,7 @@ function SheetOverlay({ className, ...props }: React.ComponentProps<typeof Dialo
   return (
     <DialogPrimitive.Overlay
       data-slot="sheet-overlay"
-      className={cn('fixed inset-0 z-50 bg-neutral-900/40', className)}
+      className={cn('fixed inset-0 z-[var(--z-drawer)] bg-neutral-900/40', className)}
       {...props}
     />
   );
@@ -74,14 +87,16 @@ function SheetContent({ className, children, side, showCloseButton = true, ...pr
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="sheet-close-button"
+            aria-label="关闭"
             className={cn(
-              'absolute top-4 right-4 rounded-sm text-muted-foreground opacity-70 transition-opacity',
-              'hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+              /* 触摸区 44×44（WCAG 2.5.5） */
+              'absolute right-2 top-2 grid size-11 place-items-center rounded-md text-muted-foreground',
+              'transition-colors duration-150 hover:bg-muted hover:text-foreground',
+              'focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
               'disabled:pointer-events-none',
             )}
           >
             <X className="size-4" aria-hidden="true" />
-            <span className="sr-only">关闭</span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>

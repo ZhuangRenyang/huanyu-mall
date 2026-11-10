@@ -1,0 +1,28 @@
+/* =============================================================================
+ * Toast（sonner）后代样式覆盖 —— packages/ui/src/sonner.css
+ * -----------------------------------------------------------------------------
+ * 用途：只处理**无法行内化**的部分（toast 后代元素的尺寸/形态）。
+ *
+ * 为什么不 import sonner 的样式表：sonner v2 在运行时把自己的 CSS
+ * `appendChild` 到 <head>，落点在应用样式表之后 —— 再 import 一份只会产生
+ * 重复规则，且我们的同优先级规则仍会被 sonner 的后注入规则压掉。
+ * 颜色/圆角/字栈/层级已在 `toast.tsx` 里用**行内 style** 接管（与注入顺序无关）。
+ *
+ * 接线方式（两个应用各一行）：
+ *   @import "@mall/ui/sonner.css";
+ *
+ * 优先级说明：这里用 `body` 前缀把特异性抬高一级（0,3,2 > sonner 的 0,2,1），
+ * 因此不依赖样式表先后顺序。
+ * ========================================================================== */
+
+/* 关闭按钮：sonner 默认 20×20，小于 WCAG 2.5.8 的 24×24 下限 */
+body [data-sonner-toast][data-styled="true"] [data-close-button] {
+  width: 28px;
+  height: 28px;
+  right: 4px;
+  top: 4px;
+  transform: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted-foreground);
+}

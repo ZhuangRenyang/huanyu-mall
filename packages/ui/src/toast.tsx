@@ -1,133 +1,115 @@
 'use client';
 
 import * as React from 'react';
-import { X } from 'lucide-react';
-import { cn } from './lib/cn';
+import { Toaster as SonnerToaster, toast, useSonner } from 'sonner';
 
 /**
- * 轻量消息提示（Toast）。
+ * Toast —— 基于 sonner 的轻量消息提示（shadcn/ui 体系里 Toast 的标准做法）。
  *
- * 为什么不用 sonner：sonner 自带一套 DOM 结构与内联样式，覆盖成我们的 Token
- * 需要大量 `!important` 或穿透选择器；而本项目对 Toast 的需求只有「短暂提示 +
- * 屏幕阅读器播报」。自写一份 130 行的实现，样式完全走 Token、无障碍可控、
- * 不新增依赖，比引一个需要对抗的第三方库更划算。
+ * 为什么不自己写一套：sonner 已经解决了「多条堆叠、自动消失、手势关闭、计时重置、
+ * 视口自适应」这些细节，自己写等于重造一个更差的轮子。我们只做两件事：
+ * 1. 把 sonner 默认皮肤（白底 + 灰边）替换成我们的 Token；
+ * 2. 把无障碍语义固定下来，不让调用方各写各的。
  *
- * 无障碍要点（这是自写 Toast 最容易漏的地方，逐一说明）：
- * - 视口容器固定 `role="status"` + `aria-live="polite"` + `aria-atomic="false"`：
- *   消息插入时屏幕阅读器会播报，但不打断用户当前朗读（polite）。
- * - 每条消息是容器里的一个普通节点，**不要再套 role="alert"** —— alert 是
- *   强打断语义，只用于错误弹窗这类必须立即处理的场景。
- * - 关闭按钮有独立 `aria-label`，且是 `<button type="button">`，避免误触发表单提交。
- * - 提示不抢焦点（不加 tabIndex、不 focus），否则会打断键盘用户的操作流。
+ * 无障碍要点（sonner 已实现，这里只做约束与说明）：
+ * - 外层是 `role="region"` 级别的 `<section aria-live="polite" aria-atomic="false">`，
+ *   每条 toast 插入时被播报，但**不打断**用户当前朗读（polite 而非 assertive）。
+ * - 关闭按钮由 `closeButton` 渲染，带独立可读名，不抢焦点。
+ * - 提示不主动 focus，避免打断键盘用户的操作流。
+ *
+ * ⚠️ 主题接管为什么用**行内 style** 而不是 CSS 规则：
+ * sonner v2 在运行时把自己的样式表 `appendChild` 到 <head>，落点在应用样式表**之后**；
+ * 若我们用同优先级的 CSS 规则覆盖变量，sonner 的后注入规则会赢（白底又回来了）。
+ * 行内 style 优先级高于任何样式表规则，与注入顺序无关 —— 这是唯一稳定的接管方式。
+ * 需要作用于 toast **后代**（关闭按钮尺寸）的样式无法行内化，放在 `sonner.css`，
+ * 用 `body` 前缀提高一级特异性来压过 sonner 的规则。
  */
 
-export interface ToastItem {
-  id: string;
-  message: string;
-  /** 毫秒；0 表示不自动消失。默认 3000。 */
-  duration?: number;
-  tone?: 'neutral' | 'success' | 'danger';
-}
+/** 提示语义：与 design-tokens 的语义色一一对应（中性 / 成功 / 危险）。 */
+export type ToastTone = 'neutral' | 'success' | 'danger';
 
-interface ToastContextValue {
-  toast: (message: string, options?: Omit<ToastItem, 'id' | 'message'>) => void;
-  dismiss: (id: string) => void;
-}
+/**
+ * 主题变量 —— 全部指向 design-tokens 的语义变量。
+ *
+ * 注意：语义态只换**文字色**，底色仍是卡片色 —— 大面积彩色块会与品牌蓝抢注意力，
+ * 且在深色模式下极易刺眼（design-tokens 的已知坑清单里也强调过）。
+ */
+const tokenTheme = {
+  '--normal-bg': 'var(--card)',
+  '--normal-text': 'var(--card-foreground)',
+  '--normal-border': 'var(--border)',
+  '--normal-bg-hover': 'var(--muted)',
+  '--normal-border-hover': 'var(--border-strong)',
+  '--success-bg': 'var(--card)',
+  '--success-text': 'var(--success)',
+  '--success-border': 'var(--border)',
+  '--error-bg': 'var(--card)',
+  '--error-text': 'var(--destructive)',
+  '--error-border': 'var(--border)',
+  '--warning-bg': 'var(--card)',
+  '--warning-text': 'var(--warning)',
+  '--warning-border': 'var(--border)',
+  '--info-bg': 'var(--card)',
+  '--info-text': 'var(--info)',
+  '--info-border': 'var(--border)',
+  '--border-radius': 'var(--radius)',
+  fontFamily: 'var(--font-family-sans)',
+  zIndex: 'var(--z-toast)',
+} as React.CSSProperties;
 
-const ToastContext = React.createContext<ToastContextValue | null>(null);
+/**
+ * Token 皮肤 —— 只覆盖 sonner 的 classNames，不改它的行为。
+ *
+ * 这些类名是给「我们自己的组件」用的（例如自定义 action 按钮）；
+ * toast 本体的底色/文字色由上面的 CSS 变量决定（见 tokenTheme）。
+ */
+const tokenClassNames = {
+  toast: 'group flex items-start gap-2 rounded-md border border-border bg-card text-card-foreground',
+  title: 'text-sm font-medium text-card-foreground',
+  description: 'text-sm text-muted-foreground',
+  actionButton: 'rounded-md bg-primary px-2 py-1 text-sm text-primary-foreground',
+  cancelButton: 'rounded-md bg-muted px-2 py-1 text-sm text-muted-foreground',
+  closeButton:
+    'text-muted-foreground opacity-70 transition-opacity duration-150 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring',
+  success: 'text-success',
+  error: 'text-destructive',
+  warning: 'text-warning',
+  info: 'text-info',
+} as const;
 
-const MAX_VISIBLE = 3;
-const DEFAULT_DURATION = 3000;
+export interface ToasterProps extends React.ComponentProps<typeof SonnerToaster> {}
 
-const toneClasses: Record<NonNullable<ToastItem['tone']>, string> = {
-  neutral: 'border-border bg-card text-card-foreground',
-  success: 'border-border bg-card text-card-foreground',
-  danger: 'border-destructive bg-card text-destructive',
-};
-
-export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [items, setItems] = React.useState<ToastItem[]>([]);
-  const seq = React.useRef(0);
-  const timers = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
-
-  const dismiss = React.useCallback((id: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== id));
-    const timer = timers.current.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      timers.current.delete(id);
-    }
-  }, []);
-
-  const toast = React.useCallback<ToastContextValue['toast']>(
-    (message, options) => {
-      seq.current += 1;
-      const id = `t${seq.current}`;
-      const duration = options?.duration ?? DEFAULT_DURATION;
-      setItems((prev) => [...prev, { id, message, ...options }].slice(-MAX_VISIBLE));
-      if (duration > 0) {
-        timers.current.set(
-          id,
-          setTimeout(() => dismiss(id), duration),
-        );
-      }
-    },
-    [dismiss],
-  );
-
-  /* 卸载时清掉所有定时器，避免 setState on unmounted component。 */
-  React.useEffect(() => {
-    const map = timers.current;
-    return () => {
-      map.forEach((timer) => clearTimeout(timer));
-      map.clear();
-    };
-  }, []);
-
-  const value = React.useMemo(() => ({ toast, dismiss }), [toast, dismiss]);
-
+/**
+ * Toast 视口。挂在应用根部：
+ *
+ * ```tsx
+ * <Toaster position="top-center" />
+ * ```
+ *
+ * `toastOptions.classNames` 用调用方传入的值覆盖默认皮肤（浅合并），
+ * 这样单个应用想换语气时不必改组件库。
+ */
+export function Toaster({ toastOptions, style, ...props }: ToasterProps) {
   return (
-    <ToastContext.Provider value={value}>
-      {children}
-      <div
-        role="status"
-        aria-live="polite"
-        aria-atomic="false"
-        className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2 px-4"
-      >
-        {items.map((item) => (
-          <div
-            key={item.id}
-            data-slot="toast"
-            className={cn(
-              'pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-md border px-3 py-2 shadow-md',
-              toneClasses[item.tone ?? 'neutral'],
-            )}
-          >
-            <p className="flex-1 text-sm">{item.message}</p>
-            <button
-              type="button"
-              aria-label="关闭提示"
-              onClick={() => dismiss(item.id)}
-              className={cn(
-                'mt-0.5 shrink-0 rounded-sm text-muted-foreground opacity-70 transition-opacity',
-                'hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-              )}
-            >
-              <X className="size-3.5" aria-hidden="true" />
-            </button>
-          </div>
-        ))}
-      </div>
-    </ToastContext.Provider>
+    <SonnerToaster
+      position="top-center"
+      closeButton
+      richColors={false}
+      style={{ ...tokenTheme, ...style }}
+      toastOptions={{
+        ...toastOptions,
+        classNames: {
+          ...tokenClassNames,
+          ...toastOptions?.classNames,
+        },
+      }}
+      {...props}
+    />
   );
 }
 
-/** 必须用在 `ToastProvider` 内；脱离 Provider 调用会立刻抛错，不静默失效。 */
-export function useToast(): ToastContextValue {
-  const ctx = React.useContext(ToastContext);
-  if (!ctx) {
-    throw new Error('useToast 必须在 <ToastProvider> 内使用（请在应用根部包裹 ToastProvider）');
-  }
-  return ctx;
-}
+/**
+ * 透传 sonner 的 `useSonner`（返回当前 toasts 列表）。
+ * 命名保持与上游一致，不另造 `useToast` —— 两套近似的 hook 名只会让人猜。
+ */
+export { toast, useSonner };
