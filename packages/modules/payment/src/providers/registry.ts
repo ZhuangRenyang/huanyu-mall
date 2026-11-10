@@ -38,11 +38,13 @@ const REGISTRY: Record<string, Registration> = {
       label: "支付宝",
       /*
        * partialRefund: true —— 退款接口 alipay.trade.refund 按 refund_amount 传金额，支持部分退款。
+       * qrFlow: true —— 走当面付（alipay.trade.precreate，返回二维码）。
+       *   支付宝**沙箱不支持 page.pay**（网关 404），当面付在沙箱与生产都可用，是默认形态；
+       *   需要跳转收银台时用配置 ALIPAY_FLOW=redirect 切到 page.pay（仅生产可用）。
        * authorizeThenCapture: false —— 支付宝是即时到账（TRADE_SUCCESS 即到账），
        *   没有 Stripe/PayPal 那种「先授权再捕获」的两阶段，Provider 内部用查单确认代替。
-       * qrFlow: false —— 当前实现走电脑/手机网站支付（跳转收银台），未做当面付（precreate）。
        */
-      capabilities: { webhook: true, partialRefund: true, authorizeThenCapture: false, qrFlow: false, redirectFlow: true },
+      capabilities: { webhook: true, partialRefund: true, authorizeThenCapture: false, qrFlow: true, redirectFlow: true },
       supportedCurrencies: ["CNY"],
     },
     ctor: AlipayPaymentProvider,

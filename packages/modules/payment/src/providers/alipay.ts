@@ -76,16 +76,45 @@ export class AlipayPaymentProvider extends AbstractPaymentProvider {
   }
 
   async initiatePayment(input: InitiatePaymentInput): Promise<InitiatePaymentOutput> {
+    const totalAmount = fromMinor(input.amountMinor, input.currencyCode);
+    const subject = String(input.metadata?.subject ?? `订单 ${input.sessionId}`);
+
+    /*
+     * 支付形态由配置决定（ALIPAY_FLOW）：
+     * - `qr`（默认）：当面付 `alipay.trade.precreate` → 返回二维码。
+     *   支付宝**沙箱只支持这一条**（`page.pay` 网关直接 404），而且当面付也是
+     *   国内主流形态，生产环境同样适用。
+     * - `redirect`：`alipay.trade.page.pay` → 跳转收银台，仅生产环境可用。
+     *
+     * 两条路径都传 out_trade_no = 商户单号（= collection.id），支付宝原样回传，
+     * 回调据此定位支付单（见 payment.service 的 resolvePaymentForWebhook）。
+     */
+    const flow = String(this.config.flow ?? 'qr') === 'redirect' ? 'redirect' : 'qr';
+
+    if (flow === 'qr') {
+      const { qrCode, tradeNo } = await this.client().createQrcode({
+        outTradeNo: input.sessionId,
+        totalAmount,
+        subject,
+      });
+      return {
+        kind: 'qrcode',
+        qrcode: qrCode,
+        providerReference: input.sessionId,
+        raw: { outTradeNo: input.sessionId, tradeNo, flow },
+      };
+    }
+
     const url = this.client().buildPagePayUrl({
       outTradeNo: input.sessionId,
-      totalAmount: fromMinor(input.amountMinor, input.currencyCode),
-      subject: String(input.metadata?.subject ?? `订单 ${input.sessionId}`),
+      totalAmount,
+      subject,
     });
     return {
       kind: 'redirectUrl',
       redirectUrl: url,
       providerReference: input.sessionId,
-      raw: { outTradeNo: input.sessionId, amount: fromMinor(input.amountMinor, input.currencyCode) },
+      raw: { outTradeNo: input.sessionId, flow },
     };
   }
 

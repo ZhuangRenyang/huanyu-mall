@@ -56,7 +56,7 @@ beforeEach(() => {
 
 describe('发起支付', () => {
   it('返回可跳转的收银台 URL，且签名能被应用公钥验证', () => {
-    const out = makeProvider().initiatePayment({
+    const out = makeProvider({ flow: 'redirect' }).initiatePayment({
       sessionId: 'sess_1',
       amountMinor: 20600n,
       currencyCode: 'CNY',
@@ -82,7 +82,7 @@ describe('发起支付', () => {
   });
 
   it('金额按主单位字符串传（20600 分 → "206.00"）', async () => {
-    const res = await makeProvider().initiatePayment({
+    const res = await makeProvider({ flow: 'redirect' }).initiatePayment({
       sessionId: 'sess_2',
       amountMinor: 20600n,
       currencyCode: 'CNY',
@@ -102,7 +102,7 @@ describe('发起支付', () => {
      * 反过来，POST form body 那边必须保持 `+`（标准 form 编码），两处不能混。
      * 注意 base64 签名里的 `+` 会被 URLSearchParams 编成 %2B，所以全局替换 + 是安全的。
      */
-    const res = await makeProvider().initiatePayment({
+    const res = await makeProvider({ flow: 'redirect' }).initiatePayment({
       sessionId: 's',
       amountMinor: 100n,
       currencyCode: 'CNY',
@@ -137,6 +137,45 @@ describe('发起支付', () => {
     expect(notifyScope).not.toContain('sign=');
   });
 
+  it('当面付（flow=qr，默认）→ 调用 trade.precreate 并返回二维码', async () => {
+    /*
+     * 支付宝**沙箱不支持 trade.page.pay**（网关 404），当面付在沙箱与生产都可用，
+     * 所以默认走 precreate。这里 mock 支付宝返回 qr_code，断言：
+     * ① kind 是 qrcode、二维码内容原样透出
+     * ② 请求打到 trade.precreate
+     * ③ 金额按**主单位字符串**传（20600 分 → "206.00"），out_trade_no 是商户单号
+     */
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          alipay_trade_precreate_response: {
+            code: '10000',
+            qr_code: 'https://qr.alipay.com/bax_probe_qrcode',
+            trade_no: '2026111022000000001',
+          },
+        }),
+    });
+
+    const out = await makeProvider({ flow: 'qr' }).initiatePayment({
+      sessionId: 'sess_qr_1',
+      amountMinor: 20600n,
+      currencyCode: 'CNY',
+    });
+
+    expect(out.kind).toBe('qrcode');
+    expect(out.qrcode).toBe('https://qr.alipay.com/bax_probe_qrcode');
+    expect(out.providerReference).toBe('sess_qr_1');
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = new URLSearchParams(String(init.body));
+    expect(body.get('method')).toBe('alipay.trade.precreate');
+    const biz = JSON.parse(body.get('biz_content') ?? '{}');
+    expect(biz.total_amount).toBe('206.00');
+    expect(biz.out_trade_no).toBe('sess_qr_1');
+  });
+
   it('时间戳是北京时间格式 yyyy-MM-dd HH:mm:ss（不是 ISO）', () => {
     const ts = alipayTimestamp(new Date('2026-11-09T16:00:00Z'));
     expect(ts).toBe('2026-11-10 00:00:00');
@@ -155,7 +194,7 @@ describe('异步通知验签', () => {
       app_id: '2021000000000001',
       gmt_payment: '2026-11-09 12:00:00',
     });
-    const out = await makeProvider().getWebhookActionAndData({ headers: {}, rawBody });
+    const out = await makeProvider({ flow: 'redirect' }).getWebhookActionAndData({ headers: {}, rawBody });
     expect(out.action).toBe('captured');
     expect(out.data?.sessionId).toBe('sess_1');
     expect(out.data?.amountMinor).toBe(20600n);
@@ -175,7 +214,7 @@ describe('异步通知验签', () => {
       buyer_pay_amount: '',
       invoice_amount: '',
     });
-    const out = await makeProvider().getWebhookActionAndData({ headers: {}, rawBody });
+    const out = await makeProvider({ flow: 'redirect' }).getWebhookActionAndData({ headers: {}, rawBody });
     expect(out.action).toBe('captured');
   });
 
@@ -186,24 +225,24 @@ describe('异步通知验签', () => {
       trade_status: 'TRADE_SUCCESS',
       total_amount: '206.00',
     }).replace('206.00', '0.01');
-    await expect(makeProvider().getWebhookActionAndData({ headers: {}, rawBody })).rejects.toBeInstanceOf(
+    await expect(makeProvider({ flow: 'redirect' }).getWebhookActionAndData({ headers: {}, rawBody })).rejects.toBeInstanceOf(
       WebhookSignatureError,
     );
   });
 
   it('缺 sign → 抛 WebhookSignatureError', async () => {
     const rawBody = new URLSearchParams({ out_trade_no: 's', trade_status: 'TRADE_SUCCESS' }).toString();
-    await expect(makeProvider().getWebhookActionAndData({ headers: {}, rawBody })).rejects.toBeInstanceOf(
+    await expect(makeProvider({ flow: 'redirect' }).getWebhookActionAndData({ headers: {}, rawBody })).rejects.toBeInstanceOf(
       WebhookSignatureError,
     );
   });
 
   it('TRADE_CLOSED → canceled；WAIT_BUYER_PAY → not_supported（不改支付单状态）', async () => {
     const closed = signedNotify({ out_trade_no: 's', trade_no: 'T', trade_status: 'TRADE_CLOSED' });
-    expect((await makeProvider().getWebhookActionAndData({ headers: {}, rawBody: closed })).action).toBe('canceled');
+    expect((await makeProvider({ flow: 'redirect' }).getWebhookActionAndData({ headers: {}, rawBody: closed })).action).toBe('canceled');
 
     const waiting = signedNotify({ out_trade_no: 's', trade_no: 'T', trade_status: 'WAIT_BUYER_PAY' });
-    expect((await makeProvider().getWebhookActionAndData({ headers: {}, rawBody: waiting })).action).toBe(
+    expect((await makeProvider({ flow: 'redirect' }).getWebhookActionAndData({ headers: {}, rawBody: waiting })).action).toBe(
       'not_supported',
     );
   });
@@ -223,26 +262,26 @@ describe('查单与退款（mock fetch）', () => {
 
   it('查单 TRADE_SUCCESS → authorized', async () => {
     mockCall(QUERY, { code: '10000', trade_status: 'TRADE_SUCCESS', trade_no: 'T1' });
-    const out = await makeProvider().authorizePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
+    const out = await makeProvider({ flow: 'redirect' }).authorizePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
     expect(out.status).toBe('authorized');
     expect(out.providerReference).toBe('T1');
   });
 
   it('查单 WAIT_BUYER_PAY → requires_more', async () => {
     mockCall(QUERY, { code: '10000', trade_status: 'WAIT_BUYER_PAY' });
-    const out = await makeProvider().authorizePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
+    const out = await makeProvider({ flow: 'redirect' }).authorizePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
     expect(out.status).toBe('requires_more');
   });
 
   it('交易不存在（ACQ.TRADE_NOT_EXIST）→ requires_more，不当作故障抛出', async () => {
     mockCall(QUERY, { code: '40004', sub_code: 'ACQ.TRADE_NOT_EXIST', sub_msg: '交易不存在' });
-    const out = await makeProvider().authorizePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
+    const out = await makeProvider({ flow: 'redirect' }).authorizePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
     expect(out.status).toBe('requires_more');
   });
 
   it('退款用 out_request_no 做幂等，金额为主单位字符串', async () => {
     mockCall(REFUND, { code: '10000', trade_no: 'T1', refund_fee: '206.00' });
-    const out = await makeProvider().refundPayment({
+    const out = await makeProvider({ flow: 'redirect' }).refundPayment({
       paymentId: 's',
       amountMinor: 20600n,
       currencyCode: 'CNY',
@@ -275,7 +314,7 @@ describe('配置与密钥格式', () => {
       .replace('-----BEGIN PRIVATE KEY-----', '')
       .replace('-----END PRIVATE KEY-----', '')
       .replace(/\s+/g, '');
-    const provider = makeProvider({ privateKey: bare });
+    const provider = makeProvider({ flow: 'redirect', privateKey: bare });
     /* 能构造出 URL 即说明签名没抛错 */
     return expect(
       provider.initiatePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' }),
@@ -297,7 +336,7 @@ describe('配置与密钥格式', () => {
     const bare = pair.privateKey.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
     expect(bare.startsWith('MIIE')).toBe(true);
 
-    const provider = makeProvider({ privateKey: bare, alipayPublicKey: pair.publicKey });
+    const provider = makeProvider({ flow: 'redirect', privateKey: bare, alipayPublicKey: pair.publicKey });
     const res = await provider.initiatePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
 
     const url = new URL(res.redirectUrl);
@@ -311,7 +350,7 @@ describe('配置与密钥格式', () => {
   });
 
   it('healthCheck 在配置齐全时返回 true、缺失时 false（不抛）', async () => {
-    expect(await makeProvider().healthCheck()).toBe(true);
+    expect(await makeProvider({ flow: 'redirect' }).healthCheck()).toBe(true);
     expect(await new AlipayPaymentProvider({}).healthCheck()).toBe(false);
   });
 });

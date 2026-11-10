@@ -87,7 +87,43 @@ export class AlipayClient {
   }
 
   /**
+   * 当面付（`alipay.trade.precreate`）→ 返回二维码内容。
+   *
+   * 为什么要有这条路径：**支付宝沙箱不支持 `alipay.trade.page.pay`**（网关直接返回
+   * 404 system error page，真机联调实测）。而当面付在沙箱是**完全可用**的
+   * （code=10000，返回 qr.alipay.com 二维码）。
+   *
+   * 因此沙箱联调与生产共用同一套「当面付」实现：生产环境当面付也是国内主流形态
+   * （用户扫码付款），跳转收银台则留给需要 PC 收银台的场景。
+   */
+  async createQrcode(input: {
+    outTradeNo: string;
+    totalAmount: string;
+    subject: string;
+    body?: string;
+    timeoutExpress?: string;
+  }): Promise<{ qrCode: string; tradeNo?: string }> {
+    const node = await this.call<{ qr_code?: string; trade_no?: string }>(
+      'alipay.trade.precreate',
+      {
+        out_trade_no: input.outTradeNo,
+        total_amount: input.totalAmount,
+        subject: input.subject,
+        ...(input.body ? { body: input.body } : {}),
+        ...(input.timeoutExpress ? { timeout_express: input.timeoutExpress } : {}),
+      },
+    );
+    if (!node.qr_code) {
+      throw new AlipayApiError('支付宝当面付未返回二维码（qr_code 为空）', '10000', undefined, false);
+    }
+    return { qrCode: node.qr_code, tradeNo: node.trade_no };
+  }
+
+  /**
    * 电脑/手机网站支付：拼出可直接跳转的收银台 URL。
+   *
+   * ⚠️ 支付宝**沙箱不支持**该接口（网关返回 404），所以它只在生产环境有意义；
+   * 沙箱联调请走 `createQrcode`（当面付）。
    *
    * 用 `alipay.trade.page.pay`（PC）；移动端可换 `alipay.trade.wap.pay`，
    * 两者参数一致，只是收银台形态不同。
@@ -124,11 +160,18 @@ export class AlipayClient {
     return `${this.config.gateway}?${query}`;
   }
 
-  /** 服务端接口调用（query / refund / close），返回 `<method>_response` 节点。 */
-  async call<T extends { code?: string; sub_code?: string; sub_msg?: string; msg?: string }>(
+  /**
+   * 服务端接口调用，返回 `<method>_response` 节点。
+   *
+   * 泛型 T 放宽为 `Record<string, unknown>`：不同接口的响应节点字段差异很大
+   * （trade.precreate 是 qr_code/trade_no，trade.query 是 trade_status…），
+   * 强行要求 T 含 code/sub_code 会让调用方为了过类型而写无意义的断言。
+   * 错误码字段统一在返回类型上补齐，方便调用方判断 code/sub_code。
+   */
+  async call<T extends object>(
     method: string,
     bizContent: Record<string, unknown>,
-  ): Promise<T> {
+  ): Promise<T & { code?: string; sub_code?: string; sub_msg?: string; msg?: string }> {
     const params: Record<string, string> = {
       ...this.commonParams(method),
       biz_content: JSON.stringify(bizContent),
@@ -150,7 +193,9 @@ export class AlipayClient {
     }
 
     const nodeKey = `${method.replace(/\./g, '_')}_response`;
-    const node = json[nodeKey] as T | undefined;
+    const node = json[nodeKey] as
+      | (T & { code?: string; sub_code?: string; sub_msg?: string; msg?: string })
+      | undefined;
     if (!node) {
       throw new AlipayApiError(`支付宝响应缺少 ${nodeKey}（HTTP ${res.status}）`, String(res.status));
     }
