@@ -75,6 +75,8 @@ export class PaypalPaymentProvider extends AbstractPaymentProvider {
   async initiatePayment(input: InitiatePaymentInput): Promise<InitiatePaymentOutput> {
     const captureMethod = String(this.config.captureMethod ?? 'automatic');
     const intent = captureMethod === 'manual' ? 'AUTHORIZE' : 'CAPTURE';
+    /* 回跳地址：调用方传的优先，退化到后台配置的兜底值（与支付宝 provider 一致）。 */
+    const returnUrl = input.returnUrl ?? (String(this.config.returnUrl ?? '').trim() || undefined);
 
     let order: PaypalOrder;
     try {
@@ -95,7 +97,7 @@ export class PaypalPaymentProvider extends AbstractPaymentProvider {
           ],
           application_context: {
             user_action: 'PAY_NOW',
-            ...(input.returnUrl ? { return_url: input.returnUrl, cancel_url: input.returnUrl } : {}),
+            ...(returnUrl ? { return_url: returnUrl, cancel_url: returnUrl } : {}),
           },
         },
       });

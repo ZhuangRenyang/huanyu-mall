@@ -16,6 +16,7 @@ import type {
   LoginRequest,
   PutPricesRequest,
   RegisterRequest,
+  SetShippingMethodRequest,
   UpdateInventoryLevelRequest,
   UpdateLineItemRequest,
   UpdatePaymentProviderRequest,
@@ -64,11 +65,14 @@ async function request<T>(
   opts: ClientOptions,
   body?: unknown,
   query?: Query,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
   const doFetch = async (): Promise<Response> => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (opts.publishableKey) headers["x-publishable-key"] = opts.publishableKey;
     if (opts.accessToken) headers["authorization"] = `Bearer ${opts.accessToken}`;
+    // 额外请求头（如 idempotency-key）：放在最后，允许覆盖默认头。
+    if (extraHeaders) Object.assign(headers, extraHeaders);
     const fetcher = opts.fetch ?? fetch;
     return fetcher(`${opts.baseUrl}${path}${buildQuery(query)}`, {
       method,
@@ -122,6 +126,9 @@ export function createStoreClient(opts: ClientOptions) {
     deleteLineItem: (cartId: string, lineId: string) =>
       del(`/api/v1/store/carts/${cartId}/line-items/${lineId}`),
     listShippingOptions: (q?: Query) => get("/api/v1/store/shipping-options", q),
+    /** 选运费：只传方案 id，运费金额由后端解析（铁律 13，防客户端指定运费）。 */
+    setShippingMethod: (cartId: string, b: SetShippingMethodRequest) =>
+      post(`/api/v1/store/carts/${cartId}/shipping-methods`, b),
     listPaymentProviders: (cartId: string) =>
       get("/api/v1/store/payment-providers", { cart_id: cartId }),
     createPaymentSession: (b: CreatePaymentSessionRequest) =>
@@ -132,8 +139,18 @@ export function createStoreClient(opts: ClientOptions) {
     /** 扣款（幂等键必填）。 */
     capturePayment: (paymentId: string, b: CapturePaymentRequest) =>
       post(`/api/v1/store/payments/${paymentId}/capture`, b),
+    /**
+     * 结算下单（走 cart-complete workflow）。
+     *
+     * 幂等键必须放在 **Idempotency-Key 请求头**里 —— 后端
+     * `POST /store/carts/:id/complete` 读的是 `req.headers["idempotency-key"]`，
+     * 不是请求体。此前 SDK 形参接收了 idempotencyKey 却丢弃不用，
+     * 后端只能退化成 `auto_${cartId}`（同一购物车永远同一个键）。
+     */
     completeCart: (cartId: string, idempotencyKey?: string) =>
-      post(`/api/v1/store/carts/${cartId}/complete`, undefined),
+      request("POST", `/api/v1/store/carts/${cartId}/complete`, base, undefined, undefined, {
+        ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
+      }),
     getOrder: (id: string) => get(`/api/v1/store/orders/${id}`),
     register: (b: RegisterRequest) => post("/api/v1/store/auth/register", b),
     login: (b: LoginRequest) => post("/api/v1/store/auth/login", b),

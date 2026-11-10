@@ -58,6 +58,10 @@ export interface CreateCollectionInput {
 export interface CreateSessionInput {
   paymentCollectionId: string;
   providerId: string;
+  /** 支付完成后回跳地址（PayPal 必填：缺了用户付完款无处可去）。 */
+  returnUrl?: string;
+  /** 传给 provider 的附加信息（如支付标题 subject）。 */
+  metadata?: Record<string, unknown>;
 }
 
 export interface RefundInput {
@@ -172,6 +176,7 @@ export interface IPaymentModuleService {
   /** 按订单反查支付集合（复用 workflow 建好的集合，避免旁路新建 order_id 为空的空壳）。 */
   findCollectionByOrderId(orderId: string): Promise<PaymentCollectionDTO | null>;
   createSession(input: CreateSessionInput): Promise<PaymentSessionDTO>;
+  findCollectionById(id: string): Promise<PaymentCollectionDTO | null>;
   authorizeSession(sessionId: string): Promise<PaymentDTO>;
   capturePayment(paymentId: string, amountMinor: bigint, idempotencyKey: string): Promise<PaymentDTO>;
   refundPayment(input: RefundInput): Promise<RefundDTO>;

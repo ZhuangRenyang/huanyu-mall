@@ -60,6 +60,19 @@ export class PaymentService implements IPaymentModuleService {
       sessionId: collection.id,
       amountMinor: collection.amount_minor,
       currencyCode: collection.currency_code,
+      /*
+       * 回跳地址必须传给 provider：
+       * - PayPal 的 `application_context.return_url / cancel_url` 就来自这里，
+       *   不传则用户在 PayPal 付完款后无处可去（PayPal 会报缺少 return_url）。
+       * - 支付宝 page.pay 的 return_url 同理（沙箱已支持，生产同样需要）。
+       * 没有就退化成 provider 自身配置里的 returnUrl（后台可填），两者都没有则不传。
+       */
+      ...(input.returnUrl ? { returnUrl: input.returnUrl } : {}),
+      /*
+       * 支付标题/摘要：默认用商户单号，商家后台能看出这是哪一单。
+       * metadata 由调用方（store 路由）按真实订单内容填充。
+       */
+      metadata: input.metadata ?? { subject: `订单 ${collection.id}` },
     });
     return this.deps.repo.insertSession({
       id: prefixedUlid("paysess"),
@@ -80,6 +93,11 @@ export class PaymentService implements IPaymentModuleService {
 
   async findCollectionByOrderId(orderId: string): Promise<PaymentCollectionDTO | null> {
     return this.deps.repo.findCollectionByOrderId(orderId);
+  }
+
+  /** 按支付集合 id 查（store 路由取支付标题时用）。 */
+  async findCollectionById(id: string): Promise<PaymentCollectionDTO | null> {
+    return this.deps.repo.findCollection(id);
   }
 
   async authorizeSession(sessionId: string): Promise<PaymentDTO> {

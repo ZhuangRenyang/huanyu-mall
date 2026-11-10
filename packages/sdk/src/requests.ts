@@ -5,9 +5,15 @@
 import type { AttributeInput } from './admin';
 import type { Money } from './common';
 
-/** 创建购物车。 */
+/**
+ * 创建购物车。
+ *
+ * **不要传 region_id**：后端 `POST /store/carts` 的请求体只接受 email，
+ * 区域与币种一律由 `x-publishable-key` 解析出的 channel 推导
+ * （见 apps/api/src/routes/store/carts.ts 的 createCartBody）。
+ * 之前这里把 region_id 标成必填，调用方只能凭空造一个用不上的值。
+ */
 export interface CreateCartRequest {
-  region_id: string;
   email?: string | null;
 }
 
@@ -31,6 +37,8 @@ export interface SetShippingMethodRequest {
 export interface CreatePaymentSessionRequest {
   cart_id: string;
   provider_id: string;
+  /** 支付完成后的回跳地址（PayPal 必填：缺了用户付完款无处可去）。 */
+  return_url?: string;
 }
 
 /** 顾客注册。 */

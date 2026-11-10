@@ -10,6 +10,8 @@ const createSessionBody = z.object({
   payment_collection_id: z.string().optional(),
   cart_id: z.string().optional(),
   provider_id: z.string(),
+  /** 支付完成后的回跳地址（PayPal 必填：缺了用户付完款无处可去）。 */
+  return_url: z.string().url().optional(),
 });
 
 /** 扣款：金额可由客户端指定（默认取 payment 记录金额），幂等键必填。 */
@@ -58,9 +60,32 @@ export function storePaymentRoutes(app: FastifyInstance, deps: AppDeps): void {
         }
       }
       if (!collectionId) throw errors.validation("payment_collection_id or cart_id required");
+
+      /*
+       * 支付标题：优先用订单首件商品名（用户在支付宝/PayPal 收银台看到的摘要），
+       * 没有订单时退回购物车首件，再退回默认文案。
+       * payment 模块不依赖 order/cart 模块（铁律 13：模块间只走事件/工作流），
+       * 所以在这里（store 路由层）取标题，只把结果当 metadata 传下去。
+       */
+      let subject = `订单 ${collectionId}`;
+      const collection = await deps.services.payment.findCollectionById(collectionId);
+      if (collection?.order_id) {
+        try {
+          const order = await deps.services.order.retrieveOrder(collection.order_id);
+          const first = order.items[0];
+          if (first?.title) {
+            subject = order.items.length > 1 ? `${first.title} 等 ${order.items.length} 件商品` : first.title;
+          }
+        } catch {
+          /* 订单取不到不阻断支付：标题只是展示，不影响金额与回调 */
+        }
+      }
+
       const session = await deps.services.payment.createSession({
         paymentCollectionId: collectionId,
         providerId: b.provider_id,
+        ...(b.return_url ? { returnUrl: b.return_url } : {}),
+        metadata: { subject },
       });
       await deps.audit.record(
         auditEntry(req, {
