@@ -13,6 +13,8 @@
 set -uo pipefail
 
 BASE="${1:-http://localhost/api/v1}"
+# 要联调的支付商：pp_paypal（默认）/ pp_alipay 等
+PROVIDER="${PROVIDER:-pp_paypal}"
 PASS=0
 FAIL=0
 ok()  { printf '  [通过] %s\n' "$*"; PASS=$((PASS+1)); }
@@ -20,11 +22,11 @@ bad() { printf '  [失败] %s\n' "$*"; FAIL=$((FAIL+1)); }
 
 printf '\n=== 1. 确认 pp_paypal 已启用 ===\n'
 PROVIDERS=$(curl -s "$BASE/store/payment-providers")
-ENABLED=$(printf '%s' "$PROVIDERS" | jq -r '[.data.items[]? | select(.provider_id=="pp_paypal")] | length')
+ENABLED=$(printf '%s' "$PROVIDERS" | jq -r --arg p "$PROVIDER" '[.data.items[]? | select(.provider_id==$p)] | length')
 if [[ "$ENABLED" == "1" ]]; then
-  ok "pp_paypal 在当前 channel 可用"
+  ok "$PROVIDER 在当前 channel 可用"
 else
-  bad "pp_paypal 未启用（当前可用: $(printf '%s' "$PROVIDERS" | jq -c '[.data.items[]?.provider_id]')）"
+  bad "$PROVIDER 未启用（当前可用: $(printf '%s' "$PROVIDERS" | jq -c '[.data.items[]?.provider_id]')）"
   printf '  说明：Provider 只对 enabled_channels 里的渠道生效，请先在后台「支付方式」勾选渠道\n'
   exit 1
 fi
@@ -57,7 +59,7 @@ fi
 
 printf '\n=== 3. 用 pp_paypal 建支付会话（真实调用 PayPal API）===\n'
 PS_JSON=$(curl -s -X POST "$BASE/store/payment-sessions" -H 'Content-Type: application/json' \
-  -d "{\"cart_id\":\"$CART\",\"provider_id\":\"pp_paypal\"}")
+  -d "{\"cart_id\":\"$CART\",\"provider_id\":\"$PROVIDER\"}")
 printf '%s' "$PS_JSON" | jq -c '.data | {id, provider_id, status, amount_minor, currency_code, kind: .context.kind, redirectUrl: .context.redirectUrl}'
 
 CODE=$(printf '%s' "$PS_JSON" | jq -r '.code // -1')
@@ -71,25 +73,45 @@ if [[ "$CODE" != "0" ]]; then
 fi
 
 ok "支付会话 $SESSION_ID"
-if [[ "$REDIRECT" == https://*.paypal.com/* ]]; then
-  ok "拿到真实 PayPal 跳转链接（说明 API 调用成功，不是仿真）"
+if [[ "$REDIRECT" == https://*.paypal.com/* || "$REDIRECT" == https://*.alipaydev.com/* || "$REDIRECT" == https://*.alipay.com/* ]]; then
+  ok "拿到真实 $PROVIDER 跳转链接（说明调用成功，不是仿真）"
   printf '      %s\n' "$REDIRECT"
 else
   bad "跳转链接异常：$REDIRECT"
 fi
 
 printf '\n=== 下一步：人工完成付款 ===\n'
-cat <<EOF
-1. 用**沙箱买家账号**登录上面那个 PayPal 链接完成付款
-   （买家账号在 https://developer.paypal.com/dashboard/accounts 查看，是自动生成的测试账号，不是你的真实账号）
-2. 付款后 PayPal 会往已配置的 webhook 发 PAYMENT.CAPTURE.COMPLETED
+case "$PROVIDER" in
+  pp_alipay)
+    cat <<EOF
+1. 用**支付宝沙箱买家账号**登录上面那个收银台链接完成付款
+   （沙箱买家账号在 https://open.alipay.com/develop/sandbox 里「沙箱账号」页查看，
+     是平台自动生成的测试账号，不是你的真实支付宝账号）
+2. 付款后支付宝会往 notify_url 发异步通知（form 表单，RSA2 签名）
+3. 回到本机查订单状态：
+   curl -s "$BASE/store/orders/$ORDER_ID" | jq '.data | {status, payment_status}'
+   期望：paid / captured
+4. 若订单未自动变 paid，检查：
+   - 隧道是否还活着（免费隧道会断，断了要重建并更新 notifyUrl）
+   - api 日志：docker compose logs --tail=50 api | grep -i alipay
+EOF
+    ;;
+  *)
+    cat <<EOF
+1. 用**沙箱买家账号**登录上面那个跳转链接完成付款
+   （买家账号在 https://developer.paypal.com/dashboard/accounts 查看，是自动生成的测试账号）
+2. 付款后支付商会往已配置的 webhook 发支付成功事件
 3. 回到本机查订单状态：
    curl -s "$BASE/store/orders/$ORDER_ID" | jq '.data | {status, payment_status}'
    期望：paid / captured
 4. 若订单未自动变 paid，检查：
    - webhook URL 是否公网可达（HTTPS）
-   - PAYPAL_WEBHOOK_ID 是否与 PayPal 后台一致
    - api 日志：docker compose logs --tail=50 api | grep -i paypal
+EOF
+    ;;
+esac
+
+cat <<EOF
 
 当前订单号：$ORDER_ID
 当前会话号：$SESSION_ID
