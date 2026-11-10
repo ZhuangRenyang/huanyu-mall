@@ -135,7 +135,43 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     return promos.map((p) => ({ promotion: toPromotionDTO(p), rules: rulesByPromo.get(p.id) ?? [] }));
   }
 
-  // —— promotion_rule ——
+  async listActiveOrderPromotionsWithRules(
+    now: Date,
+  ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>> {
+    const promos = await this.db
+      .select()
+      .from(schema.promotion)
+      .where(
+        and(
+          eq(schema.promotion.type, "order"),
+          eq(schema.promotion.status, "active"),
+          isNull(schema.promotion.deletedAt),
+          or(isNull(schema.promotion.startsAt), lte(schema.promotion.startsAt, now)),
+          or(isNull(schema.promotion.endsAt), gte(schema.promotion.endsAt, now)),
+        ),
+      );
+    if (promos.length === 0) return [];
+
+    const ruleRows = await this.db
+      .select()
+      .from(schema.promotionRule)
+      .where(
+        and(
+          inArray(
+            schema.promotionRule.promotionId,
+            promos.map((p) => p.id),
+          ),
+          isNull(schema.promotionRule.deletedAt),
+        ),
+      );
+    const rulesByPromo = new Map<string, PromotionRuleDTO[]>();
+    for (const r of ruleRows) {
+      const list = rulesByPromo.get(r.promotionId) ?? [];
+      list.push(toPromotionRuleDTO(r));
+      rulesByPromo.set(r.promotionId, list);
+    }
+    return promos.map((p) => ({ promotion: toPromotionDTO(p), rules: rulesByPromo.get(p.id) ?? [] }));
+  }
   async insertPromotionRule(input: CreatePromotionRuleInput & { id: string }): Promise<PromotionRuleDTO> {
     const rows = await this.db
       .insert(schema.promotionRule)

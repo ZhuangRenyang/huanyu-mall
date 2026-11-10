@@ -88,6 +88,21 @@ class InMemoryPromotionRepository implements PromotionRepository {
         rules: [...this.rules.values()].filter((r) => r.promotion_id === p.id),
       }));
   }
+  async listActiveOrderPromotionsWithRules(
+    now: Date,
+  ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>> {
+    const inWindow = (p: PromotionDTO) => {
+      if (p.starts_at && p.starts_at.getTime() > now.getTime()) return false;
+      if (p.ends_at && p.ends_at.getTime() < now.getTime()) return false;
+      return true;
+    };
+    return [...this.promotions.values()]
+      .filter((p) => p.type === "order" && p.status === "active" && inWindow(p))
+      .map((p) => ({
+        promotion: p,
+        rules: [...this.rules.values()].filter((r) => r.promotion_id === p.id),
+      }));
+  }
 
   async insertPromotionRule(input: CreatePromotionRuleInput & { id: string }): Promise<PromotionRuleDTO> {
     const dto: PromotionRuleDTO = {
@@ -478,6 +493,135 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
       giftCardCodes: [],
     });
     expect(res.lineAdjustments).toHaveLength(0);
+  });
+
+  it("computeDiscounts：订单促销 fixed 满减命中返回 orderDiscountMinor + 明细", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promo = await service.createPromotion({ name: "满 100 减 20", type: "order", code: "ORDER20" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { subtotalGte: 10000 },
+      rewardType: "fixed",
+      rewardValue: 2000n,
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 2, unitPriceMinor: 9900n }],
+      subtotalMinor: 19800n,
+      shippingMinor: 800n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.orderDiscountMinor).toBe(2000n);
+    expect(res.orderDiscounts).toEqual([{ promotionId: promo.id, code: "ORDER20", amountMinor: 2000n }]);
+    expect(res.lineAdjustments).toHaveLength(0);
+  });
+
+  it("computeDiscounts：订单促销 percentage 折扣 = round(小计×bps/10000)", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promo = await service.createPromotion({ name: "全场 8 折", type: "order" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { currencyEq: "CNY" },
+      rewardType: "percentage",
+      rewardValue: 2000n, // 20% 折扣
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 2, unitPriceMinor: 9900n }],
+      subtotalMinor: 19800n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    // 19800 × 2000 / 10000 = 3960
+    expect(res.orderDiscountMinor).toBe(3960n);
+    expect(res.orderDiscounts[0]?.amountMinor).toBe(3960n);
+  });
+
+  it("computeDiscounts：订单促销未达 subtotalGte 门槛不命中", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promo = await service.createPromotion({ name: "满 200 减 50", type: "order" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { subtotalGte: 20000 },
+      rewardType: "fixed",
+      rewardValue: 5000n,
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.orderDiscountMinor).toBe(0n);
+    expect(res.orderDiscounts).toHaveLength(0);
+  });
+
+  it("computeDiscounts：多条订单促销命中取折扣最大的一条", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promoA = await service.createPromotion({ name: "减 10", type: "order" });
+    await service.updatePromotion(promoA.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promoA.id,
+      predicate: { subtotalGte: 1000 },
+      rewardType: "fixed",
+      rewardValue: 1000n,
+    });
+    const promoB = await service.createPromotion({ name: "减 30", type: "order" });
+    await service.updatePromotion(promoB.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promoB.id,
+      predicate: { subtotalGte: 1000 },
+      rewardType: "fixed",
+      rewardValue: 3000n,
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.orderDiscountMinor).toBe(3000n);
+    expect(res.orderDiscounts).toEqual([{ promotionId: promoB.id, code: null, amountMinor: 3000n }]);
+  });
+
+  it("computeDiscounts：订单促销折扣封顶到小计（不超应付）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promo = await service.createPromotion({ name: "超额固定", type: "order" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { subtotalGte: 1000 },
+      rewardType: "fixed",
+      rewardValue: 999999n,
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.orderDiscountMinor).toBe(9900n);
   });
 
   it("查询不存在的资源抛领域错误", async () => {

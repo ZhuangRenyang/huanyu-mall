@@ -4,7 +4,10 @@ import { canTransition } from "../src/services/state-machine.js";
 import { OrderService } from "../src/services/order.service.js";
 import type {
   Actor,
+  CreateOrderDiscountInput,
   CreateOrderInput,
+  OrderDiscountDTO,
+  OrderDiscountType,
   OrderDTO,
   OrderLineItemDTO,
   OrderQuery,
@@ -20,6 +23,7 @@ class InMemoryOrderRepository implements OrderRepository {
   readonly snapshots = new Map<string, Record<string, unknown>>();
   readonly shipping = new Map<string, OrderShippingMethodDTO>();
   readonly history: Array<{ orderId: string; from: OrderStatus | null; to: OrderStatus; actor: Actor }> = [];
+  readonly discounts: OrderDiscountDTO[] = [];
   private counter = 0;
 
   async insertOrder(input: {
@@ -115,6 +119,23 @@ class InMemoryOrderRepository implements OrderRepository {
     });
   }
 
+  async insertDiscounts(orderId: string, discounts: CreateOrderDiscountInput[]): Promise<void> {
+    for (const d of discounts) {
+      this.discounts.push({
+        id: `odisc_${++this.counter}`,
+        order_id: orderId,
+        promotion_id: d.promotionId,
+        code: d.code ?? null,
+        amount_minor: d.amountMinor,
+        type: d.type as OrderDiscountType,
+        created_at: new Date(),
+      });
+    }
+  }
+  async listDiscounts(orderId: string): Promise<OrderDiscountDTO[]> {
+    return this.discounts.filter((d) => d.order_id === orderId);
+  }
+
   async insertStatusHistory(
     orderId: string,
     fromStatus: OrderStatus | null,
@@ -201,6 +222,31 @@ describe("OrderService（M05，状态机 + 行快照冻结 + 全额退款）", (
     await expect(service.transition(order.id, "paid", { actor: "admin" })).rejects.toBeInstanceOf(DomainError);
     const next = await service.transition(order.id, "awaiting_payment", { actor: "workflow" });
     expect(next.status).toBe("awaiting_payment");
+  });
+
+  it("createOrder 固化 order_discount 留痕（discountMinor + discounts）", async () => {
+    const { repo, service } = setup();
+    const order = await service.createOrder(
+      makeInput({
+        discountMinor: 3980n,
+        discounts: [
+          { type: "catalogue", promotionId: "promo_cat", code: "CAT", amountMinor: 1980n },
+          { type: "order", promotionId: "promo_ord", code: "ORDER20", amountMinor: 2000n },
+        ],
+      }),
+    );
+    // 总额 = 19800 + 800 - 3980 = 16620
+    expect(order.total_minor).toBe(16620n);
+    expect(order.discount_minor).toBe(3980n);
+
+    // 留痕表可查：哪笔订单、哪个促销、多少钱
+    const detail = await service.retrieveOrder(order.id);
+    expect(detail.discounts).toEqual([
+      expect.objectContaining({ promotion_id: "promo_cat", code: "CAT", amount_minor: 1980n, type: "catalogue" }),
+      expect.objectContaining({ promotion_id: "promo_ord", code: "ORDER20", amount_minor: 2000n, type: "order" }),
+    ]);
+    expect(repo.discounts).toHaveLength(2);
+    expect(repo.discounts[0]?.id.startsWith("odisc_")).toBe(true);
   });
 
   it("全生命周期：pending→awaiting_payment→paid→fulfilled→delivered→completed", async () => {

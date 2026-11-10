@@ -39,6 +39,15 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
       regionId: cart.region_id,
       shippingAddress: {},
       shippingMinor: cart.shipping_method?.amount_minor ?? 0n,
+      // 折扣由 cart.retrieveCart 服务端算好（行级 + 订单级），禁客户端传价（铁律 13）。
+      discountMinor: cart.totals?.discount_minor ?? 0n,
+      // 折扣留痕明细：传给 order 固化进 order_discount 表（资金安全硬约束 5）。
+      discounts: (cart.discounts ?? []).map((d) => ({
+        type: d.type,
+        promotionId: d.promotion_id,
+        code: d.code,
+        amountMinor: d.amount_minor,
+      })),
       items: cart.items.map((li) => ({
         variantId: li.variant_id,
         productId: li.product_id,

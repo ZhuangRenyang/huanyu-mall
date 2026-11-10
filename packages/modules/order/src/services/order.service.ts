@@ -73,6 +73,11 @@ export class OrderService implements IOrderModuleService {
       inserted.map((line, i) => ({ orderLineItemId: line.id, snapshot: lines[i]!.snapshot })),
     );
 
+    // 折扣留痕：把命中的促销明细固化进 order_discount（不可变，资金安全硬约束 5）。
+    if (input.discounts && input.discounts.length > 0) {
+      await this.repo.insertDiscounts(id, input.discounts);
+    }
+
     if (shipping > 0n) {
       await this.repo.insertShippingMethod(id, {
         name: "标准配送",
@@ -90,7 +95,8 @@ export class OrderService implements IOrderModuleService {
     if (!order) throw orderNotFound(id);
     const items = await this.repo.listLineItems(id);
     const shipping = await this.repo.findShippingMethod(id);
-    return { ...order, items, shipping_method: shipping };
+    const discounts = await this.repo.listDiscounts(id);
+    return { ...order, items, shipping_method: shipping, discounts };
   }
 
   async listOrders(q: OrderQuery): Promise<{ items: OrderDTO[]; count: number }> {

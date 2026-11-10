@@ -160,7 +160,7 @@ export class PromotionService implements IPromotionModuleService {
     return this.repo.listEventsByGiftCard(giftCardId);
   }
 
-  // —— 折扣计算（阶段 2：目录促销 catalogue 行级折扣；order/voucher/gift card 阶段 3-5 落地）——
+  // —— 折扣计算（阶段 2：目录促销 catalogue 行级折扣；阶段 3：订单促销 order 订单级折扣；voucher/gift card 阶段 4-5 落地）——
   async computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
     const now = new Date();
     const active = await this.repo.listActiveCataloguePromotionsWithRules(now);
@@ -201,9 +201,43 @@ export class PromotionService implements IPromotionModuleService {
       }
     }
 
+    // —— 订单促销（阶段 3）：订单级上下文求值，命中取折扣金额最大的一条（与目录促销一致）。——
+    const orderPromotions = await this.repo.listActiveOrderPromotionsWithRules(now);
+    let bestOrder: { amountMinor: bigint; promotionId: string; code: string | null } | null = null;
+    for (const { promotion, rules } of orderPromotions) {
+      for (const rule of rules) {
+        const matched = evalPredicate(rule.predicate, {
+          // 订单级条件（subtotalGte / currencyEq）不看具体行；variant/category 谓词在订单级恒不命中。
+          variantId: "",
+          categoryIds: [],
+          subtotalMinor: ctx.subtotalMinor,
+          currencyCode: ctx.currencyCode,
+        });
+        if (!matched) continue;
+
+        const amount = computeOrderRuleDiscount(rule, ctx.subtotalMinor);
+        if (bestOrder === null || amount > bestOrder.amountMinor) {
+          bestOrder = { amountMinor: amount, promotionId: promotion.id, code: promotion.code ?? null };
+        }
+      }
+    }
+
+    // 封顶到小计（硬约束 3/7：订单级折扣不超过 subtotal，负则归零）。
+    let orderDiscountMinor = 0n;
+    const orderDiscounts: ComputeDiscountsResult["orderDiscounts"] = [];
+    if (bestOrder && bestOrder.amountMinor > 0n) {
+      orderDiscountMinor = bestOrder.amountMinor > ctx.subtotalMinor ? ctx.subtotalMinor : bestOrder.amountMinor;
+      orderDiscounts.push({
+        promotionId: bestOrder.promotionId,
+        code: bestOrder.code,
+        amountMinor: orderDiscountMinor,
+      });
+    }
+
     return {
       lineAdjustments,
-      orderDiscountMinor: 0n,
+      orderDiscountMinor,
+      orderDiscounts,
       voucherDiscountMinor: 0n,
       giftCardAppliedMinor: 0n,
     };
@@ -226,5 +260,20 @@ function computeCatalogueRuleDiscount(
   }
   // percentage（bps）：round half up，与 core money.toMinor 的「round half away from zero」一致。
   const numerator = unitPriceMinor * BigInt(quantity) * rule.reward_value;
+  return (numerator + 5000n) / 10000n;
+}
+
+/**
+ * 订单促销单条规则的订单级折扣金额（ADR-012 §3 / 资金安全硬约束 1：全程 bigint，禁浮点）。
+ * - fixed：折扣 = reward_value（minor unit）
+ * - percentage：折扣 = round(subtotalMinor × reward_value / 10000)，reward_value 为万分比 bps
+ * 结果恒 >= 0；封顶到小计由调用方负责。
+ */
+function computeOrderRuleDiscount(rule: PromotionRuleDTO, subtotalMinor: bigint): bigint {
+  if (rule.reward_type === "fixed") {
+    return rule.reward_value;
+  }
+  // percentage（bps）：round half up。
+  const numerator = subtotalMinor * rule.reward_value;
   return (numerator + 5000n) / 10000n;
 }

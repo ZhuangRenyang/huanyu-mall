@@ -168,6 +168,8 @@ export interface ComputeDiscountsInput {
 export interface ComputeDiscountsResult {
   lineAdjustments: Array<{ itemId: string; amountMinor: bigint; promotionId: string; code: string }>;
   orderDiscountMinor: bigint;
+  /** 命中的订单促销明细（多命中取折扣最大的一条，见 ADR-012 §3）。供下单侧固化进 order_discount 留痕。 */
+  orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
   voucherDiscountMinor: bigint;
   giftCardAppliedMinor: bigint;
 }
@@ -182,6 +184,10 @@ export interface PromotionRepository {
   softDeletePromotion(id: string): Promise<void>;
   /** 目录促销算折扣：active + catalogue + 有效期内的 promotion 连同其 rules（一次查询，禁 N+1）。 */
   listActiveCataloguePromotionsWithRules(
+    now: Date,
+  ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>>;
+  /** 订单促销算折扣：active + order + 有效期内的 promotion 连同其 rules（一次查询，禁 N+1）。 */
+  listActiveOrderPromotionsWithRules(
     now: Date,
   ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>>;
 

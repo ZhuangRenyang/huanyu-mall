@@ -91,3 +91,18 @@ export const orderStatusHistory = pgTable(
   },
   (t) => [index("idx_osh_order").on(t.orderId)],
 );
+
+/** 订单折扣留痕（order_discount，阶段 3 新增）：不可变，记录「哪个促销给了多少钱」（资金安全硬约束 5）。 */
+export const orderDiscount = pgTable(
+  "order_discount",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => order.id),
+    promotionId: text("promotion_id").notNull(),
+    code: text("code"),
+    amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
+    type: text("type").notNull(), // 'catalogue' | 'order' | 'voucher' | 'gift_card'
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_order_discount_order").on(t.orderId)],
+);

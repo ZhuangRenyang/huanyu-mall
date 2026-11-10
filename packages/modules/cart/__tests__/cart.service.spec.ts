@@ -158,9 +158,12 @@ class FakeShippingLookup implements ShippingLookupPort {
   }
 }
 
-/** 促销端口桩：目录促销行级折扣（对每行返回固定折扣金额）。 */
+/** 促销端口桩：目录促销行级折扣（对每行返回固定折扣金额）+ 订单级折扣。 */
 class FakePromotionLookup implements PromotionLookupPort {
-  constructor(private readonly fixedDiscountMinor: bigint = 0n) {}
+  constructor(
+    private readonly fixedDiscountMinor: bigint = 0n,
+    private readonly orderDiscountMinor: bigint = 0n,
+  ) {}
   async computeDiscounts(ctx: {
     currencyCode: string;
     customerId?: string | null;
@@ -180,13 +183,18 @@ class FakePromotionLookup implements PromotionLookupPort {
       .map((i) => ({
         itemId: i.id,
         amountMinor: this.fixedDiscountMinor,
-        promotionId: "promo_1",
-        code: "",
+        promotionId: "promo_cat",
+        code: "CAT",
       }))
       .filter((a) => a.amountMinor > 0n);
+    const orderDiscounts =
+      this.orderDiscountMinor > 0n
+        ? [{ promotionId: "promo_ord", code: "ORDER20", amountMinor: this.orderDiscountMinor }]
+        : [];
     return {
       lineAdjustments,
-      orderDiscountMinor: 0n,
+      orderDiscountMinor: this.orderDiscountMinor,
+      orderDiscounts,
       voucherDiscountMinor: 0n,
       giftCardAppliedMinor: 0n,
     };
@@ -200,6 +208,7 @@ function setup(
     freeOverThreshold?: bigint | null;
     categoryIdsByProduct?: Map<string, string[]>;
     fixedDiscountMinor?: bigint;
+    orderDiscountMinor?: bigint;
   } = {},
 ) {
   const repo = new InMemoryCartRepository();
@@ -208,7 +217,7 @@ function setup(
     product: new FakeProductLookup(opts.productStatus, opts.categoryIdsByProduct ?? new Map()),
     pricing: new FakePricingLookup(opts.price === undefined ? 9900n : opts.price),
     shipping: new FakeShippingLookup(opts.freeOverThreshold ?? null),
-    promotion: new FakePromotionLookup(opts.fixedDiscountMinor ?? 0n),
+    promotion: new FakePromotionLookup(opts.fixedDiscountMinor ?? 0n, opts.orderDiscountMinor ?? 0n),
   });
   return { repo, service };
 }
@@ -331,6 +340,24 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     expect(detail.totals?.discount_minor).toBe(0n);
     expect(detail.totals?.total_minor).toBe(20600n);
     expect(detail.items[0]?.discount_minor).toBe(0n);
+    expect(detail.discounts).toEqual([]);
+  });
+
+  it("订单促销折扣进 totals：discount_minor = 行级 + 订单级，且明细可留痕", async () => {
+    const { service } = setup({ fixedDiscountMinor: 1980n, orderDiscountMinor: 2000n });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 }); // 小计 19800
+    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }); // 运费 800
+
+    const detail = await service.retrieveCart(cart.id);
+    // 行级 1980 + 订单级 2000 = 3980
+    expect(detail.totals?.discount_minor).toBe(3980n);
+    expect(detail.totals?.total_minor).toBe(19800n + 800n - 3980n); // 16620
+    // 明细：目录促销（按促销聚合）+ 订单促销
+    expect(detail.discounts).toEqual([
+      { type: "catalogue", promotion_id: "promo_cat", code: "CAT", amount_minor: 1980n },
+      { type: "order", promotion_id: "promo_ord", code: "ORDER20", amount_minor: 2000n },
+    ]);
   });
 
   it("completeCart 软删 + completed；restoreCart 补偿回 open", async () => {

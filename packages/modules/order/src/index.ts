@@ -14,6 +14,6 @@ export { assertTransition, canTransition, isRefundable } from "./services/state-
 export default Module("order", {
   service: (ctx) =>
     new OrderService(new DrizzleOrderRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_order_discount.sql"],
   linkable,
 });

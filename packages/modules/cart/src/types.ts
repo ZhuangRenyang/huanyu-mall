@@ -32,6 +32,14 @@ export interface CartShippingMethodDTO {
   currency_code: string;
 }
 
+/** 命中的促销折扣明细（读时动态算），供下单侧固化进 order_discount 留痕（ADR-012 §3）。 */
+export interface CartDiscountDTO {
+  type: "catalogue" | "order";
+  promotion_id: string;
+  code: string | null;
+  amount_minor: bigint;
+}
+
 export interface CartDTO {
   id: string;
   channel_id: string;
@@ -46,6 +54,8 @@ export interface CartDTO {
 export interface CartDetailDTO extends CartDTO {
   items: CartLineItemDTO[];
   shipping_method: CartShippingMethodDTO | null;
+  /** 命中的促销折扣明细（目录行级 + 订单级），供下单固化 order_discount 留痕。 */
+  discounts: CartDiscountDTO[];
 }
 
 export interface CreateCartInput {
@@ -118,6 +128,7 @@ export interface PromotionLookupPort {
   }): Promise<{
     lineAdjustments: Array<{ itemId: string; amountMinor: bigint; promotionId: string; code: string }>;
     orderDiscountMinor: bigint;
+    orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
     voucherDiscountMinor: bigint;
     giftCardAppliedMinor: bigint;
   }>;

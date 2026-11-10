@@ -9,6 +9,15 @@ export interface CartCompleteInput {
   regionId: string;
   shippingAddress: Record<string, unknown>;
   shippingMinor?: bigint;
+  /** 订单级折扣总额（行级 + 订单促销，minor unit），服务端算好传入，禁客户端传价（铁律 13）。 */
+  discountMinor?: bigint;
+  /** 命中的促销折扣明细（供 order 固化 order_discount 留痕）。 */
+  discounts?: Array<{
+    type: "catalogue" | "order" | "voucher" | "gift_card";
+    promotionId: string;
+    code: string | null;
+    amountMinor: bigint;
+  }>;
   items: Array<{
     variantId: string;
     productId: string;

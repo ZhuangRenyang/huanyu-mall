@@ -11,7 +11,7 @@ import {
 import { InMemoryDeadLetter, InMemoryJournal } from "./helpers/in-memory-journal.js";
 
 interface Store {
-  orders: Map<string, { lineCount: number }>;
+  orders: Map<string, { lineCount: number; discountMinor: bigint; discounts?: CartCompleteInput["discounts"] }>;
   reservations: Map<string, number>;
 }
 
@@ -20,7 +20,11 @@ function makePorts(store: Store, opts: { failPayment?: boolean } = {}) {
   const order: OrderPort = {
     async createOrder(input) {
       const id = `ord_${++counter}`;
-      store.orders.set(id, { lineCount: input.items.length });
+      store.orders.set(id, {
+        lineCount: input.items.length,
+        discountMinor: input.discountMinor ?? 0n,
+        discounts: input.discounts,
+      });
       return { orderId: id, totalMinor: 19800n };
     },
     async cancelOrder(orderId) {
@@ -118,5 +122,25 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
     const r2 = await engine.run(cartCompleteWorkflow, input, { idempotencyKey: "k-idem" });
     expect(r2.executionId).toBe(r1.executionId);
     expect(store.orders.size).toBe(1);
+  });
+
+  it("discountMinor + discounts 从 input 透传到 OrderPort.createOrder", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map() };
+    const ports = makePorts(store);
+    const { engine } = makeEngine(ports);
+
+    const withDiscount: CartCompleteInput = {
+      ...input,
+      discountMinor: 3980n,
+      discounts: [
+        { type: "catalogue", promotionId: "promo_cat", code: "CAT", amountMinor: 1980n },
+        { type: "order", promotionId: "promo_ord", code: "ORDER20", amountMinor: 2000n },
+      ],
+    };
+    const r = await engine.run(cartCompleteWorkflow, withDiscount, { idempotencyKey: "k-disc" });
+
+    const created = store.orders.get(r.result.orderId);
+    expect(created?.discountMinor).toBe(3980n);
+    expect(created?.discounts).toEqual(withDiscount.discounts);
   });
 });

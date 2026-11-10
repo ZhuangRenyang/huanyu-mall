@@ -10,6 +10,7 @@ import type {
   AddLineItemInput,
   CartDTO,
   CartDetailDTO,
+  CartDiscountDTO,
   CartLineItemDTO,
   CartRepository,
   CartServiceDeps,
@@ -66,8 +67,12 @@ export class CartService implements ICartModuleService {
     });
 
     const discountByItem = new Map(discounts.lineAdjustments.map((a) => [a.itemId, a.amountMinor]));
-    // 目录促销阶段 order/voucher/giftCard 折扣恒 0；discount = 行级折扣合计。
-    const discountMinor = discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+    // discount = 行级折扣合计 + 订单级折扣（阶段 3）；voucher/giftCard 阶段 4-5 落地前恒 0。
+    const lineDiscountMinor = discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+    const discountMinor = lineDiscountMinor + discounts.orderDiscountMinor;
+
+    // 折扣明细（供下单固化 order_discount 留痕）：目录行级折扣按促销聚合 + 订单级折扣。
+    const discountDetails = buildDiscountDetails(discounts);
 
     const totals: CartTotals = {
       subtotal_minor: subtotal,
@@ -80,7 +85,7 @@ export class CartService implements ICartModuleService {
       ...i,
       discount_minor: discountByItem.get(i.id) ?? 0n,
     }));
-    return { ...cart, totals, items: enrichedItems, shipping_method: shipping };
+    return { ...cart, totals, items: enrichedItems, shipping_method: shipping, discounts: discountDetails };
   }
 
   private subtotal(items: CartLineItemDTO[]): bigint {
@@ -176,4 +181,35 @@ export class CartService implements ICartModuleService {
     await this.deps.repo.restore(cartId);
     await this.deps.repo.updateStatus(cartId, "open");
   }
+}
+
+/**
+ * 把 computeDiscounts 结果整理成 order_discount 留痕所需的折扣明细（ADR-012 §3）。
+ * - 目录促销：按 promotion_id 聚合行级折扣（同一促销命中多行时合并金额）。
+ * - 订单促销：单条（多命中已在 promotion 侧取最大）。
+ * code 归一化：空字符串按 null 处理。
+ */
+function buildDiscountDetails(discounts: {
+  lineAdjustments: Array<{ itemId: string; amountMinor: bigint; promotionId: string; code: string }>;
+  orderDiscountMinor: bigint;
+  orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
+}): CartDiscountDTO[] {
+  const out: CartDiscountDTO[] = [];
+
+  const catalogueByPromo = new Map<string, { code: string | null; amountMinor: bigint }>();
+  for (const a of discounts.lineAdjustments) {
+    const cur = catalogueByPromo.get(a.promotionId) ?? { code: null, amountMinor: 0n };
+    cur.amountMinor += a.amountMinor;
+    if (a.code) cur.code = a.code;
+    catalogueByPromo.set(a.promotionId, cur);
+  }
+  for (const [promotionId, v] of catalogueByPromo) {
+    out.push({ type: "catalogue", promotion_id: promotionId, code: v.code, amount_minor: v.amountMinor });
+  }
+
+  for (const od of discounts.orderDiscounts) {
+    out.push({ type: "order", promotion_id: od.promotionId, code: od.code, amount_minor: od.amountMinor });
+  }
+
+  return out;
 }

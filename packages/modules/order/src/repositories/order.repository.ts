@@ -3,6 +3,9 @@ import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
   Actor,
+  CreateOrderDiscountInput,
+  OrderDiscountDTO,
+  OrderDiscountType,
   OrderDTO,
   OrderLineItemDTO,
   OrderQuery,
@@ -120,6 +123,31 @@ export class DrizzleOrderRepository implements OrderRepository {
       amountMinor: input.amountMinor,
       currencyCode: input.currencyCode,
     });
+  }
+
+  async insertDiscounts(
+    orderId: string,
+    discounts: Array<{ type: OrderDiscountType; promotionId: string; code: string | null; amountMinor: bigint }>,
+  ): Promise<void> {
+    if (discounts.length === 0) return;
+    await this.db.insert(schema.orderDiscount).values(
+      discounts.map((d) => ({
+        id: prefixedUlid("odisc"),
+        orderId,
+        promotionId: d.promotionId,
+        code: d.code ?? null,
+        amountMinor: d.amountMinor,
+        type: d.type,
+      })),
+    );
+  }
+
+  async listDiscounts(orderId: string): Promise<OrderDiscountDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.orderDiscount)
+      .where(eq(schema.orderDiscount.orderId, orderId));
+    return rows.map(toOrderDiscountDTO);
   }
 
   async insertStatusHistory(
@@ -247,5 +275,17 @@ function toShippingDTO(r: typeof schema.orderShippingMethod.$inferSelect): Order
     carrier_name: r.carrierName ?? null,
     amount_minor: r.amountMinor,
     currency_code: r.currencyCode,
+  };
+}
+
+function toOrderDiscountDTO(r: typeof schema.orderDiscount.$inferSelect): OrderDiscountDTO {
+  return {
+    id: r.id,
+    order_id: r.orderId,
+    promotion_id: r.promotionId,
+    code: r.code ?? null,
+    amount_minor: r.amountMinor,
+    type: r.type as OrderDiscountType,
+    created_at: r.createdAt,
   };
 }

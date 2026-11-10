@@ -12,6 +12,7 @@ export type OrderStatus =
 
 export type PaymentStatus = "unpaid" | "authorized" | "captured" | "refunded";
 export type Actor = "customer" | "admin" | "system" | "workflow";
+export type OrderDiscountType = "catalogue" | "order" | "voucher" | "gift_card";
 
 export interface OrderDTO {
   id: string;
@@ -58,9 +59,21 @@ export interface OrderShippingMethodDTO {
   currency_code: string;
 }
 
+/** 订单折扣留痕（order_discount 表）：不可变，记录「哪个促销给了多少钱」（资金安全硬约束 5）。 */
+export interface OrderDiscountDTO {
+  id: string;
+  order_id: string;
+  promotion_id: string;
+  code: string | null;
+  amount_minor: bigint;
+  type: OrderDiscountType;
+  created_at: Date;
+}
+
 export interface OrderDetailDTO extends OrderDTO {
   items: OrderLineItemDTO[];
   shipping_method: OrderShippingMethodDTO | null;
+  discounts: OrderDiscountDTO[];
 }
 
 export interface CreateOrderLineInput {
@@ -77,6 +90,14 @@ export interface CreateOrderLineInput {
   snapshot: Record<string, unknown>;
 }
 
+/** 命中的促销折扣明细入参（固化进 order_discount）。 */
+export interface CreateOrderDiscountInput {
+  type: OrderDiscountType;
+  promotionId: string;
+  code: string | null;
+  amountMinor: bigint;
+}
+
 export interface CreateOrderInput {
   cartId?: string | null;
   customerId?: string | null;
@@ -89,6 +110,8 @@ export interface CreateOrderInput {
   items: CreateOrderLineInput[];
   shippingMinor?: bigint;
   discountMinor?: bigint;
+  /** 折扣留痕明细（服务端算好传入，禁客户端传价）。 */
+  discounts?: CreateOrderDiscountInput[];
   paymentCollectionId?: string | null;
 }
 
@@ -146,6 +169,12 @@ export interface OrderRepository {
     orderId: string,
     input: { name: string; carrierName?: string | null; amountMinor: bigint; currencyCode: string },
   ): Promise<void>;
+  /** 折扣留痕：把命中的促销明细固化进 order_discount（不可变，资金安全硬约束 5）。 */
+  insertDiscounts(
+    orderId: string,
+    discounts: Array<CreateOrderDiscountInput>,
+  ): Promise<void>;
+  listDiscounts(orderId: string): Promise<OrderDiscountDTO[]>;
   insertStatusHistory(
     orderId: string,
     fromStatus: OrderStatus | null,
