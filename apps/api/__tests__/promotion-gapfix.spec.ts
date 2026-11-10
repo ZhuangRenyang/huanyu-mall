@@ -270,3 +270,35 @@ describe("二期促销后端缺口（promotion admin + discounts 透出）", () 
     });
   });
 });
+
+describe("后台订单视图的折扣留痕", () => {
+  it("4. admin GET 订单返回 discounts（order/voucher/gift_card 可追溯到具体促销）", async () => {
+    const { mapAdminOrder } = await import("../src/routes/mappers.js");
+    const order = {
+      id: "ord_1",
+      status: "pending",
+      payment_status: "awaiting",
+      email: "a@b.com",
+      currency_code: "CNY",
+      subtotal_minor: 19800n,
+      shipping_minor: 0n,
+      tax_minor: 0n,
+      discount_minor: 8000n,
+      total_minor: 11800n,
+      shipping_address: {},
+      items: [],
+      placed_at: new Date(0),
+      discounts: [
+        { id: "odisc_1", order_id: "ord_1", promotion_id: "promo_1", code: null, amount_minor: 1000n, type: "order", created_at: new Date(0) },
+        { id: "odisc_2", order_id: "ord_1", promotion_id: "vouch_1", code: "SAVE20", amount_minor: 2000n, type: "voucher", created_at: new Date(0) },
+        { id: "odisc_3", order_id: "ord_1", promotion_id: "gcard_1", code: "GC-ABC", amount_minor: 5000n, type: "gift_card", created_at: new Date(0) },
+      ],
+    };
+    const view = mapAdminOrder(order as never);
+    expect(view.discount_minor).toBe(8000n);
+    expect(view.discounts).toHaveLength(3);
+    expect(view.discounts[0]).toEqual({ type: "order", promotion_id: "promo_1", code: null, amount_minor: 1000n });
+    expect(view.discounts[1].code).toBe("SAVE20");
+    expect(view.discounts[2].type).toBe("gift_card");
+  });
+});

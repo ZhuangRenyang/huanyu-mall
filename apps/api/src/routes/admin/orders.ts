@@ -3,7 +3,7 @@ import { z } from "zod";
 import { PaginationQuerySchema } from "@mall/types";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
-import { mapOrder } from "../mappers.js";
+import { mapAdminOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
 
 const refundBody = z.object({ amount_minor: z.number().int().positive(), reason: z.string().optional() });
@@ -40,7 +40,7 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   app.get("/api/v1/admin/orders/:id", { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    reply.ok(mapOrder(await deps.services.order.retrieveOrder(id)));
+    reply.ok(mapAdminOrder(await deps.services.order.retrieveOrder(id)));
   });
 
   app.post("/api/v1/admin/orders/:id/cancel", { preHandler: guard }, async (req, reply) => {
@@ -57,7 +57,7 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         after,
       }),
     );
-    reply.ok(mapOrder(after));
+    reply.ok(mapAdminOrder(after));
   });
 
   app.post(
@@ -82,7 +82,7 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
           after: { refund: refundRequest, order: after },
         }),
       );
-      reply.ok({ refund: refundRequest, order: mapOrder(after) });
+      reply.ok({ refund: refundRequest, order: mapAdminOrder(after) });
     },
   );
 

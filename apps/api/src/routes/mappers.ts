@@ -28,3 +28,20 @@ export function mapOrder(order: OrderDetailDTO) {
     placed_at: order.placed_at,
   };
 }
+
+/**
+ * 后台订单视图：在门店视图基础上加「折扣留痕明细」（order_discount 表）。
+ * 资金安全硬约束 5：后台必须能追溯「这笔折扣是哪个促销 / 哪张券 / 哪张卡给的」。
+ * 只给后台，不进门店契约（门店只需要金额，不需要促销内部 id）。
+ */
+export function mapAdminOrder(order: OrderDetailDTO) {
+  return {
+    ...mapOrder(order),
+    discounts: (order.discounts ?? []).map((d) => ({
+      type: d.type,
+      promotion_id: d.promotion_id,
+      code: d.code,
+      amount_minor: d.amount_minor,
+    })),
+  };
+}

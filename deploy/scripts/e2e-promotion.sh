@@ -1,122 +1,340 @@
 #!/usr/bin/env bash
-# e2e-promotion.sh — 促销三件套（优惠券 + 礼品卡）真机端到端验收
+# e2e-promotion.sh — 二期促销真机端到端验收（订单促销 + 优惠券 + 礼品卡）
 #
-# 覆盖：后台建券 / 建卡 → 店面加购 → 输优惠券码 + 礼品卡码 → 合计校验
-#      → 下单后 order 折扣留痕（discount_minor>0）。
+# 覆盖链路：
+#   后台建「订单促销(满减)」并启用 → 建「优惠券」→ 店面加购 → 选运费
+#   → 自动命中订单促销 → 输券 → 输礼品卡 → 合计恒等式
+#   → 下单 → 后台订单详情核对折扣留痕(order_discount) → 券已核销 / 卡已扣减
 #
-# 资金安全铁律校验点（前端只展示后端算好的金额）：
-#   totals.total_minor == totals.subtotal_minor + totals.shipping_minor - totals.discount_minor
+# 设计要点：
+#   1. 断言用「增量」而不是写死总额：d1-d0 必须等于券面额，d2-d1 必须等于卡抵扣额。
+#      这样机器上存在其它促销时脚本也不会假失败（同维度后端取最大）。
+#   2. 所有金额断言都取自后端返回，脚本自己不做折扣计算（只做恒等式校验）。
+#   3. 出脚本即停用本次建的促销与券（trap EXIT），避免测试数据继续影响真实订单；
+#      记录保留、可审计，不做物理删除。
+#   4. 金额一律 minor unit（分）比较，不出现浮点。
 #
-# 用法：BASE=http://localhost/api/v1 bash deploy/scripts/e2e-promotion.sh
+# 用法：
+#   bash deploy/scripts/e2e-promotion.sh
+#   BASE=http://localhost/api/v1 ADMIN=admin ADMIN_PW='你的密码' bash deploy/scripts/e2e-promotion.sh
+#   VAR_ID=var_xxx bash deploy/scripts/e2e-promotion.sh
+#
+# 退出码：0 全通过；1 有失败项。
 set -uo pipefail
 
 BASE="${BASE:-http://localhost/api/v1}"
-VAR_ID="${VAR_ID:-var_06GVXB91KJ459EG26NY1GZG850}"   # 无线静音鼠标（¥99，见 e2e-regression.sh）
 ADMIN="${ADMIN:-admin}"
 ADMIN_PW="${ADMIN_PW:-123456}"
+VAR_ID="${VAR_ID:-}"
+
 PASS=0
 FAIL=0
+SKIP=0
+CODE=""
+BODY=""
+TOKEN=""
+PROMO_ID=""
+VOUCHER_ID=""
+VOUCHER_CODE=""
+CARD_ID=""
+CARD_CODE=""
+CART_ID=""
+ORDER_ID=""
+CLEANED=0
 
-ok()  { printf '  [通过] %s\n' "$*"; PASS=$((PASS+1)); }
-bad() { printf '  [失败] %s\n' "$*"; FAIL=$((FAIL+1)); }
-sec() { printf '\n=== %s ===\n' "$*"; }
-jqf() { jq -r "$1" 2>/dev/null; }
+ok()   { printf '  [通过] %s\n' "$*"; PASS=$((PASS + 1)); }
+bad()  { printf '  [失败] %s\n' "$*"; FAIL=$((FAIL + 1)); }
+skip() { printf '  [跳过] %s\n' "$*"; SKIP=$((SKIP + 1)); }
+sec()  { printf '\n=== %s ===\n' "$*"; }
+is_int() { [[ "${1-}" =~ ^-?[0-9]+$ ]]; }
+jqr() { printf '%s' "$BODY" | jq -r "$1" 2>/dev/null; }
 
-# ---------- 1. 后台登录 ----------
-sec "1. 后台登录（RBAC settings）"
-LOGIN=$(curl -s -X POST "$BASE/admin/auth/login" -H 'Content-Type: application/json' \
-  -d "{\"email\":\"$ADMIN\",\"password\":\"$ADMIN_PW\"}")
-TOKEN=$(echo "$LOGIN" | jqf '.data.access_token')
-if [[ -n "$TOKEN" && "$TOKEN" != "null" ]]; then ok "管理员登录成功"; else bad "管理员登录失败：$(echo "$LOGIN" | head -c 200)"; exit 1; fi
-AUTH=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json')
+# call <method> <path> [json-body] [auth]
+# 结果写入全局 CODE / BODY，不直接打印，便于逐项断言。
+call() {
+  local method="$1" path="$2" data="${3-}" auth="${4-}"
+  local args=(-s -S -w $'\n%{http_code}' -X "$method" "$BASE$path")
+  [[ -n "$auth" ]] && args+=(-H "Authorization: Bearer $TOKEN")
+  if [[ -n "$data" ]]; then
+    args+=(-H 'Content-Type: application/json' --data-binary "$data")
+  fi
+  local out
+  out="$(curl "${args[@]}" 2>&1)"
+  CODE="${out##*$'\n'}"
+  BODY="${out%$'\n'*}"
+}
 
-# ---------- 2. 后台创建优惠券（满 100 减 20） ----------
-sec "2. 后台创建优惠券：满 100 减 20"
-V=$(curl -s -X POST "${AUTH[@]}" "$BASE/admin/promotions/vouchers" \
-  -d '{"name":"满100减20（e2e）","type":"entire_order","discount_type":"fixed","discount_value":2000,"min_spent":10000,"usage_limit":100,"starts_at":null,"ends_at":null}')
-echo "$V" | jq '{id: .data.id, name: .data.name, status: .data.status, discount_value: .data.discount_value, codes: [.data.codes[].code]}' 2>/dev/null
-VOUCHER_CODE=$(echo "$V" | jqf '.data.codes[0].code')
-if [[ -n "$VOUCHER_CODE" && "$VOUCHER_CODE" != "null" ]]; then ok "优惠券创建成功，码 $VOUCHER_CODE"; else bad "优惠券创建失败：$(echo "$V" | head -c 200)"; fi
+# 期望 2xx；失败时打响应前 200 字，避免只看到状态码无从排查。
+expect_2xx() {
+  local desc="$1"
+  if [[ "$CODE" =~ ^2[0-9][0-9]$ ]]; then
+    ok "$desc（HTTP $CODE）"
+    return 0
+  fi
+  bad "$desc（HTTP $CODE）：$(printf '%s' "$BODY" | head -c 200)"
+  return 1
+}
 
-# ---------- 3. 后台创建礼品卡（余额 ¥50） ----------
-sec "3. 后台创建礼品卡：余额 ¥50"
-G=$(curl -s -X POST "${AUTH[@]}" "$BASE/admin/promotions/gift-cards" \
-  -d '{"currency":"CNY","initial_balance":5000}')
-echo "$G" | jq '{id: .data.id, code: .data.code, current_balance: .data.current_balance}' 2>/dev/null
-GIFT_CODE=$(echo "$G" | jqf '.data.code')
-if [[ -n "$GIFT_CODE" && "$GIFT_CODE" != "null" ]]; then ok "礼品卡创建成功，码 $GIFT_CODE"; else bad "礼品卡创建失败：$(echo "$G" | head -c 200)"; fi
+expect_num() {
+  local desc="$1" actual="$2" expected="$3"
+  if [[ "$actual" == "$expected" ]]; then
+    ok "$desc：$actual"
+  else
+    bad "$desc：实际 $actual，期望 $expected"
+  fi
+}
 
-# ---------- 4. 店面建车 + 加购 x2 ----------
-sec "4. 店面加购：无线静音鼠标 x2（¥99 × 2 = ¥198）"
-CART=$(curl -s -X POST "$BASE/store/carts" -H 'Content-Type: application/json' -d '{"email":"promo-e2e@example.com"}')
-CART_ID=$(echo "$CART" | jqf '.data.id')
-if [[ -z "$CART_ID" || "$CART_ID" == "null" ]]; then bad "建车失败"; exit 1; fi
-ok "购物车创建成功 $CART_ID"
+expect_jq_true() {
+  local desc="$1" expr="$2"
+  if printf '%s' "$BODY" | jq -e "$expr" >/dev/null 2>&1; then
+    ok "$desc"
+  else
+    bad "$desc（jq 条件不成立：$expr）"
+  fi
+}
 
-LI=$(curl -s -X POST "$BASE/store/carts/$CART_ID/line-items" -H 'Content-Type: application/json' \
-  -d "{\"variant_id\":\"$VAR_ID\",\"quantity\":2}")
-SUBTOTAL=$(echo "$LI" | jqf '.data.totals.subtotal_minor')
-echo "小计（后端）=$SUBTOTAL minor"
+cleanup() {
+  [[ "$CLEANED" -eq 1 ]] && return 0
+  CLEANED=1
+  # 停用（不是删除）：保留记录可审计，同时立即不再命中，防止污染真实订单。
+  if [[ -n "$PROMO_ID" ]]; then
+    call POST "/admin/promotions/$PROMO_ID/deactivate" "" auth >/dev/null 2>&1
+  fi
+  if [[ -n "$VOUCHER_ID" ]]; then
+    call POST "/admin/promotions/vouchers/$VOUCHER_ID/disable" "" auth >/dev/null 2>&1
+  fi
+}
+trap cleanup EXIT
 
-# ---------- 5. 选运费（首个方案） ----------
-sec "5. 选运费"
-SO=$(curl -s "$BASE/store/shipping-options?country=CN")
-OPT_ID=$(echo "$SO" | jqf '(.data.items // .data // [])[0].id')
-SM=$(curl -s -X POST "$BASE/store/carts/$CART_ID/shipping-methods" -H 'Content-Type: application/json' \
-  -d "{\"shipping_option_id\":\"$OPT_ID\"}")
-SHIPPING=$(echo "$SM" | jqf '.data.totals.shipping_minor')
-echo "运费（后端）=$SHIPPING minor"
-
-# ---------- 6. 输优惠券码 ----------
-sec "6. 输优惠券码"
-VC=$(curl -s -X PUT "$BASE/store/carts/$CART_ID/voucher-codes" -H 'Content-Type: application/json' \
-  -d "{\"codes\":[\"$VOUCHER_CODE\"]}")
-V_DISC=$(echo "$VC" | jqf '.data.totals.discount_minor')
-echo "仅券时折扣=$V_DISC minor（期望 2000）"
-if [[ "$V_DISC" == "2000" ]]; then ok "优惠券折扣 2000 正确命中"; else bad "优惠券折扣 $V_DISC（期望 2000）"; fi
-
-# ---------- 7. 输礼品卡码 ----------
-sec "7. 输礼品卡码"
-GC=$(curl -s -X PUT "$BASE/store/carts/$CART_ID/gift-card-codes" -H 'Content-Type: application/json' \
-  -d "{\"codes\":[\"$GIFT_CODE\"]}")
-DISC=$(echo "$GC" | jqf '.data.totals.discount_minor')
-TOTAL=$(echo "$GC" | jqf '.data.totals.total_minor')
-SUB=$(echo "$GC" | jqf '.data.totals.subtotal_minor')
-SHIP=$(echo "$GC" | jqf '.data.totals.shipping_minor')
-echo "折扣合计=$DISC（期望 7000），合计=$TOTAL，小计=$SUB，运费=$SHIP"
-if [[ "$DISC" == "7000" ]]; then ok "券+卡折扣合计 7000 正确"; else bad "折扣合计 $DISC（期望 7000）"; fi
-
-# ---------- 8. 资金安全：合计恒等式 ----------
-sec "8. 合计恒等式：total = subtotal + shipping - discount"
-EXPECTED=$(( SUB + SHIP - DISC ))
-if [[ "$TOTAL" == "$EXPECTED" ]]; then ok "合计 $TOTAL == 小计+运费-折扣（$EXPECTED）"; else bad "合计 $TOTAL != $EXPECTED"; fi
-
-# ---------- 9. 下单并验证折扣留痕 ----------
-sec "9. 下单（幂等键）"
-CO=$(curl -s -X POST "$BASE/store/carts/$CART_ID/complete" -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: promo-e2e-$(date +%s)" -d '{}')
-ORDER_ID=$(echo "$CO" | jqf '.data.id')
-ORD_DISC=$(echo "$CO" | jqf '.data.discount_minor')
-echo "订单 $ORDER_ID 折扣 discount_minor=$ORD_DISC"
-if [[ -n "$ORD_DISC" && "$ORD_DISC" != "null" && "$ORD_DISC" -gt 0 ]]; then
-  ok "订单折扣留痕（discount_minor=$ORD_DISC > 0）"
-else
-  bad "订单未留痕折扣（discount_minor=$ORD_DISC）"
+# ------------------------------------------------------------------ #
+# 0. 预检
+# ------------------------------------------------------------------ #
+sec "0. 预检：依赖 + API 可达"
+for bin in curl jq; do
+  if command -v "$bin" >/dev/null 2>&1; then ok "依赖 $bin 存在"; else bad "缺少依赖 $bin"; fi
+done
+if ((FAIL > 0)); then
+  printf '\n缺少必要依赖，终止。Debian 安装：apt-get install -y curl jq\n'
+  exit 1
+fi
+call GET "/health"
+if expect_2xx "API 健康检查 $BASE/health"; then :; else
+  printf '\nAPI 不可达，终止。先执行：bash deploy/healthcheck.sh\n'
+  exit 1
 fi
 
-# ---------- 10. 券已核销 / 卡已扣减（后台复核） ----------
-sec "10. 后台复核：券 used +1 / 卡余额 -50"
-V2=$(curl -s "${AUTH[@]}" "$BASE/admin/promotions/vouchers")
-# 用码回查 voucher id 更稳；这里直接按列表里 first 项（本脚本只建一张）验证 used 计数
-VUSED=$(echo "$V2" | jqf '.data.items[0].used // "na"')
-echo "券列表第一项 used=$VUSED"
-GC2=$(curl -s "${AUTH[@]}" "$BASE/admin/promotions/gift-cards")
-GBAL=$(echo "$GC2" | jqf '.data.items[0].current_balance // "na"')
-echo "卡列表第一项 current_balance=$GBAL（期望 0，¥50 已抵扣）"
-if [[ "$GBAL" == "0" ]]; then ok "礼品卡余额已扣减至 0"; else bad "礼品卡余额 $GBAL（期望 0）"; fi
+# ------------------------------------------------------------------ #
+# 1. 后台登录
+# ------------------------------------------------------------------ #
+sec "1. 后台登录（需要 settings 权限）"
+call POST "/admin/auth/login" "{\"email\":\"$ADMIN\",\"password\":\"$ADMIN_PW\"}"
+TOKEN="$(jqr '.data.access_token')"
+if [[ -n "$TOKEN" && "$TOKEN" != "null" ]]; then
+  ok "管理员 $ADMIN 登录成功"
+else
+  bad "管理员登录失败：$(printf '%s' "$BODY" | head -c 200)"
+  printf '\n终止：没有管理员令牌，后续后台步骤无法执行。\n'
+  exit 1
+fi
+AUTH=1
 
-# ---------- 汇总 ----------
+# 清掉上次异常退出遗留的 e2e 促销（名字前缀 e2e-），避免同维度取最大时干扰断言。
+call GET "/admin/promotions?limit=100&offset=0" "" "$AUTH"
+STALE_IDS="$(jqr '.data.items[]? | select(.name | startswith("e2e-")) | .id')"
+if [[ -n "$STALE_IDS" ]]; then
+  for sid in $STALE_IDS; do
+    call POST "/admin/promotions/$sid/deactivate" "" "$AUTH" >/dev/null 2>&1
+  done
+  ok "已停用遗留的 e2e 促销 $(printf '%s' "$STALE_IDS" | wc -w) 条"
+else
+  skip "无遗留 e2e 促销"
+fi
+
+# ------------------------------------------------------------------ #
+# 2. 店面：取变体 + 建车 + 加购
+# ------------------------------------------------------------------ #
+sec "2. 店面：建车 + 加购 ×2"
+if [[ -z "$VAR_ID" ]]; then
+  call GET "/store/products/wireless-mouse"
+  VAR_ID="$(jqr '.data.variants[0].id')"
+fi
+if [[ -z "$VAR_ID" || "$VAR_ID" == "null" ]]; then
+  bad "取不到可售变体：请用 VAR_ID=var_xxx 指定，或确认 seed 已导入 wireless-mouse"
+  exit 1
+fi
+ok "使用变体 $VAR_ID"
+
+call POST "/store/carts" "{\"email\":\"promo-e2e@example.com\"}"
+expect_2xx "创建购物车" || exit 1
+CART_ID="$(jqr '.data.id')"
+ok "购物车 $CART_ID"
+
+call POST "/store/carts/$CART_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":2}"
+expect_2xx "加购 2 件" || exit 1
+SUB="$(jqr '.data.totals.subtotal_minor')"
+if is_int "$SUB" && ((SUB > 0)); then ok "小计 $SUB（minor unit）"; else bad "小计异常：$SUB"; exit 1; fi
+CURRENCY="$(jqr '.data.currency_code')"
+ok "购物车币种 $CURRENCY"
+
+sec "3. 选运费（带 cart_id，按小计算价）"
+call GET "/store/shipping-options?country=CN&cart_id=$CART_ID"
+expect_2xx "查询运费方案" || exit 1
+OPT_ID="$(jqr '.data.items[0].id')"
+if [[ -z "$OPT_ID" || "$OPT_ID" == "null" ]]; then
+  bad "没有可用运费方案（检查 fulfillment 种子）"
+  exit 1
+fi
+call POST "/store/carts/$CART_ID/shipping-methods" "{\"shipping_option_id\":\"$OPT_ID\"}"
+expect_2xx "选择运费方案 $OPT_ID" || exit 1
+SHIP="$(jqr '.data.totals.shipping_minor')"
+is_int "$SHIP" || { bad "运费金额异常：$SHIP"; exit 1; }
+ok "运费 $SHIP"
+
+# ------------------------------------------------------------------ #
+# 4. 后台建「订单促销」并启用（自动命中，无需输码）
+# ------------------------------------------------------------------ #
+sec "4. 后台建订单促销：满最小值减 ¥10，并启用"
+PROMO_MIN=$((SUB / 2))
+PROMO_NAME="e2e-订单满减-$(date +%H%M%S)"
+call POST "/admin/promotions" \
+  "{\"name\":\"$PROMO_NAME\",\"type\":\"order\",\"is_automatic\":true,\"rules\":[{\"predicate\":{\"subtotalGte\":$PROMO_MIN},\"reward_type\":\"fixed\",\"reward_value\":1000}]}" \
+  "$AUTH"
+expect_2xx "创建订单促销" || exit 1
+PROMO_ID="$(jqr '.data.id')"
+ok "促销 $PROMO_ID（阈值 $PROMO_MIN，减 1000）"
+
+call POST "/admin/promotions/$PROMO_ID/activate" "" "$AUTH"
+expect_2xx "启用订单促销（即时生效）" || exit 1
+PROMO_STATUS="$(jqr '.data.status')"
+expect_num "促销状态" "$PROMO_STATUS" "active"
+
+# 店面重新读车：订单促销应在这一次计算里命中
+call GET "/store/carts/$CART_ID"
+expect_2xx "刷新购物车" || exit 1
+D0="$(jqr '.data.totals.discount_minor')"
+is_int "$D0" || { bad "折扣金额异常：$D0"; exit 1; }
+expect_jq_true "订单促销已自动命中（discount>=1000）" '.data.totals.discount_minor >= 1000'
+expect_jq_true "折扣明细含本条促销（type=order）" \
+  "[.data.discounts[]? | select(.type==\"order\" and .promotion_id==\"$PROMO_ID\")] | length == 1"
+
+# ------------------------------------------------------------------ #
+# 5. 后台建券 → 店面输码
+# ------------------------------------------------------------------ #
+sec "5. 后台建优惠券（减 ¥20）→ 店面输码"
+VOUCHER_MIN=$((SUB / 2))
+VOUCHER_NAME="e2e-满减券-$(date +%H%M%S)"
+call POST "/admin/promotions/vouchers" \
+  "{\"name\":\"$VOUCHER_NAME\",\"type\":\"entire_order\",\"discount_type\":\"fixed\",\"discount_value\":2000,\"min_spent\":$VOUCHER_MIN,\"usage_limit\":5}" \
+  "$AUTH"
+expect_2xx "创建优惠券" || exit 1
+VOUCHER_ID="$(jqr '.data.id')"
+VOUCHER_CODE="$(jqr '.data.codes[0].code')"
+if [[ -z "$VOUCHER_CODE" || "$VOUCHER_CODE" == "null" ]]; then bad "券码为空"; exit 1; fi
+ok "券 $VOUCHER_ID，码 $VOUCHER_CODE"
+
+call PUT "/store/carts/$CART_ID/voucher-codes" "{\"codes\":[\"$VOUCHER_CODE\"]}"
+expect_2xx "购物车应用券码" || exit 1
+D1="$(jqr '.data.totals.discount_minor')"
+is_int "$D1" || { bad "折扣金额异常：$D1"; exit 1; }
+expect_num "券生效增量（d1-d0）" "$((D1 - D0))" "2000"
+expect_jq_true "折扣明细含券码 $VOUCHER_CODE（type=voucher）" \
+  "[.data.discounts[]? | select(.type==\"voucher\" and .code==\"$VOUCHER_CODE\")] | length == 1"
+
+# ------------------------------------------------------------------ #
+# 6. 后台建礼品卡 → 店面输卡码
+# ------------------------------------------------------------------ #
+sec "6. 后台建礼品卡（余额 ¥50，币种跟随购物车）→ 店面输卡码"
+call POST "/admin/promotions/gift-cards" "{\"currency\":\"$CURRENCY\",\"initial_balance\":5000}"
+expect_2xx "创建礼品卡" || exit 1
+CARD_ID="$(jqr '.data.id')"
+CARD_CODE="$(jqr '.data.code')"
+ok "礼品卡 $CARD_ID，码 $CARD_CODE"
+
+call PUT "/store/carts/$CART_ID/gift-card-codes" "{\"codes\":[\"$CARD_CODE\"]}"
+expect_2xx "购物车应用礼品卡" || exit 1
+D2="$(jqr '.data.totals.discount_minor')"
+TOTAL="$(jqr '.data.totals.total_minor')"
+SUB2="$(jqr '.data.totals.subtotal_minor')"
+SHIP2="$(jqr '.data.totals.shipping_minor')"
+is_int "$D2" || { bad "折扣金额异常：$D2"; exit 1; }
+
+# 礼品卡最多抵到「剩余应付为 0」，期望增量取 min(卡余额, 剩余应付)。
+REMAIN=$((SUB2 + SHIP2 - D1))
+((REMAIN < 0)) && REMAIN=0
+EXPECT_GC=$((REMAIN < 5000 ? REMAIN : 5000))
+expect_num "礼品卡抵扣增量（d2-d1）" "$((D2 - D1))" "$EXPECT_GC"
+expect_jq_true "折扣明细含卡码 $CARD_CODE（type=gift_card）" \
+  "[.data.discounts[]? | select(.type==\"gift_card\" and .code==\"$CARD_CODE\")] | length == 1"
+
+sec "7. 资金安全：合计恒等式"
+EXPECTED_TOTAL=$((SUB2 + SHIP2 - D2))
+if is_int "$TOTAL" && ((TOTAL == EXPECTED_TOTAL)); then
+  ok "total($TOTAL) = subtotal($SUB2) + shipping($SHIP2) - discount($D2)"
+else
+  bad "恒等式不成立：total=$TOTAL，期望 $EXPECTED_TOTAL（subtotal=$SUB2 shipping=$SHIP2 discount=$D2）"
+fi
+if is_int "$TOTAL" && ((TOTAL >= 0)); then
+  ok "合计非负（$TOTAL）"
+else
+  bad "合计为负（$TOTAL），存在倒找钱风险"
+fi
+
+# ------------------------------------------------------------------ #
+# 8. 下单
+# ------------------------------------------------------------------ #
+sec "8. 下单（幂等键）"
+OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: promo-e2e-$(date +%s)" -d '{}' 2>&1)"
+CODE="${OUT##*$'\n'}"
+BODY="${OUT%$'\n'*}"
+expect_2xx "结账下单" || exit 1
+ORDER_ID="$(jqr '.data.id')"
+ORD_DISC="$(jqr '.data.discount_minor')"
+ok "订单 $ORDER_ID"
+expect_num "订单折扣 = 购物车折扣" "$ORD_DISC" "$D2"
+
+# ------------------------------------------------------------------ #
+# 9. 后台订单详情：折扣留痕（order_discount）
+# ------------------------------------------------------------------ #
+sec "9. 后台订单详情：折扣留痕可追溯"
+call GET "/admin/orders/$ORDER_ID" "" "$AUTH"
+expect_2xx "查询后台订单详情" || exit 1
+expect_jq_true "留痕含本次订单促销（promotion_id=$PROMO_ID）" \
+  "[.data.discounts[]? | select(.type==\"order\" and .promotion_id==\"$PROMO_ID\")] | length == 1"
+expect_jq_true "留痕含券码 $VOUCHER_CODE" \
+  "[.data.discounts[]? | select(.type==\"voucher\" and .code==\"$VOUCHER_CODE\")] | length == 1"
+expect_jq_true "留痕含卡码 $CARD_CODE" \
+  "[.data.discounts[]? | select(.type==\"gift_card\" and .code==\"$CARD_CODE\")] | length == 1"
+TRACE_SUM="$(printf '%s' "$BODY" | jq '[.data.discounts[]?.amount_minor] | add // 0' 2>/dev/null)"
+expect_num "留痕金额合计 = 订单折扣" "$TRACE_SUM" "$D2"
+
+# ------------------------------------------------------------------ #
+# 10. 后台复核：券已核销 / 卡已扣减
+# ------------------------------------------------------------------ #
+sec "10. 后台复核：券 used +1 / 卡余额扣减"
+call GET "/admin/promotions/vouchers/$VOUCHER_ID" "" "$AUTH"
+expect_2xx "查询券详情" || exit 1
+USED="$(printf '%s' "$BODY" | jq -r --arg c "$VOUCHER_CODE" '.data.codes[]? | select(.code==$c) | .used' 2>/dev/null)"
+expect_num "券码 $VOUCHER_CODE 已用次数" "$USED" "1"
+
+call GET "/admin/promotions/gift-cards/$CARD_ID" "" "$AUTH"
+expect_2xx "查询礼品卡详情" || exit 1
+BAL="$(jqr '.data.current_balance')"
+expect_num "礼品卡余额" "$BAL" "$((5000 - EXPECT_GC))"
+
+call GET "/admin/promotions/gift-cards/$CARD_ID/events" "" "$AUTH"
+expect_2xx "查询礼品卡流水" || exit 1
+expect_jq_true "流水含 used_in_order（金额 -$EXPECT_GC）" \
+  "[.data.items[]? | select(.type==\"used_in_order\" and .amount==-$EXPECT_GC)] | length == 1"
+
+# ------------------------------------------------------------------ #
+# 汇总
+# ------------------------------------------------------------------ #
 printf '\n================= 促销端到端验收汇总 =================\n'
-printf '通过 %d 项，失败 %d 项\n' "$PASS" "$FAIL"
-if (( FAIL > 0 )); then exit 1; fi
+printf '通过 %d 项，失败 %d 项，跳过 %d 项\n' "$PASS" "$FAIL" "$SKIP"
+printf '测试数据：促销 %s（已停用）、券 %s（已停用）、礼品卡 %s（余额已扣）\n' \
+  "${PROMO_ID:-无}" "${VOUCHER_CODE:-无}" "${CARD_CODE:-无}"
+printf '提示：订单 %s 与上述记录保留可审计，不做物理删除；促销/券已停用，不会再命中新订单。\n' "${ORDER_ID:-无}"
+
+if ((FAIL > 0)); then exit 1; fi
 exit 0
