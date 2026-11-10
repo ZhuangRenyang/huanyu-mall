@@ -6,7 +6,6 @@ import type {
   CartRepository,
   CartShippingMethodDTO,
   CartStatus,
-  CartTotals,
   CreateCartInput,
   PricingLookupPort,
   ProductLookupPort,
@@ -46,10 +45,6 @@ class InMemoryCartRepository implements CartRepository {
   async updateStatus(id: string, status: CartStatus): Promise<void> {
     const c = this.carts.get(id);
     if (c) c.status = status;
-  }
-  async updateTotals(id: string, totals: CartTotals): Promise<void> {
-    const c = this.carts.get(id);
-    if (c) c.totals = totals;
   }
   async softDelete(id: string): Promise<void> {
     this.deleted.add(id);
@@ -135,19 +130,31 @@ class FakePricingLookup implements PricingLookupPort {
 
 /** 运费端口桩：方案 id → 方案名与运费（后端解析，客户端只传 id）。 */
 class FakeShippingLookup implements ShippingLookupPort {
+  constructor(
+    /** 规则价：模拟 free_over 时可按小计返回 0，否则返回方案基础价 800。 */
+    private readonly freeOverThreshold: bigint | null = null,
+  ) {}
   async findShippingOption(id: string) {
     if (id !== "shipopt_1") return null;
     return { id, name: "标准快递", amount_minor: 800n };
   }
+  async calculateShippingPrice(optionId: string, ctx: { cartSubtotalMinor: bigint }) {
+    if (optionId !== "shipopt_1") throw new Error("unknown option");
+    // free_over 命中：小计 ≥ 门槛 → 0（免运费）；否则基础价 800
+    if (this.freeOverThreshold !== null && ctx.cartSubtotalMinor >= this.freeOverThreshold) {
+      return { amountMinor: 0n, currencyCode: "CNY" };
+    }
+    return { amountMinor: 800n, currencyCode: "CNY" };
+  }
 }
 
-function setup(opts: { productStatus?: string; price?: bigint | null } = {}) {
+function setup(opts: { productStatus?: string; price?: bigint | null; freeOverThreshold?: bigint | null } = {}) {
   const repo = new InMemoryCartRepository();
   const service = new CartService({
     repo,
     product: new FakeProductLookup(opts.productStatus),
     pricing: new FakePricingLookup(opts.price === undefined ? 9900n : opts.price),
-    shipping: new FakeShippingLookup(),
+    shipping: new FakeShippingLookup(opts.freeOverThreshold ?? null),
   });
   return { repo, service };
 }
@@ -211,7 +218,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     await expect(service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 })).rejects.toThrow();
   });
 
-  it("setShippingMethod + applyTotals 快照", async () => {
+  it("setShippingMethod 走规则价（free_over 未命中=基础价）且 totals 读时计算", async () => {
     const { service } = setup();
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     // 客户端只传方案 id，方案名与运费金额由后端解析
@@ -220,15 +227,30 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     });
     expect(withShipping.shipping_method?.amount_minor).toBe(800n);
     expect(withShipping.shipping_method?.name).toBe("标准快递");
+  });
 
-    const applied = await service.applyTotals(cart.id, {
-      subtotal_minor: 9900n,
-      shipping_minor: 800n,
-      tax_minor: 0n,
-      total_minor: 10700n,
-      discount_minor: 0n,
-    });
-    expect(applied.totals?.total_minor).toBe(10700n);
+  it("totals 在 retrieveCart 读时动态计算（小计=Σ单价×数量，合计=小计+运费）", async () => {
+    const { service } = setup();
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    // 加 2 件单价 9900 的商品
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
+    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+
+    const detail = await service.retrieveCart(cart.id);
+    expect(detail.totals?.subtotal_minor).toBe(19800n);
+    expect(detail.totals?.shipping_minor).toBe(800n);
+    expect(detail.totals?.total_minor).toBe(20600n);
+  });
+
+  it("free_over 满额免运费命中：小计达标后运费为 0，且 totals 同步", async () => {
+    const { service } = setup({ freeOverThreshold: 9900n });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 }); // 小计 9900
+    const withShipping = await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+
+    expect(withShipping.shipping_method?.amount_minor).toBe(0n); // 免运费
+    expect(withShipping.totals?.shipping_minor).toBe(0n);
+    expect(withShipping.totals?.total_minor).toBe(9900n);
   });
 
   it("completeCart 软删 + completed；restoreCart 补偿回 open", async () => {

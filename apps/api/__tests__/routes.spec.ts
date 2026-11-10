@@ -57,6 +57,50 @@ describe("API routes（fastify.inject）", () => {
     });
   });
 
+  it("3b. 一车一单幂等：同车第二次 complete 返回同一订单（200，不再走 workflow）", async () => {
+    await withApp(async (app, deps) => {
+      // 第一次下单成功 → workflow 运行 → 订单已存在（state.orderCreated 置位）
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/v1/store/carts/cart_1/complete",
+        headers: { "idempotency-key": "idem-b1" },
+      });
+      expect(first.statusCode).toBe(201);
+      // 真实实现里 workflow 成功后会作废购物车并留下订单；这里模拟下单后的状态
+      deps.services.order.listOrders = (async () => ({
+        items: [
+          {
+            id: "ord_1",
+            status: "pending",
+            payment_status: "unpaid",
+            email: "a@b.com",
+            currency_code: "CNY",
+            channel_id: "chn_cn",
+            region_id: "reg_1",
+            subtotal_minor: 9900n,
+            shipping_minor: 800n,
+            tax_minor: 0n,
+            discount_minor: 0n,
+            total_minor: 10700n,
+            shipping_address: {},
+            payment_collection_id: null,
+            placed_at: new Date().toISOString(),
+          },
+        ],
+        count: 1,
+      })) as typeof deps.services.order.listOrders;
+
+      // 同车再次 complete（即使幂等键不同）→ 返回同一订单，不产生第二笔
+      const second = await app.inject({
+        method: "POST",
+        url: "/api/v1/store/carts/cart_1/complete",
+        headers: { "idempotency-key": "idem-b2" },
+      });
+      expect(second.statusCode).toBe(200);
+      expect(second.json().data.id).toBe("ord_1");
+    });
+  });
+
   it("4. webhook 验签失败 401 且未落库；合法回调重复投递只处理一次", async () => {
     await withApp(async (app, deps) => {
       const payload = JSON.stringify({ id: "evt_1" });

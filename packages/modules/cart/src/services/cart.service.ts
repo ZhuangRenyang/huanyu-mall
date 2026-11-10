@@ -10,8 +10,10 @@ import type {
   AddLineItemInput,
   CartDTO,
   CartDetailDTO,
+  CartLineItemDTO,
   CartRepository,
   CartServiceDeps,
+  CartShippingMethodDTO,
   CartTotals,
   CreateCartInput,
   ICartModuleService,
@@ -35,7 +37,29 @@ export class CartService implements ICartModuleService {
     if (!cart) throw cartNotFound(id);
     const items = await this.deps.repo.listLineItems(id);
     const shipping = await this.deps.repo.findShippingMethod(id);
-    return { ...cart, items, shipping_method: shipping };
+    /*
+     * totals 在**读时动态计算**（不依赖「某次写操作后落库」的时序）：
+     * 购物车小计 = Σ(单价×数量)，运费 = 已选方案的规则价，合计 = 小计+运费+税-折扣。
+     * 这是金额的唯一权威算法 —— 任何读方（运费列表 free_over、结账下单、支付集合）
+     * 拿到的都是同一份服务端算出的金额，杜绝「展示价 ≠ 实收价」。
+     */
+    return { ...cart, totals: this.computeTotals(items, shipping), items, shipping_method: shipping };
+  }
+
+  /** 金额权威计算：小计=Σ(单价×数量)，合计=小计+运费+税-折扣。税/折扣一期恒 0，结构留出。 */
+  private computeTotals(items: CartLineItemDTO[], shipping: CartShippingMethodDTO | null): CartTotals {
+    let subtotal = 0n;
+    for (const item of items) subtotal += item.unit_price_minor * BigInt(item.quantity);
+    const shippingMinor = shipping?.amount_minor ?? 0n;
+    const taxMinor = 0n;
+    const discountMinor = 0n;
+    return {
+      subtotal_minor: subtotal,
+      shipping_minor: shippingMinor,
+      tax_minor: taxMinor,
+      discount_minor: discountMinor,
+      total_minor: subtotal + shippingMinor + taxMinor - discountMinor,
+    };
   }
 
   /** 加购：客户端只传 variantId + quantity；商品标题与单价一律后端解析（铁律 13，防篡改价格）。 */
@@ -90,21 +114,28 @@ export class CartService implements ICartModuleService {
     if (!cart) throw cartNotFound(cartId);
     const option = await this.deps.shipping.findShippingOption(input.shippingOptionId);
     if (!option) throw shippingOptionNotFound(input.shippingOptionId);
+
+    /*
+     * 运费金额必须走 calculateShippingPrice（按购物车当前小计算规则价），
+     * 而不是直接存 option.amount_minor（方案基础价）。否则：
+     * - 列表接口返回的是规则算出的价（free_over 命中 = 0「免运费」），
+     * - 这里却存基础价（如 800），
+     * 前端展示「免运费」、实际收基础运费 —— 展示价与实收价不一致（收错钱）。
+     */
+    const items = await this.deps.repo.listLineItems(cartId);
+    let subtotal = 0n;
+    for (const item of items) subtotal += item.unit_price_minor * BigInt(item.quantity);
+    const price = await this.deps.shipping.calculateShippingPrice(input.shippingOptionId, {
+      cartSubtotalMinor: subtotal,
+    });
+
     await this.deps.repo.upsertShippingMethod(cartId, {
       shippingOptionId: option.id,
       name: option.name,
-      amountMinor: option.amount_minor,
+      amountMinor: price.amountMinor,
       currencyCode: cart.currency_code,
     });
     return this.retrieveCart(cartId);
-  }
-
-  async applyTotals(cartId: string, totals: CartTotals): Promise<CartDTO> {
-    const cart = await this.deps.repo.findById(cartId);
-    if (!cart) throw cartNotFound(cartId);
-    await this.deps.repo.updateTotals(cartId, totals);
-    const updated = await this.deps.repo.findById(cartId);
-    return updated!;
   }
 
   async completeCart(cartId: string): Promise<void> {

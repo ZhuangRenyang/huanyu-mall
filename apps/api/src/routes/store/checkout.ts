@@ -11,6 +11,20 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
     const { id } = req.params as { id: string };
     const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) ?? `auto_${id}`;
 
+    /*
+     * 幂等重放检测（B2 修复）：下单成功后会作废购物车（软删），
+     * 同幂等键重放时 `retrieveCart` 已抛 cartNotFound —— 所以必须先按 cart_id
+     * 反查订单：已出过单就直接返回那笔订单，不再走 workflow。
+     * 这也顺带兜住了「不同幂等键但车已下单」的情况：返回已有订单而非再出一单，
+     * 保证一车一单，杜绝 createPaymentSession 按 cart_id 反查到多笔订单。
+     */
+    const existingOrders = await deps.services.order.listOrders({ cartId: id });
+    if (existingOrders.items.length > 0) {
+      const existing = await deps.services.order.retrieveOrder(existingOrders.items[0]!.id);
+      reply.code(200).ok(mapOrder(existing));
+      return;
+    }
+
     const cart = await deps.services.cart.retrieveCart(id);
     // 仓库动态取（一期单仓：priority 最高的即默认仓），不硬编码
     const locations = await deps.services.inventory.listStockLocations();
@@ -38,6 +52,10 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
     };
 
     const { result } = await deps.workflow.run(cartCompleteWorkflow, input, { idempotencyKey });
+
+    // 下单成功后作废购物车：一车一单（B2 修复）
+    await deps.services.cart.completeCart(id);
+
     const order = await deps.services.order.retrieveOrder((result as { orderId: string }).orderId);
     const view = mapOrder(order);
     await deps.audit.record(

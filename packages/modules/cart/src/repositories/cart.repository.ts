@@ -49,13 +49,6 @@ export class DrizzleCartRepository implements CartRepository {
     await this.db.update(schema.cart).set({ status, updatedAt: new Date() }).where(eq(schema.cart.id, id));
   }
 
-  async updateTotals(id: string, totals: CartTotals): Promise<void> {
-    await this.db
-      .update(schema.cart)
-      .set({ totals: serializeTotals(totals), updatedAt: new Date() })
-      .where(eq(schema.cart.id, id));
-  }
-
   async softDelete(id: string): Promise<void> {
     await this.db
       .update(schema.cart)
@@ -147,16 +140,6 @@ export class DrizzleCartRepository implements CartRepository {
       sql`INSERT INTO cart_customer (id, cart_id, customer_id) VALUES (${prefixedUlid("lnk")}, ${cartId}, ${customerId})`,
     );
   }
-}
-
-function serializeTotals(t: CartTotals): Record<string, string> {
-  return {
-    subtotal_minor: t.subtotal_minor.toString(),
-    shipping_minor: t.shipping_minor.toString(),
-    tax_minor: t.tax_minor.toString(),
-    total_minor: t.total_minor.toString(),
-    discount_minor: t.discount_minor.toString(),
-  };
 }
 
 function toCartDTO(r: typeof schema.cart.$inferSelect): CartDTO {

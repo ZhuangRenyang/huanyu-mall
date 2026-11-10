@@ -1,4 +1,4 @@
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -171,6 +171,12 @@ export class DrizzleOrderRepository implements OrderRepository {
       .select()
       .from(schema.order)
       .where(where)
+      /*
+       * B3 修复：按创建时间倒序。此前无排序，PG 返回顺序不保证 ——
+       * 一辆车出两单时按 cart_id 反查拿到哪一笔不确定，支付会话可能挂错订单。
+       * 倒序保证「最新一单」在最前，反查结果确定。
+       */
+      .orderBy(desc(schema.order.createdAt))
       .limit(q.limit ?? 20)
       .offset(q.offset ?? 0);
     const countRows = await this.db

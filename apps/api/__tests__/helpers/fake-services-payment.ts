@@ -18,6 +18,7 @@ export function makeFakePaymentServices(state: FakeServicesState) {
       ],
       createPaymentCollection: async () => ({ id: "paycol_1" }),
       findCollectionByOrderId: async () => null,
+      findCollectionById: async () => null,
       createSession: async () => ({ id: "paysess_1" }),
       authorizeSession: async (sessionId: string) => ({
         id: "pay_1",

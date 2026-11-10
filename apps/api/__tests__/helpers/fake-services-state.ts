@@ -10,4 +10,6 @@ export interface FakeServicesState {
   adminPassword: string;
   /** 改密时被撤销的 refresh_token 数量。 */
   revokedRefreshTokens: number;
+  /** 购物车 cart_1 是否已下单（模拟一车一单的幂等重放）。 */
+  orderCreated: boolean;
 }

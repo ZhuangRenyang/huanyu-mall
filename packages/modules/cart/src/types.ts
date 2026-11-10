@@ -109,13 +109,21 @@ export interface ShippingLookupPort {
   findShippingOption(
     id: string,
   ): Promise<{ id: string; name: string; amount_minor: bigint } | null>;
+  /**
+   * 按购物车小计算运费规则价（如 free_over 满额免运费）。
+   * 选运费时**必须走这里**，而不是用方案基础价 amount_minor ——
+   * 否则「满额免运费」这类规则永远不生效，展示价与实收价会不一致。
+   */
+  calculateShippingPrice(
+    optionId: string,
+    ctx: { cartSubtotalMinor: bigint },
+  ): Promise<{ amountMinor: bigint; currencyCode: string }>;
 }
 
 export interface CartRepository {
   insert(input: CreateCartInput & { id: string }): Promise<CartDTO>;
   findById(id: string): Promise<CartDTO | null>;
   updateStatus(id: string, status: CartStatus): Promise<void>;
-  updateTotals(id: string, totals: CartTotals): Promise<void>;
   softDelete(id: string): Promise<void>;
   restore(id: string): Promise<void>;
   listLineItems(cartId: string): Promise<CartLineItemDTO[]>;
@@ -138,7 +146,6 @@ export interface ICartModuleService {
   updateLineItem(cartId: string, lineId: string, patch: { quantity: number }): Promise<CartDetailDTO>;
   deleteLineItem(cartId: string, lineId: string): Promise<void>;
   setShippingMethod(cartId: string, input: SetShippingInput): Promise<CartDetailDTO>;
-  applyTotals(cartId: string, totals: CartTotals): Promise<CartDTO>;
   completeCart(cartId: string): Promise<void>;
   restoreCart(cartId: string): Promise<void>;
 }

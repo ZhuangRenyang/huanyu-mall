@@ -193,10 +193,21 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         },
       }),
       createCart: async () => ({ id: "cart_1" }),
+      // checkout 下单成功后会作废购物车（一车一单）。测试里幂等重放/下单路径不依赖它的副作用，
+      // 只要求接口存在、不抛错。
+      completeCart: async () => {},
     },
     order: {
       retrieveOrder: async () => order,
-      listOrders: async () => ({ items: [order], count: 1 }),
+      /*
+       * 真实 listOrders 按 cartId 过滤：cart_1 尚未下单时返回空，
+       * 下单成功后（workflow 里 createOrder 返回 ord_1）才有记录。
+       * 这里用 state 里的一个布尔位模拟「是否已下单」，保证幂等重放测试能验证「已下单 → 返回 200」。
+       */
+      listOrders: async (q?: { cartId?: string }) =>
+        state.orderCreated && (!q?.cartId || q.cartId === "cart_1")
+          ? { items: [order], count: 1 }
+          : { items: [], count: 0 },
       cancelOrder: async () => {},
       createRefundRequest: async () => ({
         orderId: "ord_1",
