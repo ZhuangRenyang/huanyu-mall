@@ -104,3 +104,49 @@ export interface PaymentProviderConfig {
   provider_id: string;
   is_enabled: boolean;
 }
+
+/** 优惠券（后台列表/详情）。 */
+export interface AdminVoucher {
+  id: string;
+  name: string;
+  type: 'entire_order' | 'shipping' | 'specific_product';
+  usage_limit: number | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  discount_type: 'fixed' | 'percentage';
+  discount_value: number;
+  min_spent: number | null;
+  status: 'active' | 'disabled';
+}
+
+/** 券码（一券多码）。 */
+export interface AdminVoucherCode {
+  id: string;
+  voucher_id: string;
+  code: string;
+  used: number;
+  is_active: boolean;
+}
+
+/** 礼品卡。 */
+export interface AdminGiftCard {
+  id: string;
+  code: string;
+  currency: string;
+  initial_balance: number;
+  current_balance: number;
+  is_active: boolean;
+  expires_at: string | null;
+  assigned_to: string | null;
+}
+
+/** 礼品卡流水。 */
+export interface AdminGiftCardEvent {
+  id: string;
+  gift_card_id: string;
+  type: string;
+  amount: number;
+  order_id: string | null;
+  parameters: Record<string, unknown> | null;
+  created_at: string;
+}

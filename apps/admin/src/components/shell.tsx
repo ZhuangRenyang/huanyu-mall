@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { ClipboardList, LogOut, Package, Settings } from 'lucide-react';
+import { ClipboardList, LogOut, Package, Settings, TicketPercent } from 'lucide-react';
 import { IconButton, cn } from '@mall/ui';
 import { getSession } from '@/lib/admin-store';
 import { logout } from '@/lib/admin-api';
@@ -7,6 +7,7 @@ import { logout } from '@/lib/admin-api';
 const NAV = [
   { to: '/products', label: '商品', icon: Package },
   { to: '/orders', label: '订单', icon: ClipboardList },
+  { to: '/promotions', label: '促销', icon: TicketPercent },
   { to: '/settings', label: '设置', icon: Settings },
 ] as const;
 

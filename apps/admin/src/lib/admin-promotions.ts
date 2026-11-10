@@ -1,0 +1,463 @@
+/**
+ * 促销域：优惠券（voucher）+ 礼品卡（gift card）。
+ *
+ * 后端字段（snake_case / minor unit）→ 界面视图模型（camelCase）只在这里发生。
+ * 金额一律 minor unit（分），展示换算见 @mall/ui formatMoney。
+ *
+ * mock 模式：本地 localStorage 种子数据，零依赖可演示；
+ * live 模式：真调 Admin API（RBAC requirePermission("settings")）。
+ */
+import { ApiError } from '@mall/sdk';
+import type {
+  AdminGiftCard,
+  AdminGiftCardEvent,
+  AdminVoucher,
+  AdminVoucherCode,
+} from '@mall/sdk';
+import { adminClient, getAdminApiMode } from './admin-client';
+
+// ------------------------------------------------------------------ *
+// 视图模型
+// ------------------------------------------------------------------ *
+
+export interface VoucherView {
+  id: string;
+  name: string;
+  type: 'entire_order' | 'shipping' | 'specific_product';
+  discountType: 'fixed' | 'percentage';
+  discountValue: number;
+  minSpent: number | null;
+  usageLimit: number | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  status: 'active' | 'disabled';
+}
+
+export interface VoucherCodeView {
+  id: string;
+  voucherId: string;
+  code: string;
+  used: number;
+  isActive: boolean;
+}
+
+export interface VoucherDetailView extends VoucherView {
+  codes: VoucherCodeView[];
+}
+
+export interface GiftCardView {
+  id: string;
+  code: string;
+  currency: string;
+  initialBalance: number;
+  currentBalance: number;
+  isActive: boolean;
+  expiresAt: string | null;
+  assignedTo: string | null;
+}
+
+export interface GiftCardEventView {
+  id: string;
+  giftCardId: string;
+  type: string;
+  amount: number;
+  orderId: string | null;
+  createdAt: string;
+}
+
+export interface VoucherInput {
+  name: string;
+  type: 'entire_order' | 'shipping' | 'specific_product';
+  discountType: 'fixed' | 'percentage';
+  discountValue: number;
+  minSpent: number | null;
+  usageLimit: number | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  /** 可选：管理员指定的券码列表（逗号分隔），留空则由后端生成。 */
+  codes?: string[];
+}
+
+export interface GiftCardInput {
+  currency: string;
+  initialBalance: number;
+  expiresAt: string | null;
+  assignedTo: string | null;
+}
+
+// ------------------------------------------------------------------ *
+// 映射
+// ------------------------------------------------------------------ *
+
+function mapVoucher(v: AdminVoucher): VoucherView {
+  return {
+    id: v.id,
+    name: v.name,
+    type: v.type,
+    discountType: v.discount_type,
+    discountValue: v.discount_value,
+    minSpent: v.min_spent,
+    usageLimit: v.usage_limit,
+    startsAt: v.starts_at,
+    endsAt: v.ends_at,
+    status: v.status,
+  };
+}
+
+function mapCode(c: AdminVoucherCode): VoucherCodeView {
+  return {
+    id: c.id,
+    voucherId: c.voucher_id,
+    code: c.code,
+    used: c.used,
+    isActive: c.is_active,
+  };
+}
+
+function mapGiftCard(g: AdminGiftCard): GiftCardView {
+  return {
+    id: g.id,
+    code: g.code,
+    currency: g.currency,
+    initialBalance: g.initial_balance,
+    currentBalance: g.current_balance,
+    isActive: g.is_active,
+    expiresAt: g.expires_at,
+    assignedTo: g.assigned_to,
+  };
+}
+
+function mapEvent(e: AdminGiftCardEvent): GiftCardEventView {
+  return {
+    id: e.id,
+    giftCardId: e.gift_card_id,
+    type: e.type,
+    amount: e.amount,
+    orderId: e.order_id,
+    createdAt: e.created_at,
+  };
+}
+
+// ------------------------------------------------------------------ *
+// mock（localStorage 种子数据）
+// ------------------------------------------------------------------ *
+
+const KEYS = { vouchers: 'admin:vouchers', giftCards: 'admin:gift-cards' } as const;
+
+const SEED_VOUCHERS: VoucherView[] = [
+  {
+    id: 'vc_demo1',
+    name: '满 100 减 20',
+    type: 'entire_order',
+    discountType: 'fixed',
+    discountValue: 2000,
+    minSpent: 10000,
+    usageLimit: 100,
+    startsAt: null,
+    endsAt: null,
+    status: 'active',
+  },
+];
+
+const SEED_GIFT_CARDS: GiftCardView[] = [
+  {
+    id: 'gc_demo1',
+    code: 'GC-DEMO0001',
+    currency: 'CNY',
+    initialBalance: 5000,
+    currentBalance: 5000,
+    isActive: true,
+    expiresAt: null,
+    assignedTo: null,
+  },
+];
+
+function read<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function write(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* localStorage 不可用 */
+  }
+}
+
+function newMockId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}${Math.floor(Math.random() * 4096).toString(36)}`;
+}
+
+function mockListVouchers(): VoucherView[] {
+  return read<VoucherView[]>(KEYS.vouchers, SEED_VOUCHERS);
+}
+
+function mockSaveVoucher(v: VoucherView): void {
+  const list = mockListVouchers();
+  const idx = list.findIndex((x) => x.id === v.id);
+  if (idx >= 0) list[idx] = v;
+  else list.unshift(v);
+  write(KEYS.vouchers, list);
+}
+
+function mockListGiftCards(): GiftCardView[] {
+  return read<GiftCardView[]>(KEYS.giftCards, SEED_GIFT_CARDS);
+}
+
+function mockSaveGiftCard(g: GiftCardView): void {
+  const list = mockListGiftCards();
+  const idx = list.findIndex((x) => x.id === g.id);
+  if (idx >= 0) list[idx] = g;
+  else list.unshift(g);
+  write(KEYS.giftCards, list);
+}
+
+// ------------------------------------------------------------------ *
+// 对外接口（优惠券）
+// ------------------------------------------------------------------ *
+
+export async function listVouchers(): Promise<VoucherView[]> {
+  if (getAdminApiMode() !== 'live') return mockListVouchers();
+  const res = (await adminClient().listVouchers({ limit: 100 })) as { items?: AdminVoucher[] };
+  return (res.items ?? []).map(mapVoucher);
+}
+
+export async function getVoucher(id: string): Promise<VoucherDetailView | null> {
+  if (getAdminApiMode() !== 'live') {
+    const v = mockListVouchers().find((x) => x.id === id);
+    return v ? { ...v, codes: [] } : null;
+  }
+  try {
+    const res = (await adminClient().getVoucher(id)) as AdminVoucher & { codes?: AdminVoucherCode[] };
+    return { ...mapVoucher(res), codes: (res.codes ?? []).map(mapCode) };
+  } catch {
+    return null;
+  }
+}
+
+export async function createVoucher(input: VoucherInput): Promise<VoucherDetailView> {
+  if (getAdminApiMode() !== 'live') {
+    const v: VoucherView = {
+      id: newMockId('vc'),
+      name: input.name,
+      type: input.type,
+      discountType: input.discountType,
+      discountValue: input.discountValue,
+      minSpent: input.minSpent,
+      usageLimit: input.usageLimit,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      status: 'active',
+    };
+    mockSaveVoucher(v);
+    return { ...v, codes: [] };
+  }
+  const res = (await adminClient().createVoucher({
+    name: input.name,
+    type: input.type,
+    discount_type: input.discountType,
+    discount_value: input.discountValue,
+    min_spent: input.minSpent,
+    usage_limit: input.usageLimit,
+    starts_at: input.startsAt,
+    ends_at: input.endsAt,
+    ...(input.codes && input.codes.length > 0 ? { codes: input.codes } : {}),
+  })) as AdminVoucher & { codes?: AdminVoucherCode[] };
+  return { ...mapVoucher(res), codes: (res.codes ?? []).map(mapCode) };
+}
+
+export async function updateVoucher(id: string, input: VoucherInput): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const v = mockListVouchers().find((x) => x.id === id);
+    if (v) {
+      Object.assign(v, {
+        name: input.name,
+        type: input.type,
+        discountType: input.discountType,
+        discountValue: input.discountValue,
+        minSpent: input.minSpent,
+        usageLimit: input.usageLimit,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+      });
+      mockSaveVoucher(v);
+    }
+    return;
+  }
+  await adminClient().updateVoucher(id, {
+    name: input.name,
+    type: input.type,
+    discount_type: input.discountType,
+    discount_value: input.discountValue,
+    min_spent: input.minSpent,
+    usage_limit: input.usageLimit,
+    starts_at: input.startsAt,
+    ends_at: input.endsAt,
+  });
+}
+
+export async function setVoucherStatus(id: string, active: boolean): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const v = mockListVouchers().find((x) => x.id === id);
+    if (v) {
+      v.status = active ? 'active' : 'disabled';
+      mockSaveVoucher(v);
+    }
+    return;
+  }
+  const client = adminClient();
+  if (active) await client.enableVoucher(id);
+  else await client.disableVoucher(id);
+}
+
+// —— 券码管理 ——
+
+export async function listVoucherCodes(id: string): Promise<VoucherCodeView[]> {
+  if (getAdminApiMode() !== 'live') return [];
+  const res = (await adminClient().listVoucherCodes(id)) as { items?: AdminVoucherCode[] };
+  return (res.items ?? []).map(mapCode);
+}
+
+export async function addVoucherCodes(id: string, codes: string[]): Promise<void> {
+  if (getAdminApiMode() !== 'live') return;
+  await adminClient().addVoucherCodes(id, { codes });
+}
+
+export async function deleteVoucherCode(id: string, codeId: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') return;
+  try {
+    await adminClient().deleteVoucherCode(id, codeId);
+  } catch (err) {
+    // 后端返回 204 无响应体，SDK 按「JSON 解析失败」抛 ApiError(204) —— 删除成功。
+    if (!(err instanceof ApiError && err.code === 204)) throw err;
+  }
+}
+
+export async function setVoucherCodeStatus(id: string, codeId: string, active: boolean): Promise<void> {
+  if (getAdminApiMode() !== 'live') return;
+  const client = adminClient();
+  if (active) await client.enableVoucherCode(id, codeId);
+  else await client.disableVoucherCode(id, codeId);
+}
+
+// ------------------------------------------------------------------ *
+// 对外接口（礼品卡）
+// ------------------------------------------------------------------ *
+
+export async function listGiftCards(): Promise<GiftCardView[]> {
+  if (getAdminApiMode() !== 'live') return mockListGiftCards();
+  const res = (await adminClient().listGiftCards({ limit: 100 })) as { items?: AdminGiftCard[] };
+  return (res.items ?? []).map(mapGiftCard);
+}
+
+export async function getGiftCard(id: string): Promise<GiftCardView | null> {
+  if (getAdminApiMode() !== 'live') return mockListGiftCards().find((x) => x.id === id) ?? null;
+  try {
+    const res = (await adminClient().getGiftCard(id)) as AdminGiftCard;
+    return mapGiftCard(res);
+  } catch {
+    return null;
+  }
+}
+
+export async function createGiftCard(input: GiftCardInput): Promise<GiftCardView> {
+  if (getAdminApiMode() !== 'live') {
+    const g: GiftCardView = {
+      id: newMockId('gc'),
+      code: `GC-${Math.random().toString(16).slice(2, 10).toUpperCase()}`,
+      currency: input.currency,
+      initialBalance: input.initialBalance,
+      currentBalance: input.initialBalance,
+      isActive: true,
+      expiresAt: input.expiresAt,
+      assignedTo: input.assignedTo,
+    };
+    mockSaveGiftCard(g);
+    return g;
+  }
+  const res = (await adminClient().createGiftCard({
+    currency: input.currency,
+    initial_balance: input.initialBalance,
+    expires_at: input.expiresAt,
+    assigned_to: input.assignedTo,
+  })) as AdminGiftCard;
+  return mapGiftCard(res);
+}
+
+export async function updateGiftCard(
+  id: string,
+  patch: { expiresAt: string | null; assignedTo: string | null },
+): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const g = mockListGiftCards().find((x) => x.id === id);
+    if (g) {
+      g.expiresAt = patch.expiresAt;
+      g.assignedTo = patch.assignedTo;
+      mockSaveGiftCard(g);
+    }
+    return;
+  }
+  await adminClient().updateGiftCard(id, {
+    expires_at: patch.expiresAt,
+    assigned_to: patch.assignedTo,
+  });
+}
+
+export async function setGiftCardStatus(id: string, active: boolean): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const g = mockListGiftCards().find((x) => x.id === id);
+    if (g) {
+      g.isActive = active;
+      mockSaveGiftCard(g);
+    }
+    return;
+  }
+  const client = adminClient();
+  if (active) await client.enableGiftCard(id);
+  else await client.disableGiftCard(id);
+}
+
+export async function adjustGiftCard(id: string, deltaMinor: number, reason: string): Promise<GiftCardView | null> {
+  if (getAdminApiMode() !== 'live') {
+    const g = mockListGiftCards().find((x) => x.id === id);
+    if (g) {
+      g.currentBalance = Math.max(0, g.currentBalance + deltaMinor);
+      mockSaveGiftCard(g);
+      return g;
+    }
+    return null;
+  }
+  try {
+    const res = (await adminClient().adjustGiftCard(id, {
+      delta_minor: deltaMinor,
+      reason: reason || undefined,
+    })) as AdminGiftCard;
+    return mapGiftCard(res);
+  } catch {
+    return null;
+  }
+}
+
+export async function listGiftCardEvents(id: string): Promise<GiftCardEventView[]> {
+  if (getAdminApiMode() !== 'live') return [];
+  const res = (await adminClient().listGiftCardEvents(id)) as { items?: AdminGiftCardEvent[] };
+  return (res.items ?? []).map(mapEvent);
+}
+
+/** 流水类型 → 中文标签（后台展示用）。 */
+export function giftCardEventLabel(type: string): string {
+  const map: Record<string, string> = {
+    issued: '开卡',
+    used_in_order: '订单抵扣',
+    refunded_in_order: '订单退款返还',
+    balance_adjusted: '手动调账',
+    deactivated: '停用',
+    activated: '启用',
+  };
+  return map[type] ?? type;
+}

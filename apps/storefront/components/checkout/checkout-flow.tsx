@@ -8,6 +8,15 @@ import { useCart } from '@/lib/cart-store';
 import { getApiMode } from '@/lib/api';
 import { getLiveCartId, markCartOrdered, prepareCartForOrder, withLiveCartLock } from '@/lib/live-cart';
 import {
+  applyPromoCodesToCart,
+  buildDiscountLines,
+  fetchCartPromo,
+  setCartGiftCardCodes,
+  setCartVoucherCodes,
+  EMPTY_PROMO,
+  type CartPromoView,
+} from '@/lib/promo';
+import {
   CHECKOUT_STEPS,
   PAYMENT_PROVIDERS,
   SHIPPING_OPTIONS,
@@ -32,6 +41,7 @@ import { ContactStep } from './contact-step';
 import { AddressStep } from './address-step';
 import { ShippingStep } from './shipping-step';
 import { PaymentStep } from './payment-step';
+import { PromoCodes } from './promo-codes';
 
 const DRAFT_KEY = 'checkout:draft';
 
@@ -54,6 +64,81 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   );
   const [optionsLoading, setOptionsLoading] = useState(live);
   const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // live 模式：优惠码 / 礼品卡快照（金额一律后端算好，前端只透传展示）。
+  const [promo, setPromo] = useState<CartPromoView>(EMPTY_PROMO);
+  const [promoBusy, setPromoBusy] = useState(false);
+  const [promoError, setPromoError] = useState<string | null>(null);
+
+  // 进入结账页时拉取已输码状态（刷新不丢码，折扣以后端为准）。
+  useEffect(() => {
+    if (!live) {
+      setPromo(EMPTY_PROMO);
+      return;
+    }
+    const cartId = getLiveCartId();
+    if (!cartId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const view = await fetchCartPromo(cartId);
+        if (!cancelled) setPromo(view);
+      } catch {
+        /* 拉取失败保持空态，输码时会重新设置 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [live]);
+
+  /** 调 store 接口设置码并回填后端算好的折扣（只传码凭证）。 */
+  const mutatePromo = useCallback(async (fn: (cartId: string) => Promise<CartPromoView>) => {
+    if (!live) return;
+    const cartId = getLiveCartId();
+    if (!cartId) {
+      setPromoError('请先添加商品');
+      return;
+    }
+    setPromoBusy(true);
+    setPromoError(null);
+    try {
+      setPromo(await fn(cartId));
+    } catch (err) {
+      setPromoError(describeError(err));
+    } finally {
+      setPromoBusy(false);
+    }
+  }, [live]);
+
+  const applyVoucher = useCallback(
+    (code: string) => {
+      const next = Array.from(new Set([...promo.voucherCodes, code]));
+      void mutatePromo((cartId) => setCartVoucherCodes(cartId, next));
+    },
+    [promo.voucherCodes, mutatePromo],
+  );
+  const removeVoucher = useCallback(
+    (code: string) => {
+      const next = promo.voucherCodes.filter((c) => c !== code);
+      void mutatePromo((cartId) => setCartVoucherCodes(cartId, next));
+    },
+    [promo.voucherCodes, mutatePromo],
+  );
+  const applyGiftCard = useCallback(
+    (code: string) => {
+      const next = Array.from(new Set([...promo.giftCardCodes, code]));
+      void mutatePromo((cartId) => setCartGiftCardCodes(cartId, next));
+    },
+    [promo.giftCardCodes, mutatePromo],
+  );
+  const removeGiftCard = useCallback(
+    (code: string) => {
+      const next = promo.giftCardCodes.filter((c) => c !== code);
+      void mutatePromo((cartId) => setCartGiftCardCodes(cartId, next));
+    },
+    [promo.giftCardCodes, mutatePromo],
+  );
 
   // 回填草稿（返回/刷新不丢）
   useEffect(() => {
@@ -133,7 +218,10 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const selectedShipping = shippingOptions.find((o) => o.id === form.shippingOptionId);
   const shippingMinor = selectedShipping?.amountMinor ?? 0;
   const taxMinor = 0;
-  const totalMinor = subtotal.amountMinor + shippingMinor + taxMinor;
+  // live 模式：折扣以后端返回的 discount_minor 为准，前端绝不自己算折扣金额（铁律 13）。
+  const discountMinor = live ? promo.discountMinor : 0;
+  const totalMinor = subtotal.amountMinor + shippingMinor + taxMinor - discountMinor;
+  const discountLines = live ? buildDiscountLines(promo) : [];
   const currency = subtotal.currencyCode;
 
   /**
@@ -162,6 +250,13 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
         fingerprint,
       });
       if (!cartId) throw new Error('购物车为空，请先选购商品');
+
+      // 把优惠码/礼品卡码搬到最终下单的那辆车：换车（邮箱对不上/内容变化）时
+      // prepareCartForOrder 只搬行、不搬码，若不重放，下单会按「无码」计价，
+      // 展示价与实收价不一致。覆盖式设置幂等，复用原车时也不会有副作用。
+      if (promo.voucherCodes.length > 0 || promo.giftCardCodes.length > 0) {
+        await applyPromoCodesToCart(cartId, promo.voucherCodes, promo.giftCardCodes);
+      }
 
       const result = await submitLiveCheckout({
         cartId,
@@ -205,6 +300,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     form.paymentProviderId,
     items,
     paymentProviders,
+    promo.voucherCodes,
+    promo.giftCardCodes,
     router,
     locale,
     channel,
@@ -349,15 +446,30 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
           </div>
         </div>
 
-        <OrderSummary
-          items={items}
-          subtotal={subtotal}
-          shippingMinor={shippingMinor}
-          taxMinor={taxMinor}
-          totalMinor={totalMinor}
-          currencyCode={currency}
-          shippingLabel={selectedShipping?.name}
-        />
+        <div className="space-y-4">
+          {live && (
+            <PromoCodes
+              voucherCodes={promo.voucherCodes}
+              giftCardCodes={promo.giftCardCodes}
+              busy={promoBusy}
+              error={promoError}
+              onApplyVoucher={applyVoucher}
+              onApplyGiftCard={applyGiftCard}
+              onRemoveVoucher={removeVoucher}
+              onRemoveGiftCard={removeGiftCard}
+            />
+          )}
+          <OrderSummary
+            items={items}
+            subtotal={subtotal}
+            shippingMinor={shippingMinor}
+            taxMinor={taxMinor}
+            totalMinor={totalMinor}
+            currencyCode={currency}
+            shippingLabel={selectedShipping?.name}
+            discountLines={discountLines}
+          />
+        </div>
       </div>
     </div>
   );

@@ -5,18 +5,25 @@
  */
 import type {
   AddLineItemRequest,
+  AddVoucherCodesRequest,
+  AdjustGiftCardRequest,
   CapturePaymentRequest,
   ChangePasswordRequest,
   CreateCartRequest,
+  CreateGiftCardRequest,
   CreatePaymentSessionRequest,
   CreateProductRequest,
   CreateRefundRequest,
   CreateShipmentRequest,
   CreateVariantRequest,
+  CreateVoucherRequest,
   LoginRequest,
   PutPricesRequest,
   RegisterRequest,
+  SetGiftCardCodesRequest,
   SetShippingMethodRequest,
+  SetVoucherCodesRequest,
+  UpdateGiftCardRequest,
   UpdateInventoryLevelRequest,
   UpdateLineItemRequest,
   UpdatePaymentProviderRequest,
@@ -24,6 +31,7 @@ import type {
   UpdateSettingsRequest,
   UpdateThemeRequest,
   UpdateVariantRequest,
+  UpdateVoucherRequest,
 } from "./requests";
 import type { Envelope, PaginatedResponse } from "@mall/types";
 
@@ -107,6 +115,7 @@ export function createStoreClient(opts: ClientOptions) {
   const get = <T>(p: string, q?: Query) => request<T>("GET", p, base, undefined, q);
   const post = <T>(p: string, b?: unknown) => request<T>("POST", p, base, b);
   const patch = <T>(p: string, b?: unknown) => request<T>("PATCH", p, base, b);
+  const put = <T>(p: string, b?: unknown) => request<T>("PUT", p, base, b);
   const del = <T>(p: string) => request<T>("DELETE", p, base);
 
   return {
@@ -129,6 +138,12 @@ export function createStoreClient(opts: ClientOptions) {
     /** 选运费：只传方案 id，运费金额由后端解析（铁律 13，防客户端指定运费）。 */
     setShippingMethod: (cartId: string, b: SetShippingMethodRequest) =>
       post(`/api/v1/store/carts/${cartId}/shipping-methods`, b),
+    /** 输优惠券码/清码：覆盖式设置（只传码凭证，折扣金额由后端算，铁律 13）。 */
+    setVoucherCodes: (cartId: string, b: SetVoucherCodesRequest) =>
+      put(`/api/v1/store/carts/${cartId}/voucher-codes`, b),
+    /** 输礼品卡码/清码：覆盖式设置（只传卡码凭证，抵扣金额由后端算，铁律 13）。 */
+    setGiftCardCodes: (cartId: string, b: SetGiftCardCodesRequest) =>
+      put(`/api/v1/store/carts/${cartId}/gift-card-codes`, b),
     listPaymentProviders: (cartId: string) =>
       get("/api/v1/store/payment-providers", { cart_id: cartId }),
     createPaymentSession: (b: CreatePaymentSessionRequest) =>
@@ -217,6 +232,33 @@ export function createAdminClient(opts: ClientOptions) {
     getPaymentProviders: () => get("/api/v1/admin/settings/payment-providers"),
     updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
       put(`/api/v1/admin/settings/payment-providers/${id}`, b),
+    // —— 促销（阶段 6）——
+    listVouchers: (q?: Query) => get("/api/v1/admin/promotions/vouchers", q),
+    createVoucher: (b: CreateVoucherRequest) => post("/api/v1/admin/promotions/vouchers", b),
+    getVoucher: (id: string) => get(`/api/v1/admin/promotions/vouchers/${id}`),
+    updateVoucher: (id: string, b: UpdateVoucherRequest) =>
+      put(`/api/v1/admin/promotions/vouchers/${id}`, b),
+    enableVoucher: (id: string) => post(`/api/v1/admin/promotions/vouchers/${id}/enable`),
+    disableVoucher: (id: string) => post(`/api/v1/admin/promotions/vouchers/${id}/disable`),
+    listVoucherCodes: (id: string) => get(`/api/v1/admin/promotions/vouchers/${id}/codes`),
+    addVoucherCodes: (id: string, b: AddVoucherCodesRequest) =>
+      post(`/api/v1/admin/promotions/vouchers/${id}/codes`, b),
+    deleteVoucherCode: (id: string, codeId: string) =>
+      del(`/api/v1/admin/promotions/vouchers/${id}/codes/${codeId}`),
+    enableVoucherCode: (id: string, codeId: string) =>
+      post(`/api/v1/admin/promotions/vouchers/${id}/codes/${codeId}/enable`),
+    disableVoucherCode: (id: string, codeId: string) =>
+      post(`/api/v1/admin/promotions/vouchers/${id}/codes/${codeId}/disable`),
+    listGiftCards: (q?: Query) => get("/api/v1/admin/promotions/gift-cards", q),
+    createGiftCard: (b: CreateGiftCardRequest) => post("/api/v1/admin/promotions/gift-cards", b),
+    getGiftCard: (id: string) => get(`/api/v1/admin/promotions/gift-cards/${id}`),
+    updateGiftCard: (id: string, b: UpdateGiftCardRequest) =>
+      put(`/api/v1/admin/promotions/gift-cards/${id}`, b),
+    enableGiftCard: (id: string) => post(`/api/v1/admin/promotions/gift-cards/${id}/enable`),
+    disableGiftCard: (id: string) => post(`/api/v1/admin/promotions/gift-cards/${id}/disable`),
+    adjustGiftCard: (id: string, b: AdjustGiftCardRequest) =>
+      post(`/api/v1/admin/promotions/gift-cards/${id}/adjust`, b),
+    listGiftCardEvents: (id: string) => get(`/api/v1/admin/promotions/gift-cards/${id}/events`),
   };
 }
 

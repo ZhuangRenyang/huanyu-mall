@@ -33,6 +33,16 @@ export interface SetShippingMethodRequest {
   shipping_option_id: string;
 }
 
+/** 设置优惠券码（覆盖式；只传码凭证，折扣金额由后端 computeDiscounts 算，铁律 13）。 */
+export interface SetVoucherCodesRequest {
+  codes: string[];
+}
+
+/** 设置礼品卡码（覆盖式；只传卡码凭证，抵扣金额由后端 computeDiscounts 算，铁律 13）。 */
+export interface SetGiftCardCodesRequest {
+  codes: string[];
+}
+
 /** 创建支付会话。 */
 export interface CreatePaymentSessionRequest {
   cart_id: string;
@@ -159,4 +169,58 @@ export interface UpdateThemeRequest {
 export interface UpdatePaymentProviderRequest {
   is_enabled: boolean;
   options?: Record<string, string>;
+}
+
+// —— 促销（后台管理，阶段 6）——
+// 金额一律 minor unit（分）；percentage 为万分比 bps（2000 = 20%）。
+
+/** 创建优惠券。 */
+export interface CreateVoucherRequest {
+  name: string;
+  type?: 'entire_order' | 'shipping' | 'specific_product';
+  discount_type: 'fixed' | 'percentage';
+  discount_value: number;
+  min_spent?: number | null;
+  usage_limit?: number | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  /** 管理员指定券码；不传则后端生成 1 个高熵码。 */
+  codes?: string[];
+}
+
+/** 更新优惠券。 */
+export interface UpdateVoucherRequest {
+  name?: string;
+  type?: 'entire_order' | 'shipping' | 'specific_product';
+  discount_type?: 'fixed' | 'percentage';
+  discount_value?: number;
+  min_spent?: number | null;
+  usage_limit?: number | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+}
+
+/** 追加券码（一券多码）。 */
+export interface AddVoucherCodesRequest {
+  codes: string[];
+}
+
+/** 创建礼品卡（卡码由后端生成，初始余额为正整数 minor unit）。 */
+export interface CreateGiftCardRequest {
+  currency: string;
+  initial_balance: number;
+  expires_at?: string | null;
+  assigned_to?: string | null;
+}
+
+/** 更新礼品卡（只允许改有效期与绑定客户，余额走调账）。 */
+export interface UpdateGiftCardRequest {
+  expires_at?: string | null;
+  assigned_to?: string | null;
+}
+
+/** 手动调账：正=加余额，负=减余额（minor unit）。 */
+export interface AdjustGiftCardRequest {
+  delta_minor: number;
+  reason?: string;
 }

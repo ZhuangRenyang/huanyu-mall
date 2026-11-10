@@ -99,6 +99,14 @@ export interface CartTotals {
   total_minor: number;
 }
 
+/** 命中的促销折扣明细（voucher / gift card / 目录 / 订单，金额由后端算）。 */
+export interface CartDiscount {
+  type: 'catalogue' | 'order' | 'voucher' | 'gift_card';
+  promotion_id: string;
+  code: string | null;
+  amount_minor: number;
+}
+
 /** 购物车。 */
 export interface Cart {
   id: string;
@@ -108,9 +116,15 @@ export interface Cart {
   customer_id?: string | null;
   email?: string | null;
   status: 'open' | 'completed' | 'abandoned';
+  /** 顾客输入的 voucher 码（后端持久化，刷新不丢）。 */
+  voucher_codes?: string[];
+  /** 顾客输入的 gift card 码（后端持久化，刷新不丢）。 */
+  gift_card_codes?: string[];
   line_items: CartLineItem[];
   shipping_method?: CartShippingMethod;
   totals: CartTotals;
+  /** 折扣明细（后端现阶段未在 mapCart 透出，预留契约，前端按缺省降级为单条「优惠」合计）。 */
+  discounts?: CartDiscount[];
 }
 
 /** 可选运费方式。 */

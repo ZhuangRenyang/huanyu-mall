@@ -1,6 +1,12 @@
 import { formatMoney } from '@mall/ui';
 import type { CartLineItemProps } from '@mall/ui';
 
+/** 折扣明细行（label 由上层组装，金额一律 minor unit，仅展示后端算好的值）。 */
+export interface DiscountLine {
+  label: string;
+  amountMinor: number;
+}
+
 export interface OrderSummaryProps {
   items: CartLineItemProps[];
   subtotal: { amountMinor: number; currencyCode: string };
@@ -9,6 +15,8 @@ export interface OrderSummaryProps {
   totalMinor: number;
   currencyCode: string;
   shippingLabel?: string;
+  /** 折扣明细（优惠券 / 礼品卡 / 促销），金额为后端算好的扣减额。 */
+  discountLines?: DiscountLine[];
 }
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -20,7 +28,7 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SummaryBody({ items, subtotal, shippingMinor, taxMinor, totalMinor, currencyCode, shippingLabel }: OrderSummaryProps) {
+function SummaryBody({ items, subtotal, shippingMinor, taxMinor, totalMinor, currencyCode, shippingLabel, discountLines }: OrderSummaryProps) {
   return (
     <div className="space-y-3">
       <ul className="space-y-2">
@@ -44,6 +52,12 @@ function SummaryBody({ items, subtotal, shippingMinor, taxMinor, totalMinor, cur
           value={shippingMinor === 0 ? '免运费' : formatMoney(shippingMinor, currencyCode)}
         />
         <Row label="税费" value={taxMinor === 0 ? '含税' : formatMoney(taxMinor, currencyCode)} />
+        {(discountLines ?? []).map((d) => (
+          <div key={d.label} className="flex justify-between text-success">
+            <dt className="min-w-0 truncate">{d.label}</dt>
+            <dd className="tabular ml-2 shrink-0">-{formatMoney(d.amountMinor, currencyCode)}</dd>
+          </div>
+        ))}
         <div className="flex justify-between border-t border-border pt-2 text-base font-semibold">
           <dt>合计</dt>
           <dd className="tabular">{formatMoney(totalMinor, currencyCode)}</dd>

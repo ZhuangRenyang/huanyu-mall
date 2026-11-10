@@ -18,5 +18,34 @@ export { listOrders, getOrder, shipOrder, refundOrder } from './admin-orders';
 
 export { getTheme, saveTheme, getProviders, saveProviders } from './admin-settings';
 
+export {
+  listVouchers,
+  getVoucher,
+  createVoucher,
+  updateVoucher,
+  setVoucherStatus,
+  listVoucherCodes,
+  addVoucherCodes,
+  deleteVoucherCode,
+  setVoucherCodeStatus,
+  listGiftCards,
+  getGiftCard,
+  createGiftCard,
+  updateGiftCard,
+  setGiftCardStatus,
+  adjustGiftCard,
+  listGiftCardEvents,
+  giftCardEventLabel,
+} from './admin-promotions';
+export type {
+  VoucherView,
+  VoucherCodeView,
+  VoucherDetailView,
+  VoucherInput,
+  GiftCardView,
+  GiftCardEventView,
+  GiftCardInput,
+} from './admin-promotions';
+
 export { changePassword } from './admin-password';
 export type { ChangePasswordErrorKind, ChangePasswordResult } from './admin-password';
