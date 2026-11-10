@@ -64,13 +64,14 @@ export class CartService implements ICartModuleService {
       shippingMinor: shipping?.amount_minor ?? 0n,
       // 只传顾客输入的券码凭证；折扣金额由 promotion 侧算（铁律 13 / 资金安全硬约束 2）。
       voucherCodes: cart.voucher_codes,
-      giftCardCodes: [],
+      giftCardCodes: cart.gift_card_codes,
     });
 
     const discountByItem = new Map(discounts.lineAdjustments.map((a) => [a.itemId, a.amountMinor]));
-    // discount = 行级折扣合计 + 订单级折扣 + voucher 折扣（阶段 4）；giftCard 阶段 5 落地前恒 0。
+    // discount = 行级折扣合计 + 订单级折扣 + voucher 折扣（阶段 4）+ gift card 抵扣（阶段 5）。
     const lineDiscountMinor = discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
-    const discountMinor = lineDiscountMinor + discounts.orderDiscountMinor + discounts.voucherDiscountMinor;
+    const discountMinor =
+      lineDiscountMinor + discounts.orderDiscountMinor + discounts.voucherDiscountMinor + discounts.giftCardAppliedMinor;
 
     // 折扣明细（供下单固化 order_discount 留痕）：目录行级折扣按促销聚合 + 订单级折扣。
     const discountDetails = buildDiscountDetails(discounts);
@@ -187,6 +188,15 @@ export class CartService implements ICartModuleService {
     return this.retrieveCart(cartId);
   }
 
+  /** 设置顾客输入的 gift card codes（覆盖式，去重；只存凭证，抵扣金额由后端算）。 */
+  async setGiftCardCodes(cartId: string, codes: string[]): Promise<CartDetailDTO> {
+    const cart = await this.deps.repo.findById(cartId);
+    if (!cart) throw cartNotFound(cartId);
+    const normalized = [...new Set(codes.filter((c) => typeof c === "string" && c.length > 0))];
+    await this.deps.repo.updateGiftCardCodes(cartId, normalized);
+    return this.retrieveCart(cartId);
+  }
+
   async restoreCart(cartId: string): Promise<void> {
     await this.deps.repo.restore(cartId);
     await this.deps.repo.updateStatus(cartId, "open");
@@ -198,6 +208,7 @@ export class CartService implements ICartModuleService {
  * - 目录促销：按 promotion_id 聚合行级折扣（同一促销命中多行时合并金额）。
  * - 订单促销：单条（多命中已在 promotion 侧取最大）。
  * - voucher：单条（多码命中已在 promotion 侧取最大），type='voucher'，code=券码。
+ * - gift card：多条（多卡顺序累加），type='gift_card'，promotion_id=gift_card_id，code=卡码。
  * code 归一化：空字符串按 null 处理。
  */
 function buildDiscountDetails(discounts: {
@@ -205,6 +216,7 @@ function buildDiscountDetails(discounts: {
   orderDiscountMinor: bigint;
   orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
   voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
+  giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
 }): CartDiscountDTO[] {
   const out: CartDiscountDTO[] = [];
 
@@ -225,6 +237,10 @@ function buildDiscountDetails(discounts: {
 
   for (const vd of discounts.voucherDiscounts) {
     out.push({ type: "voucher", promotion_id: vd.promotionId, code: vd.code, amount_minor: vd.amountMinor });
+  }
+
+  for (const gd of discounts.giftCardDiscounts) {
+    out.push({ type: "gift_card", promotion_id: gd.giftCardId, code: gd.code, amount_minor: gd.amountMinor });
   }
 
   return out;

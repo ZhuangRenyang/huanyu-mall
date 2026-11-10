@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { errors } from "@mall/core";
 import { PaginationQuerySchema } from "@mall/types";
-import { voucherCodeAlreadyExists, type VoucherCodeDTO, type VoucherDTO } from "@mall/promotion";
+import { voucherCodeAlreadyExists, type VoucherCodeDTO, type VoucherDTO, type GiftCardDTO, type GiftCardEventDTO } from "@mall/promotion";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { auditEntry } from "../audit-context.js";
@@ -70,6 +70,56 @@ function mapCode(c: VoucherCodeDTO) {
     is_active: c.is_active,
   };
 }
+
+/** 64-bit 随机高熵礼品卡码（hex 大写），唯一性由 gift_card.code unique index 兜底。 */
+function generateGiftCardCode(): string {
+  return `GC-${randomBytes(8).toString("hex").toUpperCase()}`;
+}
+
+function mapGiftCard(g: GiftCardDTO) {
+  return {
+    id: g.id,
+    code: g.code,
+    currency: g.currency,
+    initial_balance: g.initial_balance,
+    current_balance: g.current_balance,
+    is_active: g.is_active,
+    expires_at: g.expires_at,
+    assigned_to: g.assigned_to,
+  };
+}
+
+function mapGiftCardEvent(e: GiftCardEventDTO) {
+  return {
+    id: e.id,
+    gift_card_id: e.gift_card_id,
+    type: e.type,
+    amount: e.amount,
+    order_id: e.order_id,
+    parameters: e.parameters,
+    created_at: e.created_at,
+  };
+}
+
+const createGiftCardBody = z.object({
+  currency: z.string().length(3),
+  // 金额一律 minor unit（分），服务端 bigint；初始余额为 int64，正数（0 也不允许，避免发空卡）。
+  initial_balance: z.number().int().positive(),
+  expires_at: z.string().datetime().nullable().optional(),
+  assigned_to: z.string().min(1).nullable().optional(),
+});
+
+/** 只允许改有效期与绑定客户；余额/币种/卡码创建后不可改（余额变动走 adjust 调账留痕）。 */
+const updateGiftCardBody = z.object({
+  expires_at: z.string().datetime().nullable().optional(),
+  assigned_to: z.string().min(1).nullable().optional(),
+});
+
+const adjustGiftCardBody = z.object({
+  // 正=加余额，负=减余额（minor unit）。金额由后台管理员指定，全程服务端 bigint 计算。
+  delta_minor: z.number().int(),
+  reason: z.string().max(500).optional(),
+});
 
 export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void {
   const auth = makeAuthHelpers(deps);
@@ -299,6 +349,155 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
       const vc = await deps.services.promotion.retrieveVoucherCodeByCode(code);
       if (!vc) throw errors.notFound("券码不存在");
       reply.ok(mapCode(vc));
+    },
+  );
+
+  // —— Gift Card 管理（阶段 5，资金安全硬约束 1/5：钱的配置只能走后端 + 后台，RBAC + 审计）——
+  app.get(
+    "/api/v1/admin/promotions/gift-cards",
+    { preHandler: guard, schema: { querystring: PaginationQuerySchema } },
+    async (req, reply) => {
+      const q = req.query as { limit: number; offset: number };
+      const res = await deps.services.promotion.listGiftCards({ limit: q.limit, offset: q.offset });
+      reply.ok({
+        items: res.items.map(mapGiftCard),
+        count: res.count,
+        offset: q.offset,
+        limit: q.limit,
+        hasMore: q.offset + res.items.length < res.count,
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/admin/promotions/gift-cards",
+    { preHandler: guard, schema: { body: createGiftCardBody } },
+    async (req, reply) => {
+      const b = req.body as z.infer<typeof createGiftCardBody>;
+      const card = await deps.services.promotion.createGiftCard({
+        code: generateGiftCardCode(),
+        currency: b.currency,
+        initialBalance: BigInt(b.initial_balance),
+        expiresAt: b.expires_at ? new Date(b.expires_at) : b.expires_at === null ? null : undefined,
+        assignedTo: b.assigned_to !== undefined ? b.assigned_to : undefined,
+      });
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "gift_card.create",
+          entityType: "gift_card",
+          entityId: card.id,
+          after: mapGiftCard(card),
+        }),
+      );
+      reply.code(201).ok(mapGiftCard(card));
+    },
+  );
+
+  app.get("/api/v1/admin/promotions/gift-cards/:id", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const card = await deps.services.promotion.retrieveGiftCard(id);
+    reply.ok(mapGiftCard(card));
+  });
+
+  app.put(
+    "/api/v1/admin/promotions/gift-cards/:id",
+    { preHandler: guard, schema: { body: updateGiftCardBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof updateGiftCardBody>;
+      const before = await deps.services.promotion.retrieveGiftCard(id);
+      const updated = await deps.services.promotion.updateGiftCard(id, {
+        expiresAt: b.expires_at !== undefined ? (b.expires_at ? new Date(b.expires_at) : null) : undefined,
+        assignedTo: b.assigned_to !== undefined ? b.assigned_to : undefined,
+      });
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "gift_card.update",
+          entityType: "gift_card",
+          entityId: id,
+          before: mapGiftCard(before),
+          after: mapGiftCard(updated),
+        }),
+      );
+      reply.ok(mapGiftCard(updated));
+    },
+  );
+
+  // 启停（即时生效，硬约束 6：停用后下次 computeDiscounts 立即不命中），写 activated/deactivated 流水。
+  app.post(
+    "/api/v1/admin/promotions/gift-cards/:id/disable",
+    { preHandler: guard },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const before = await deps.services.promotion.retrieveGiftCard(id);
+      const updated = await deps.services.promotion.setGiftCardActive(id, false);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "gift_card.disable",
+          entityType: "gift_card",
+          entityId: id,
+          before: mapGiftCard(before),
+          after: mapGiftCard(updated),
+        }),
+      );
+      reply.ok(mapGiftCard(updated));
+    },
+  );
+
+  app.post(
+    "/api/v1/admin/promotions/gift-cards/:id/enable",
+    { preHandler: guard },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const before = await deps.services.promotion.retrieveGiftCard(id);
+      const updated = await deps.services.promotion.setGiftCardActive(id, true);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "gift_card.enable",
+          entityType: "gift_card",
+          entityId: id,
+          before: mapGiftCard(before),
+          after: mapGiftCard(updated),
+        }),
+      );
+      reply.ok(mapGiftCard(updated));
+    },
+  );
+
+  // 手动调账：加/减余额，写 balance_adjusted 流水（余额非负由 DB CHECK + 原子扣减兜底）。
+  app.post(
+    "/api/v1/admin/promotions/gift-cards/:id/adjust",
+    { preHandler: guard, schema: { body: adjustGiftCardBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof adjustGiftCardBody>;
+      const before = await deps.services.promotion.retrieveGiftCard(id);
+      const updated = await deps.services.promotion.adjustGiftCardBalance(id, BigInt(b.delta_minor), {
+        reason: b.reason ?? null,
+        operator: req.auth?.sub ?? null,
+      });
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "gift_card.adjust",
+          entityType: "gift_card",
+          entityId: id,
+          before: mapGiftCard(before),
+          after: mapGiftCard(updated),
+        }),
+      );
+      reply.ok(mapGiftCard(updated));
+    },
+  );
+
+  // 流水账本（只追加，current_balance 是流水汇总缓存，硬约束 6）。
+  app.get(
+    "/api/v1/admin/promotions/gift-cards/:id/events",
+    { preHandler: guard },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      await deps.services.promotion.retrieveGiftCard(id);
+      const events = await deps.services.promotion.listGiftCardEvents(id);
+      reply.ok({ items: events.map(mapGiftCardEvent), count: events.length });
     },
   );
 }

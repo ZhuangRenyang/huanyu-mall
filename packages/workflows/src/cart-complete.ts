@@ -58,6 +58,10 @@ export interface PromotionPort {
   consumeVoucherCodes(codes: string[]): Promise<void>;
   /** 补偿：回退一次 used。 */
   releaseVoucherCodes(codes: string[]): Promise<void>;
+  /** 下单成功时原子扣减礼品卡余额 + 写 used_in_order 流水（余额不足抛错，触发整单回滚）。 */
+  consumeGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
+  /** 补偿：加回余额 + 写 refunded_in_order 流水。 */
+  releaseGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
 }
 
 /** 从折扣留痕明细里提取命中的 voucher 券码（下单成功后要原子核销，防超用）。 */
@@ -66,6 +70,16 @@ export function voucherCodesFromDiscounts(
 ): string[] {
   if (!discounts) return [];
   return discounts.filter((d) => d.type === "voucher" && d.code).map((d) => d.code as string);
+}
+
+/** 从折扣留痕明细里提取命中的 gift card（卡码 + 抵扣额），下单成功后要原子扣减余额。 */
+export function giftCardEntriesFromDiscounts(
+  discounts: CartCompleteInput["discounts"],
+): Array<{ code: string; amountMinor: bigint }> {
+  if (!discounts) return [];
+  return discounts
+    .filter((d) => d.type === "gift_card" && d.code)
+    .map((d) => ({ code: d.code as string, amountMinor: d.amountMinor }));
 }
 
 export const createOrderStep = defineStep({
@@ -105,12 +119,18 @@ export const reserveInventoryStep = defineStep({
   },
 });
 
-export const createPaymentCollectionStep = defineStep({
+export const createPaymentCollectionStep = defineStep<
+  { orderId: string; amountMinor: bigint; currencyCode: string },
+  { paymentCollectionId: string | null },
+  string | null
+>({
   id: "cart-complete.create-payment-collection",
   compensationClass: "R",
-  async invoke(input: { orderId: string; amountMinor: bigint; currencyCode: string }, ctx) {
+  async invoke(input, ctx) {
+    // 抵扣到 0（gift card 全额抵扣）→ 总金额 0，跳过支付集合（payment 侧金额为 0 不发起支付）。
+    if (input.amountMinor <= 0n) return new StepResponse({ paymentCollectionId: null }, null);
     const payment = await ctx.resolve<PaymentPort>("payment").createPaymentCollection(input);
-    return new StepResponse(payment, payment.paymentCollectionId);
+    return new StepResponse({ paymentCollectionId: payment.paymentCollectionId }, payment.paymentCollectionId);
   },
   async compensate() {
     // 占位：一期支付集合不在本 workflow 删除
@@ -137,11 +157,35 @@ export const consumeVoucherCodesStep = defineStep({
   },
 });
 
+/**
+ * 礼品卡余额扣减（阶段 5）：下单成功后原子扣减余额 + 写 used_in_order 流水。
+ * 若并发下余额不足（insufficient），invoke 抛错 → 引擎补偿已成功的 createOrderStep（cancelOrder），
+ * 保证「不会收了钱但余额不够扣」（资金安全硬约束 3）。
+ * 补偿：加回余额 + 写 refunded_in_order 流水，供后续步骤失败时回滚。
+ */
+export const consumeGiftCardsStep = defineStep({
+  id: "cart-complete.consume-gift-cards",
+  compensationClass: "R",
+  async invoke(input: { entries: Array<{ code: string; amountMinor: bigint }>; orderId: string }, ctx) {
+    if (input.entries.length === 0) return new StepResponse({}, { entries: [], orderId: input.orderId });
+    await ctx.resolve<PromotionPort>("promotion").consumeGiftCards(input.entries, input.orderId);
+    return new StepResponse({}, { entries: input.entries, orderId: input.orderId });
+  },
+  async compensate(payload: { entries: Array<{ code: string; amountMinor: bigint }>; orderId: string }, ctx) {
+    if (payload.entries.length === 0) return;
+    await ctx.resolve<PromotionPort>("promotion").releaseGiftCards(payload.entries, payload.orderId);
+  },
+});
+
 export const cartCompleteWorkflow = defineWorkflow<CartCompleteInput, { orderId: string }>(
   { id: "cart-complete" },
   async (ctx, input) => {
     const order = await ctx.step(createOrderStep, input);
     await ctx.step(consumeVoucherCodesStep, { codes: voucherCodesFromDiscounts(input.discounts) });
+    await ctx.step(consumeGiftCardsStep, {
+      entries: giftCardEntriesFromDiscounts(input.discounts),
+      orderId: order.orderId,
+    });
     await ctx.step(reserveInventoryStep, { orderId: order.orderId, items: input.items });
     await ctx.step(createPaymentCollectionStep, {
       orderId: order.orderId,
@@ -158,5 +202,6 @@ export function registerCartComplete(registry: WorkflowRegistry): void {
   registry.registerStep(reserveInventoryStep);
   registry.registerStep(createPaymentCollectionStep);
   registry.registerStep(consumeVoucherCodesStep);
+  registry.registerStep(consumeGiftCardsStep);
   registry.registerWorkflow(cartCompleteWorkflow);
 }

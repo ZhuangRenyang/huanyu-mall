@@ -34,7 +34,7 @@ export interface CartShippingMethodDTO {
 
 /** 命中的促销折扣明细（读时动态算），供下单侧固化进 order_discount 留痕（ADR-012 §3）。 */
 export interface CartDiscountDTO {
-  type: "catalogue" | "order" | "voucher";
+  type: "catalogue" | "order" | "voucher" | "gift_card";
   promotion_id: string;
   code: string | null;
   amount_minor: bigint;
@@ -50,6 +50,8 @@ export interface CartDTO {
   status: CartStatus;
   /** 顾客输入的 voucher 码（持久化，刷新不丢），读时传给 computeDiscounts 算折扣。 */
   voucher_codes: string[];
+  /** 顾客输入的 gift card 码（持久化，刷新不丢），读时传给 computeDiscounts 算抵扣。 */
+  gift_card_codes: string[];
   totals: CartTotals | null;
 }
 
@@ -134,6 +136,7 @@ export interface PromotionLookupPort {
     voucherDiscountMinor: bigint;
     voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
     giftCardAppliedMinor: bigint;
+    giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
   }>;
 }
 
@@ -171,6 +174,8 @@ export interface CartRepository {
   updateStatus(id: string, status: CartStatus): Promise<void>;
   /** 持久化顾客输入的 voucher codes（jsonb string[]）。 */
   updateVoucherCodes(id: string, codes: string[]): Promise<void>;
+  /** 持久化顾客输入的 gift card codes（jsonb string[]）。 */
+  updateGiftCardCodes(id: string, codes: string[]): Promise<void>;
   softDelete(id: string): Promise<void>;
   restore(id: string): Promise<void>;
   listLineItems(cartId: string): Promise<CartLineItemDTO[]>;
@@ -195,6 +200,8 @@ export interface ICartModuleService {
   setShippingMethod(cartId: string, input: SetShippingInput): Promise<CartDetailDTO>;
   /** 设置顾客输入的 voucher codes（覆盖式；只传凭证，金额由后端算）。 */
   setVoucherCodes(cartId: string, codes: string[]): Promise<CartDetailDTO>;
+  /** 设置顾客输入的 gift card codes（覆盖式；只传凭证，抵扣由后端算）。 */
+  setGiftCardCodes(cartId: string, codes: string[]): Promise<CartDetailDTO>;
   completeCart(cartId: string): Promise<void>;
   restoreCart(cartId: string): Promise<void>;
 }

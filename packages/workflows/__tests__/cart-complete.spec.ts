@@ -16,11 +16,13 @@ interface Store {
   reservations: Map<string, number>;
   consumedCodes: string[];
   releasedCodes: string[];
+  consumedGiftCards: Array<{ code: string; amountMinor: bigint; orderId: string }>;
+  releasedGiftCards: Array<{ code: string; amountMinor: bigint; orderId: string }>;
 }
 
 function makePorts(
   store: Store,
-  opts: { failPayment?: boolean; failVoucher?: boolean } = {},
+  opts: { failPayment?: boolean; failVoucher?: boolean; failGiftCard?: boolean } = {},
 ) {
   let counter = 0;
   const order: OrderPort = {
@@ -60,6 +62,13 @@ function makePorts(
     },
     async releaseVoucherCodes(codes) {
       store.releasedCodes.push(...codes);
+    },
+    async consumeGiftCards(entries, orderId) {
+      if (opts.failGiftCard) throw new Error("gift card insufficient balance");
+      store.consumedGiftCards.push(...entries.map((e) => ({ ...e, orderId })));
+    },
+    async releaseGiftCards(entries, orderId) {
+      store.releasedGiftCards.push(...entries.map((e) => ({ ...e, orderId })));
     },
   };
   return { order, inventory, payment, promotion };
@@ -112,7 +121,7 @@ const input: CartCompleteInput = {
 
 describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   it("happy path：订单 + 预留落库，workflow completed", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
     const ports = makePorts(store);
     const { engine } = makeEngine(ports);
 
@@ -123,7 +132,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("第三步（支付集合）失败 → 订单行与预留双回滚到基线", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
     const ports = makePorts(store, { failPayment: true });
     const { engine } = makeEngine(ports);
 
@@ -137,7 +146,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("幂等重放：同 idempotencyKey 不重复建单", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
     const ports = makePorts(store);
     const { engine } = makeEngine(ports);
 
@@ -148,7 +157,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("discountMinor + discounts 从 input 透传到 OrderPort.createOrder", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
     const ports = makePorts(store);
     const { engine } = makeEngine(ports);
 
@@ -168,7 +177,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("voucher 命中：下单成功后 consumeVoucherCodes 核销券码", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
     const ports = makePorts(store);
     const { engine } = makeEngine(ports);
 
@@ -183,7 +192,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("voucher 核销失败（并发超限）→ 订单与预留回滚，无已核销码", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
     const ports = makePorts(store, { failVoucher: true });
     const { engine } = makeEngine(ports);
 
@@ -202,7 +211,7 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
   });
 
   it("voucher 核销成功后后续步骤失败 → releaseVoucherCodes 回退 used", async () => {
-    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [] };
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
     const ports = makePorts(store, { failPayment: true });
     const { engine } = makeEngine(ports);
 
@@ -217,6 +226,61 @@ describe("cart-complete workflow（架构 §5.5 / §5.8 L2）", () => {
 
     expect(store.consumedCodes).toEqual(["SAVE20"]);
     expect(store.releasedCodes).toEqual(["SAVE20"]);
+    expect(store.orders.size).toBe(0);
+    expect(store.reservations.size).toBe(0);
+  });
+
+  it("gift card 命中：下单成功后 consumeGiftCards 扣减余额（带 orderId）", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
+    const ports = makePorts(store);
+    const { engine } = makeEngine(ports);
+
+    const withGiftCard: CartCompleteInput = {
+      ...input,
+      discountMinor: 10000n,
+      discounts: [{ type: "gift_card", promotionId: "gcard_1", code: "GC-100", amountMinor: 10000n }],
+    };
+    const r = await engine.run(cartCompleteWorkflow, withGiftCard, { idempotencyKey: "k-gc" });
+    expect(store.consumedGiftCards).toEqual([{ code: "GC-100", amountMinor: 10000n, orderId: r.result.orderId }]);
+    expect(store.releasedGiftCards).toEqual([]);
+  });
+
+  it("gift card 扣减失败（并发余额不足）→ 订单与预留回滚", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
+    const ports = makePorts(store, { failGiftCard: true });
+    const { engine } = makeEngine(ports);
+
+    const withGiftCard: CartCompleteInput = {
+      ...input,
+      discountMinor: 10000n,
+      discounts: [{ type: "gift_card", promotionId: "gcard_1", code: "GC-100", amountMinor: 10000n }],
+    };
+    await expect(
+      engine.run(cartCompleteWorkflow, withGiftCard, { idempotencyKey: "k-gc-fail" }),
+    ).rejects.toThrow(WorkflowFailedError);
+
+    // createOrderStep 已成功 → 补偿 cancelOrder；reserveInventoryStep 尚未执行
+    expect(store.orders.size).toBe(0);
+    expect(store.reservations.size).toBe(0);
+  });
+
+  it("gift card 扣减成功后后续步骤失败 → releaseGiftCards 加回余额", async () => {
+    const store: Store = { orders: new Map(), reservations: new Map(), consumedCodes: [], releasedCodes: [], consumedGiftCards: [], releasedGiftCards: [] };
+    const ports = makePorts(store, { failPayment: true });
+    const { engine } = makeEngine(ports);
+
+    const withGiftCard: CartCompleteInput = {
+      ...input,
+      discountMinor: 10000n,
+      discounts: [{ type: "gift_card", promotionId: "gcard_1", code: "GC-100", amountMinor: 10000n }],
+    };
+    await expect(
+      engine.run(cartCompleteWorkflow, withGiftCard, { idempotencyKey: "k-gc-payfail" }),
+    ).rejects.toThrow(WorkflowFailedError);
+
+    expect(store.consumedGiftCards).toHaveLength(1);
+    expect(store.releasedGiftCards).toHaveLength(1);
+    expect(store.releasedGiftCards[0]?.code).toBe("GC-100");
     expect(store.orders.size).toBe(0);
     expect(store.reservations.size).toBe(0);
   });

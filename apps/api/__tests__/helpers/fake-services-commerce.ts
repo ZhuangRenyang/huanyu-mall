@@ -12,6 +12,11 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   const voucherCodes = new Map<string, Record<string, unknown>>();
   let vCounter = 0;
   let vcCounter = 0;
+  // —— 礼品卡内存替身（阶段 5 后台管理路由用）——
+  const giftCards = new Map<string, Record<string, unknown>>();
+  const giftCardEvents = new Map<string, Record<string, unknown>[]>();
+  let gcCounter = 0;
+  let gceCounter = 0;
   const promotion = {
     listVouchers: async ({ limit, offset }: { limit: number; offset: number }) => {
       const items = [...vouchers.values()].slice(offset, offset + limit);
@@ -78,6 +83,95 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     },
     consumeVoucherCodes: async () => {},
     releaseVoucherCodes: async () => {},
+    // —— gift card（阶段 5）——
+    listGiftCards: async ({ limit, offset }: { limit: number; offset: number }) => {
+      const items = [...giftCards.values()].slice(offset, offset + limit);
+      return { items, count: giftCards.size };
+    },
+    createGiftCard: async (input: Record<string, unknown>) => {
+      const id = `gcard_${++gcCounter}`;
+      const card = {
+        id,
+        code: input.code,
+        currency: input.currency,
+        initial_balance: Number(input.initialBalance),
+        current_balance: Number(input.initialBalance),
+        is_active: true,
+        expires_at: input.expiresAt ?? null,
+        assigned_to: input.assignedTo ?? null,
+      };
+      giftCards.set(id, card);
+      const events = giftCardEvents.get(id) ?? [];
+      events.push({
+        id: `gcevt_${++gceCounter}`,
+        gift_card_id: id,
+        type: "issued",
+        amount: Number(input.initialBalance),
+        order_id: null,
+        parameters: { currency: input.currency },
+        created_at: new Date().toISOString(),
+      });
+      giftCardEvents.set(id, events);
+      return card;
+    },
+    retrieveGiftCard: async (id: string) => {
+      const g = giftCards.get(id);
+      if (!g) throw errors.notFound("gift card not found");
+      return g;
+    },
+    retrieveGiftCardByCode: async (code: string) => {
+      for (const g of giftCards.values()) if (g.code === code) return g;
+      return null;
+    },
+    updateGiftCard: async (id: string, patch: Record<string, unknown>) => {
+      const cur = giftCards.get(id);
+      if (!cur) throw errors.notFound("gift card not found");
+      const next: Record<string, unknown> = { ...cur };
+      if (patch.expiresAt !== undefined) next.expires_at = patch.expiresAt;
+      if (patch.assignedTo !== undefined) next.assigned_to = patch.assignedTo;
+      giftCards.set(id, next);
+      return next;
+    },
+    setGiftCardActive: async (id: string, isActive: boolean) => {
+      const cur = giftCards.get(id);
+      if (!cur) throw errors.notFound("gift card not found");
+      const next: Record<string, unknown> = { ...cur, is_active: isActive };
+      giftCards.set(id, next);
+      const events = giftCardEvents.get(id) ?? [];
+      events.push({
+        id: `gcevt_${++gceCounter}`,
+        gift_card_id: id,
+        type: isActive ? "activated" : "deactivated",
+        amount: 0,
+        order_id: null,
+        parameters: null,
+        created_at: new Date().toISOString(),
+      });
+      giftCardEvents.set(id, events);
+      return next;
+    },
+    adjustGiftCardBalance: async (id: string, deltaMinor: bigint, parameters?: Record<string, unknown> | null) => {
+      const cur = giftCards.get(id);
+      if (!cur) throw errors.notFound("gift card not found");
+      const delta = Number(deltaMinor);
+      const next: Record<string, unknown> = { ...cur, current_balance: Number(cur.current_balance) + delta };
+      giftCards.set(id, next);
+      const events = giftCardEvents.get(id) ?? [];
+      events.push({
+        id: `gcevt_${++gceCounter}`,
+        gift_card_id: id,
+        type: "balance_adjusted",
+        amount: delta,
+        order_id: null,
+        parameters: parameters ?? null,
+        created_at: new Date().toISOString(),
+      });
+      giftCardEvents.set(id, events);
+      return next;
+    },
+    listGiftCardEvents: async (id: string) => giftCardEvents.get(id) ?? [],
+    consumeGiftCards: async () => {},
+    releaseGiftCards: async () => {},
   };
 
   const orderItem = {
@@ -246,6 +340,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         email: "a@b.com",
         status: "open",
         voucher_codes: [],
+        gift_card_codes: [],
         items: [
           {
             id: "cli_1",
@@ -279,6 +374,40 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         email: "a@b.com",
         status: "open",
         voucher_codes: codes,
+        gift_card_codes: [],
+        items: [
+          {
+            id: "cli_1",
+            cart_id: "cart_1",
+            variant_id: "var_1",
+            product_id: "prod_1",
+            title: "T恤",
+            quantity: 1,
+            unit_price_minor: 9900n,
+            currency_code: "CNY",
+            discount_minor: 0n,
+          },
+        ],
+        shipping_method: null,
+        totals: {
+          subtotal_minor: 9900n,
+          shipping_minor: 0n,
+          tax_minor: 0n,
+          total_minor: 9900n,
+          discount_minor: 0n,
+        },
+        discounts: [],
+      }),
+      setGiftCardCodes: async (_id: string, codes: string[]) => ({
+        id: "cart_1",
+        channel_id: "chn_cn",
+        region_id: "reg_1",
+        currency_code: "CNY",
+        customer_id: null,
+        email: "a@b.com",
+        status: "open",
+        voucher_codes: [],
+        gift_card_codes: codes,
         items: [
           {
             id: "cli_1",

@@ -174,6 +174,8 @@ export interface ComputeDiscountsResult {
   /** 命中的 Voucher 明细（多码命中取折扣最大的一条）。供下单侧固化进 order_discount 留痕（type='voucher'）。 */
   voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
   giftCardAppliedMinor: bigint;
+  /** 命中的 Gift Card 明细（多卡按顺序累加抵扣，封顶到剩余应付）。供下单侧固化 order_discount 留痕（type='gift_card'）并扣减余额。 */
+  giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
 }
 
 // —— Repository（drizzle 实现 + InMemory 测试桩）——
@@ -234,6 +236,14 @@ export interface PromotionRepository {
   listGiftCards(q: ListQuery): Promise<{ items: GiftCardDTO[]; count: number }>;
   updateGiftCard(id: string, patch: UpdateGiftCardInput): Promise<GiftCardDTO | null>;
   softDeleteGiftCard(id: string): Promise<void>;
+  /**
+   * 原子扣减礼品卡余额（行锁 + 事务，防并发套现，资金安全硬约束 3）。
+   * 事务内 `SELECT ... FOR UPDATE` 锁行，余额不足返回 insufficient:true（不扣），
+   * 否则 `current_balance = current_balance - amount`，受 DB CHECK 约束 current_balance>=0 兜底。
+   */
+  deductGiftCardBalance(cardId: string, amountMinor: bigint): Promise<{ balance: bigint; insufficient: boolean }>;
+  /** 原子加回余额（workflow 补偿用）。 */
+  refundGiftCardBalance(cardId: string, amountMinor: bigint): Promise<void>;
 
   // gift_card_event
   insertGiftCardEvent(input: {
@@ -287,6 +297,18 @@ export interface IPromotionModuleService {
   listGiftCards(q: ListQuery): Promise<{ items: GiftCardDTO[]; count: number }>;
   updateGiftCard(id: string, patch: UpdateGiftCardInput): Promise<GiftCardDTO>;
   deleteGiftCard(id: string): Promise<void>;
+  /** 启停礼品卡（写 activated/deactivated 流水）。 */
+  setGiftCardActive(id: string, isActive: boolean): Promise<GiftCardDTO>;
+  /** 手动调账：正=加余额，负=减余额（原子扣减，不足抛 giftCardInsufficientBalance），写 balance_adjusted 流水。 */
+  adjustGiftCardBalance(
+    id: string,
+    deltaMinor: bigint,
+    parameters?: Record<string, unknown> | null,
+  ): Promise<GiftCardDTO>;
+  /** 下单成功时原子扣减多张礼品卡余额 + 写 used_in_order 流水；余额不足抛 giftCardInsufficientBalance 触发整单回滚。 */
+  consumeGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
+  /** workflow 补偿：加回余额 + 写 refunded_in_order 流水。 */
+  releaseGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
 
   // gift_card_event
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;

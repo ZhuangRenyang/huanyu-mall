@@ -15,6 +15,8 @@ export const cart = pgTable(
     metadata: jsonb("metadata"),
     /** 顾客输入的 voucher codes（string[]），持久化，刷新不丢；金额由 promotion 侧读时算。 */
     voucherCodes: jsonb("voucher_codes"),
+    /** 顾客输入的 gift card codes（string[]），持久化，刷新不丢；抵扣金额由 promotion 侧读时算。 */
+    giftCardCodes: jsonb("gift_card_codes"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

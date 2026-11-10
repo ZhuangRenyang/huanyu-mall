@@ -1,5 +1,6 @@
 import { prefixedUlid } from "@mall/core";
 import {
+  giftCardInsufficientBalance,
   giftCardNotFound,
   promotionNotFound,
   promotionRuleNotFound,
@@ -154,7 +155,18 @@ export class PromotionService implements IPromotionModuleService {
 
   // —— gift_card ——
   async createGiftCard(input: CreateGiftCardInput): Promise<GiftCardDTO> {
-    return this.repo.insertGiftCard({ ...input, id: prefixedUlid("gcard") });
+    const card = await this.repo.insertGiftCard({ ...input, id: prefixedUlid("gcard") });
+    // 流水账本只追加：初始余额写 issued 流水（event sourcing，current_balance 是流水汇总缓存，硬约束 6）。
+    if (card.initial_balance > 0n) {
+      await this.repo.insertGiftCardEvent({
+        id: prefixedUlid("gcevt"),
+        giftCardId: card.id,
+        type: "issued",
+        amount: card.initial_balance,
+        parameters: { currency: card.currency },
+      });
+    }
+    return card;
   }
 
   async retrieveGiftCard(id: string): Promise<GiftCardDTO> {
@@ -182,6 +194,80 @@ export class PromotionService implements IPromotionModuleService {
   async deleteGiftCard(id: string): Promise<void> {
     await this.retrieveGiftCard(id);
     await this.repo.softDeleteGiftCard(id);
+  }
+
+  async setGiftCardActive(id: string, isActive: boolean): Promise<GiftCardDTO> {
+    await this.retrieveGiftCard(id);
+    const updated = await this.repo.updateGiftCard(id, { isActive });
+    await this.repo.insertGiftCardEvent({
+      id: prefixedUlid("gcevt"),
+      giftCardId: id,
+      type: isActive ? "activated" : "deactivated",
+      amount: 0n,
+    });
+    return updated!;
+  }
+
+  async adjustGiftCardBalance(
+    id: string,
+    deltaMinor: bigint,
+    parameters?: Record<string, unknown> | null,
+  ): Promise<GiftCardDTO> {
+    await this.retrieveGiftCard(id);
+    if (deltaMinor > 0n) {
+      await this.repo.refundGiftCardBalance(id, deltaMinor);
+    } else if (deltaMinor < 0n) {
+      const res = await this.repo.deductGiftCardBalance(id, -deltaMinor);
+      if (res.insufficient) throw giftCardInsufficientBalance(id);
+    }
+    await this.repo.insertGiftCardEvent({
+      id: prefixedUlid("gcevt"),
+      giftCardId: id,
+      type: "balance_adjusted",
+      amount: deltaMinor,
+      parameters: parameters ?? null,
+    });
+    return this.retrieveGiftCard(id);
+  }
+
+  // —— gift card 核销（阶段 5：下单成功时原子扣减余额 + 流水；补偿加回）——
+  async consumeGiftCards(
+    entries: Array<{ code: string; amountMinor: bigint }>,
+    orderId: string,
+  ): Promise<void> {
+    for (const e of entries) {
+      const card = await this.repo.findGiftCardByCode(e.code);
+      if (!card) throw giftCardNotFound(e.code);
+      const res = await this.repo.deductGiftCardBalance(card.id, e.amountMinor);
+      if (res.insufficient) throw giftCardInsufficientBalance(e.code);
+      await this.repo.insertGiftCardEvent({
+        id: prefixedUlid("gcevt"),
+        giftCardId: card.id,
+        type: "used_in_order",
+        amount: -e.amountMinor,
+        orderId,
+        parameters: { code: e.code },
+      });
+    }
+  }
+
+  async releaseGiftCards(
+    entries: Array<{ code: string; amountMinor: bigint }>,
+    orderId: string,
+  ): Promise<void> {
+    for (const e of entries) {
+      const card = await this.repo.findGiftCardByCode(e.code);
+      if (!card) continue; // 补偿幂等：卡已删则跳过
+      await this.repo.refundGiftCardBalance(card.id, e.amountMinor);
+      await this.repo.insertGiftCardEvent({
+        id: prefixedUlid("gcevt"),
+        giftCardId: card.id,
+        type: "refunded_in_order",
+        amount: e.amountMinor,
+        orderId,
+        parameters: { code: e.code },
+      });
+    }
   }
 
   // —— gift_card_event ——
@@ -295,13 +381,40 @@ export class PromotionService implements IPromotionModuleService {
       }
     }
 
+    // —— Gift Card（阶段 5）：余额抵扣，多卡按顺序累加，封顶到剩余应付（ADR-012 §6 / 硬约束 4）。——
+    // 剩余应付 = 小计 + 运费 - (行级折扣 + 订单促销折扣 + voucher 折扣)；gift card 抵扣不能超过剩余应付。
+    const lineDiscountMinor = lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+    let remainingMinor =
+      ctx.subtotalMinor + ctx.shippingMinor - lineDiscountMinor - orderDiscountMinor - voucherDiscountMinor;
+    if (remainingMinor < 0n) remainingMinor = 0n;
+
+    let giftCardAppliedMinor = 0n;
+    const giftCardDiscounts: ComputeDiscountsResult["giftCardDiscounts"] = [];
+    for (const code of ctx.giftCardCodes) {
+      if (remainingMinor <= 0n) break;
+      const card = await this.repo.findGiftCardByCode(code);
+      if (!card) continue; // 卡码不存在 → 静默跳过（预览语义，不抛错）
+      if (!card.is_active) continue; // 停用即时生效（硬约束 6）
+      if (card.expires_at && card.expires_at.getTime() < now.getTime()) continue;
+      if (card.currency !== ctx.currencyCode) continue; // 币种必须匹配（硬约束 5）
+      // 防套现：卡若绑定指定客户，必须与当前下单客户一致（硬约束 5）。
+      if (card.assigned_to && card.assigned_to !== (ctx.customerId ?? null)) continue;
+
+      const deductible = card.current_balance > remainingMinor ? remainingMinor : card.current_balance;
+      if (deductible <= 0n) continue;
+      giftCardDiscounts.push({ giftCardId: card.id, code: card.code, amountMinor: deductible });
+      giftCardAppliedMinor += deductible;
+      remainingMinor -= deductible;
+    }
+
     return {
       lineAdjustments,
       orderDiscountMinor,
       orderDiscounts,
       voucherDiscountMinor,
       voucherDiscounts,
-      giftCardAppliedMinor: 0n,
+      giftCardAppliedMinor,
+      giftCardDiscounts,
     };
   }
 }

@@ -20,6 +20,10 @@ const shippingMethodBody = z.object({
 const voucherCodesBody = z.object({
   codes: z.array(z.string().min(1)).max(50),
 });
+/** 输礼品卡码：只收卡码凭证（string[]），抵扣金额由后端 computeDiscounts 算（铁律 13，防客户端传价）。 */
+const giftCardCodesBody = z.object({
+  codes: z.array(z.string().min(1)).max(50),
+});
 
 function mapLineItem(li: CartLineItemDTO) {
   return {
@@ -47,6 +51,7 @@ export function mapCart(cart: CartDetailDTO) {
     email: cart.email,
     status: cart.status,
     voucher_codes: cart.voucher_codes,
+    gift_card_codes: cart.gift_card_codes,
     line_items: cart.items.map(mapLineItem),
     shipping_method: cart.shipping_method,
     totals: cart.totals,
@@ -135,6 +140,18 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof voucherCodesBody>;
       const cart = await deps.services.cart.setVoucherCodes(id, b.codes);
+      reply.ok(mapCart(cart));
+    },
+  );
+
+  // 输礼品卡码/清码：覆盖式设置（阶段 5，只传凭证，抵扣由后端算）。
+  app.put(
+    "/api/v1/store/carts/:id/gift-card-codes",
+    { schema: { body: giftCardCodesBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof giftCardCodesBody>;
+      const cart = await deps.services.cart.setGiftCardCodes(id, b.codes);
       reply.ok(mapCart(cart));
     },
   );

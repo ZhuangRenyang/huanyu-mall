@@ -307,6 +307,123 @@ describe("API routes（fastify.inject）", () => {
     });
   });
 
+  it("15. gift card 后台管理：建卡(后端生成码)/列表/详情/启停/调账/流水，全部 RBAC + 审计", async () => {
+    await withApp(async (app, deps) => {
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/auth/login",
+        headers: { "content-type": "application/json" },
+        payload: { email: "admin@x.com", password: "pw123456" },
+      });
+      expect(login.statusCode).toBe(200);
+
+      // 未带 JWT → 401
+      const noAuth = await app.inject({ method: "GET", url: "/api/v1/admin/promotions/gift-cards" });
+      expect(noAuth.statusCode).toBe(401);
+
+      // staff → 403（无 settings 权限）
+      const staff = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/promotions/gift-cards",
+        headers: { authorization: "Bearer staff" },
+      });
+      expect(staff.statusCode).toBe(403);
+
+      // 建卡（后端生成高熵码）
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/promotions/gift-cards",
+        headers: { authorization: "Bearer admin", "content-type": "application/json" },
+        payload: { currency: "CNY", initial_balance: 50000 },
+      });
+      expect(create.statusCode).toBe(201);
+      const created = create.json().data;
+      expect(created.id).toBe("gcard_1");
+      expect(created.code).toMatch(/^GC-[0-9A-F]{16}$/);
+      expect(created.initial_balance).toBe(50000);
+      expect(created.current_balance).toBe(50000);
+
+      // 详情
+      const detail = await app.inject({
+        method: "GET",
+        url: `/api/v1/admin/promotions/gift-cards/${created.id}`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json().data.currency).toBe("CNY");
+
+      // 更新（只改有效期/绑定）
+      const update = await app.inject({
+        method: "PUT",
+        url: `/api/v1/admin/promotions/gift-cards/${created.id}`,
+        headers: { authorization: "Bearer admin", "content-type": "application/json" },
+        payload: { assigned_to: "cust_1" },
+      });
+      expect(update.statusCode).toBe(200);
+      expect(update.json().data.assigned_to).toBe("cust_1");
+
+      // 停用/启用
+      const disable = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/promotions/gift-cards/${created.id}/disable`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(disable.statusCode).toBe(200);
+      expect(disable.json().data.is_active).toBe(false);
+      const enable = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/promotions/gift-cards/${created.id}/enable`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(enable.statusCode).toBe(200);
+      expect(enable.json().data.is_active).toBe(true);
+
+      // 手动调账（加 5000）
+      const adjust = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/promotions/gift-cards/${created.id}/adjust`,
+        headers: { authorization: "Bearer admin", "content-type": "application/json" },
+        payload: { delta_minor: 5000, reason: "补偿" },
+      });
+      expect(adjust.statusCode).toBe(200);
+      expect(adjust.json().data.current_balance).toBe(55000);
+
+      // 流水：issued + deactivated + activated + balance_adjusted
+      const events = await app.inject({
+        method: "GET",
+        url: `/api/v1/admin/promotions/gift-cards/${created.id}/events`,
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(events.statusCode).toBe(200);
+      expect(events.json().data.count).toBe(4);
+
+      // 列表
+      const list = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/promotions/gift-cards?limit=20&offset=0",
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(list.statusCode).toBe(200);
+      expect(list.json().data.count).toBe(1);
+
+      // 审计留痕：gift_card.create 已记录
+      expect(deps.auditRepo.rows.some((r) => r.action === "gift_card.create")).toBe(true);
+    });
+  });
+
+  it("16. 店面输礼品卡码：PUT gift-card-codes 返回含 gift_card_codes 的购物车", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/v1/store/carts/cart_1/gift-card-codes",
+        headers: { "content-type": "application/json" },
+        payload: { codes: ["GC-ABC"] },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.gift_card_codes).toEqual(["GC-ABC"]);
+    });
+  });
+
   it("6. limit>100 → 400；错误体含 {code,message}", async () => {
     await withApp(async (app) => {
       const res = await app.inject({ method: "GET", url: "/api/v1/store/products?limit=200&offset=0" });

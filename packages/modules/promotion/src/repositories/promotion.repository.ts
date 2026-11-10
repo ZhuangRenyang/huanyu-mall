@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "@mall/core";
-import { voucherCodeNotFound } from "../errors.js";
+import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
 import type {
   CreateGiftCardInput,
@@ -477,6 +477,49 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .update(schema.giftCard)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.giftCard.id, id));
+  }
+
+  async deductGiftCardBalance(
+    cardId: string,
+    amountMinor: bigint,
+  ): Promise<{ balance: bigint; insufficient: boolean }> {
+    /*
+     * 资金安全硬约束 3：余额扣减必须行锁 + 事务原子，不能「先查后写」产生竞态。
+     * 事务内 `SELECT ... FOR UPDATE` 锁 gift_card 行：并发下单同卡时，
+     * 后到事务阻塞在前一个事务提交后，重读到的 current_balance 已是扣减后的值，
+     * 从而保证「同一张卡不会被并发套现超扣」。
+     * 余额不足返回 insufficient:true（不扣），余额非负由 DB CHECK 约束兜底。
+     */
+    return this.db.transaction(async (tx) => {
+      const locked = await tx.execute(sql`
+        SELECT current_balance
+        FROM gift_card
+        WHERE id = ${cardId} AND deleted_at IS NULL
+        FOR UPDATE
+      `);
+      const row = locked.rows[0] as { current_balance: string | bigint } | undefined;
+      if (!row) throw giftCardNotFound(cardId);
+      const current = BigInt(row.current_balance);
+      if (current < amountMinor) {
+        return { balance: current, insufficient: true };
+      }
+      const updated = await tx.execute(sql`
+        UPDATE gift_card
+        SET current_balance = current_balance - ${amountMinor}, updated_at = now()
+        WHERE id = ${cardId}
+        RETURNING current_balance
+      `);
+      const balance = BigInt((updated.rows[0] as { current_balance: string | bigint }).current_balance);
+      return { balance, insufficient: false };
+    });
+  }
+
+  async refundGiftCardBalance(cardId: string, amountMinor: bigint): Promise<void> {
+    await this.db.execute(sql`
+      UPDATE gift_card
+      SET current_balance = current_balance + ${amountMinor}, updated_at = now()
+      WHERE id = ${cardId} AND deleted_at IS NULL
+    `);
   }
 
   // —— gift_card_event ——

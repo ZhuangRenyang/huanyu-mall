@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { voucherCodeNotFound } from "../src/errors.js";
+import { giftCardNotFound, voucherCodeNotFound } from "../src/errors.js";
 import { PromotionService } from "../src/services/promotion.service.js";
 import type {
   CreateGiftCardInput,
@@ -272,6 +272,24 @@ class InMemoryPromotionRepository implements PromotionRepository {
     this.giftCards.delete(id);
   }
 
+  async deductGiftCardBalance(
+    cardId: string,
+    amountMinor: bigint,
+  ): Promise<{ balance: bigint; insufficient: boolean }> {
+    const card = this.giftCards.get(cardId);
+    if (!card) throw giftCardNotFound(cardId);
+    if (card.current_balance < amountMinor) {
+      return { balance: card.current_balance, insufficient: true };
+    }
+    card.current_balance -= amountMinor;
+    return { balance: card.current_balance, insufficient: false };
+  }
+  async refundGiftCardBalance(cardId: string, amountMinor: bigint): Promise<void> {
+    const card = this.giftCards.get(cardId);
+    if (!card) return;
+    card.current_balance += amountMinor;
+  }
+
   async insertGiftCardEvent(input: {
     id: string;
     giftCardId: string;
@@ -373,15 +391,11 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
     const byCode = await service.retrieveGiftCardByCode("GC-XXXX-0001");
     expect(byCode.id).toBe(card.id);
 
-    await repo.insertGiftCardEvent({
-      id: "gcevt_test",
-      giftCardId: card.id,
-      type: "issued",
-      amount: 50000n,
-    });
+    // createGiftCard 自动写 issued 流水（初始余额入账，硬约束 6）。
     const events = await service.listGiftCardEvents(card.id);
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("issued");
+    expect(events[0]?.amount).toBe(50000n);
   });
 
   it("computeDiscounts：目录促销 fixed 折扣 = reward_value × quantity", async () => {
@@ -846,5 +860,156 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
 
     const disabled = await service.updateVoucherCode(found!.id, { isActive: false });
     expect(disabled.is_active).toBe(false);
+  });
+
+  // —— 阶段 5：Gift Card ——
+
+  it("computeDiscounts：gift card 抵扣不超过剩余应付（封顶，不为负）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.createGiftCard({
+      code: "GC-100",
+      currency: "CNY",
+      initialBalance: 50000n,
+    });
+
+    // 小计 19800 + 运费 800 = 20600，卡余额 50000 → 只抵 20600
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 2, unitPriceMinor: 9900n }],
+      subtotalMinor: 19800n,
+      shippingMinor: 800n,
+      voucherCodes: [],
+      giftCardCodes: ["GC-100"],
+    });
+    expect(res.giftCardAppliedMinor).toBe(20600n);
+    expect(res.giftCardDiscounts).toEqual([
+      { giftCardId: expect.any(String), code: "GC-100", amountMinor: 20600n },
+    ]);
+  });
+
+  it("computeDiscounts：多卡按顺序累加，直到剩余应付为 0", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.createGiftCard({ code: "GC-A", currency: "CNY", initialBalance: 5000n });
+    await service.createGiftCard({ code: "GC-B", currency: "CNY", initialBalance: 20000n });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 2, unitPriceMinor: 9900n }],
+      subtotalMinor: 19800n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: ["GC-A", "GC-B"],
+    });
+    // 第一张抵 5000，第二张抵剩余 14800
+    expect(res.giftCardAppliedMinor).toBe(19800n);
+    expect(res.giftCardDiscounts).toHaveLength(2);
+    expect(res.giftCardDiscounts[0]?.amountMinor).toBe(5000n);
+    expect(res.giftCardDiscounts[1]?.amountMinor).toBe(14800n);
+  });
+
+  it("computeDiscounts：停用/过期/币种不匹配/assigned_to 不匹配 均不命中", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const inactive = await service.createGiftCard({ code: "GC-OFF", currency: "CNY", initialBalance: 10000n });
+    await service.setGiftCardActive(inactive.id, false);
+    await service.createGiftCard({
+      code: "GC-OLD",
+      currency: "CNY",
+      initialBalance: 10000n,
+      expiresAt: new Date("2020-01-01"),
+    });
+    await service.createGiftCard({ code: "GC-USD", currency: "USD", initialBalance: 10000n });
+    await service.createGiftCard({ code: "GC-BOUND", currency: "CNY", initialBalance: 10000n, assignedTo: "cust_x" });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      customerId: "cust_1",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: ["GC-OFF", "GC-OLD", "GC-USD", "GC-BOUND"],
+    });
+    expect(res.giftCardAppliedMinor).toBe(0n);
+    expect(res.giftCardDiscounts).toHaveLength(0);
+  });
+
+  it("computeDiscounts：assigned_to 匹配当前客户时命中（防套现）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.createGiftCard({ code: "GC-MINE", currency: "CNY", initialBalance: 10000n, assignedTo: "cust_1" });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      customerId: "cust_1",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: ["GC-MINE"],
+    });
+    expect(res.giftCardAppliedMinor).toBe(9900n);
+  });
+
+  it("consumeGiftCards：原子扣减余额 + 写 used_in_order 流水；余额不足抛错且不扣", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const card = await service.createGiftCard({ code: "GC-DED", currency: "CNY", initialBalance: 30000n });
+
+    await service.consumeGiftCards([{ code: "GC-DED", amountMinor: 12000n }], "ord_1");
+    const after = await service.retrieveGiftCardByCode("GC-DED");
+    expect(after.current_balance).toBe(18000n);
+    const events = await service.listGiftCardEvents(card.id);
+    expect(events.some((e) => e.type === "used_in_order" && e.amount === -12000n && e.order_id === "ord_1")).toBe(true);
+
+    // 余额不足：抛 giftCardInsufficientBalance，余额不变
+    await expect(
+      service.consumeGiftCards([{ code: "GC-DED", amountMinor: 999999n }], "ord_2"),
+    ).rejects.toThrow(/insufficient balance/);
+    expect((await service.retrieveGiftCardByCode("GC-DED")).current_balance).toBe(18000n);
+  });
+
+  it("releaseGiftCards：补偿加回余额 + 写 refunded_in_order 流水", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const card = await service.createGiftCard({ code: "GC-REF", currency: "CNY", initialBalance: 30000n });
+
+    await service.consumeGiftCards([{ code: "GC-REF", amountMinor: 12000n }], "ord_1");
+    await service.releaseGiftCards([{ code: "GC-REF", amountMinor: 12000n }], "ord_1");
+    expect((await service.retrieveGiftCardByCode("GC-REF")).current_balance).toBe(30000n);
+    const events = await service.listGiftCardEvents(card.id);
+    expect(events.some((e) => e.type === "refunded_in_order" && e.amount === 12000n)).toBe(true);
+  });
+
+  it("adjustGiftCardBalance：手动调账写 balance_adjusted 流水（加/减）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const card = await service.createGiftCard({ code: "GC-ADJ", currency: "CNY", initialBalance: 10000n });
+
+    await service.adjustGiftCardBalance(card.id, 5000n, { reason: "补偿" });
+    expect((await service.retrieveGiftCard(card.id)).current_balance).toBe(15000n);
+
+    await service.adjustGiftCardBalance(card.id, -3000n, { reason: "人工扣减" });
+    expect((await service.retrieveGiftCard(card.id)).current_balance).toBe(12000n);
+
+    const events = await service.listGiftCardEvents(card.id);
+    expect(events.filter((e) => e.type === "balance_adjusted")).toHaveLength(2);
+  });
+
+  it("setGiftCardActive：启停写 activated/deactivated 流水", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const card = await service.createGiftCard({ code: "GC-TOG", currency: "CNY", initialBalance: 10000n });
+
+    await service.setGiftCardActive(card.id, false);
+    expect((await service.retrieveGiftCard(card.id)).is_active).toBe(false);
+    await service.setGiftCardActive(card.id, true);
+    expect((await service.retrieveGiftCard(card.id)).is_active).toBe(true);
+
+    const events = await service.listGiftCardEvents(card.id);
+    expect(events.some((e) => e.type === "deactivated")).toBe(true);
+    expect(events.some((e) => e.type === "activated")).toBe(true);
   });
 });
