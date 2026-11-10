@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CircleCheck, CircleX, Copy, Loader2 } from 'lucide-react';
 import { Button, IconButton, formatMoney } from '@mall/ui';
-import { demoOrder, failOrder, getOrder, peekOrder, type OrderRecord } from '@/lib/checkout';
+import { demoOrder, failOrder, getOrder, loadLiveOrder, peekOrder, type OrderRecord } from '@/lib/checkout';
+import { getApiMode } from '@/lib/api';
 import { useCart } from '@/lib/cart-store';
 
 interface PaymentResultProps {
@@ -17,7 +18,8 @@ interface PaymentResultProps {
 /** 支付结果三态（成功/处理中/失败），可重入：按 order id 幂等查询，刷新不丢。 */
 export function PaymentResult({ orderId, simulate, locale, channel }: PaymentResultProps) {
   const router = useRouter();
-  const { items: cartItems, removeItem } = useCart();
+  const live = getApiMode() === 'live';
+  const { items: cartItems, removeItem, clearCart } = useCart();
   const [order, setOrder] = useState<OrderRecord | null>(null);
   const [phase, setPhase] = useState<'loading' | 'ready' | 'notfound'>('loading');
   const [copied, setCopied] = useState(false);
@@ -25,6 +27,19 @@ export function PaymentResult({ orderId, simulate, locale, channel }: PaymentRes
   const load = useCallback(() => {
     if (!orderId) {
       setPhase('notfound');
+      return;
+    }
+    if (live) {
+      // live：以后端订单为准（支付商回调是异步的，状态靠轮询推进）。
+      void (async () => {
+        const found = await loadLiveOrder(orderId);
+        if (found) {
+          setOrder(found);
+          setPhase('ready');
+        } else {
+          setPhase('notfound');
+        }
+      })();
       return;
     }
     if (simulate === 'failed') {
@@ -47,7 +62,7 @@ export function PaymentResult({ orderId, simulate, locale, channel }: PaymentRes
     } else {
       setPhase('notfound');
     }
-  }, [orderId, simulate]);
+  }, [orderId, simulate, live]);
 
   useEffect(() => {
     load();
@@ -63,10 +78,17 @@ export function PaymentResult({ orderId, simulate, locale, channel }: PaymentRes
   }, [status, simulate, load]);
 
   // 支付成功后清空购物车（幂等；空车时无副作用）
+  //
+  // live 模式必须整车丢弃（clearCart），而不是逐行删：后端下单后购物车已被软删除，
+  // 留着旧 cartId 会让下一单复用同一个幂等键前缀、拿回上一笔订单。
   useEffect(() => {
     if (status !== 'paid') return;
+    if (live) {
+      clearCart();
+      return;
+    }
     for (const item of cartItems) removeItem(item.id);
-  }, [status, cartItems, removeItem]);
+  }, [status, live, cartItems, removeItem, clearCart]);
 
   const copyId = async () => {
     try {
@@ -125,7 +147,10 @@ export function PaymentResult({ orderId, simulate, locale, channel }: PaymentRes
           <p className="tabular mt-4 text-center text-display text-foreground">{amount}</p>
           <p className="mt-2 text-center text-sm text-muted-foreground">预计 1–2 个工作日内发货，发货后可在订单中查看物流</p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-            <Button size="lg" onClick={() => router.push(`/${locale}/${channel}/orders`)}>
+            <Button
+              size="lg"
+              onClick={() => router.push(`/${locale}/${channel}/orders?order=${order.id}`)}
+            >
               查看订单
             </Button>
             <Button size="lg" variant="secondary" onClick={() => router.push(`/${locale}/${channel}/products`)}>

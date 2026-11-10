@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation';
 import { PackageSearch, Search } from 'lucide-react';
 import { Badge, Button, EmptyState, Skeleton, formatMoney } from '@mall/ui';
 import { TextField } from '@/components/form-field';
-import { ORDER_STATUS_META, findOrder, findOrderByIdentity, formatDateTime, listOrders, type OrderView } from '@/lib/orders';
+import { ORDER_STATUS_META, findOrder, findOrderByIdentity, formatDateTime, listOrders, orderRecordToView, type OrderView } from '@/lib/orders';
+import { getApiMode } from '@/lib/api';
+import { loadLiveOrder } from '@/lib/checkout';
 import { OrderDetail } from './order-detail';
 
 export function OrdersView({ orderId, locale, channel }: { orderId?: string; locale: string; channel: string }) {
   const router = useRouter();
   const base = `/${locale}/${channel}`;
+  const live = getApiMode() === 'live';
   const [mounted, setMounted] = useState(false);
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [detail, setDetail] = useState<OrderView | null>(null);
@@ -21,8 +24,19 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
   useEffect(() => {
     setMounted(true);
     setOrders(listOrders());
-    setDetail(orderId ? findOrder(orderId) : null);
-  }, [orderId]);
+    if (!orderId) {
+      setDetail(null);
+      return;
+    }
+    if (!live) {
+      setDetail(findOrder(orderId));
+      return;
+    }
+    // live 模式：订单在后端，按单号查（游客单号 + 后端订单号都能查到）。
+    void loadLiveOrder(orderId).then((record) => {
+      setDetail(record ? orderRecordToView(record) : null);
+    });
+  }, [orderId, live]);
 
   const onQuery = () => {
     const res = findOrderByIdentity(queryId.trim(), identity.trim());

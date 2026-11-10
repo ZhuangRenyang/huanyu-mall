@@ -1,19 +1,30 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { Button, IconButton, Skeleton, formatMoney } from '@mall/ui';
 import { useCart } from '@/lib/cart-store';
+import { getApiMode } from '@/lib/api';
+import { getLiveCartId, markCartOrdered, prepareCartForOrder, withLiveCartLock } from '@/lib/live-cart';
 import {
   CHECKOUT_STEPS,
   PAYMENT_PROVIDERS,
   SHIPPING_OPTIONS,
   createOrder,
+  cartFingerprint,
+  describeError,
   emptyForm,
+  loadLivePaymentProviders,
+  loadLiveShippingOptions,
+  resolvePaymentLaunch,
+  savePendingPayment,
+  submitLiveCheckout,
   validateStep,
   type CheckoutErrors,
   type CheckoutForm,
+  type PaymentProviderView,
+  type ShippingOptionView,
 } from '@/lib/checkout';
 import { CheckoutStepper } from './checkout-stepper';
 import { OrderSummary } from './order-summary';
@@ -27,6 +38,7 @@ const DRAFT_KEY = 'checkout:draft';
 export function CheckoutFlow({ locale, channel }: { locale: string; channel: string }) {
   const router = useRouter();
   const { items, subtotal, hydrated } = useCart();
+  const live = getApiMode() === 'live';
 
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<CheckoutForm>(emptyForm);
@@ -34,6 +46,13 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const [stepError, setStepError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
+  const [shippingOptions, setShippingOptions] = useState<ShippingOptionView[]>(
+    live ? [] : SHIPPING_OPTIONS,
+  );
+  const [paymentProviders, setPaymentProviders] = useState<PaymentProviderView[]>(
+    live ? [] : PAYMENT_PROVIDERS,
+  );
+  const [optionsLoading, setOptionsLoading] = useState(live);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   // 回填草稿（返回/刷新不丢）
@@ -60,6 +79,42 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     }
   }, [form, step, draftLoaded]);
 
+  // live 模式：配送方式与支付方式都以后端为准（前端不许硬编码）。
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    void (async () => {
+      setOptionsLoading(true);
+      try {
+        const cartId = getLiveCartId();
+        const [ship, pay] = await Promise.all([
+          loadLiveShippingOptions(form.country, cartId),
+          loadLivePaymentProviders(cartId),
+        ]);
+        if (cancelled) return;
+        setShippingOptions(ship);
+        setPaymentProviders(pay);
+        // 草稿里可能存着已下线的方案/渠道，回退到第一个可用项。
+        setForm((f) => ({
+          ...f,
+          shippingOptionId: ship.some((o) => o.id === f.shippingOptionId)
+            ? f.shippingOptionId
+            : (ship[0]?.id ?? ''),
+          paymentProviderId: pay.some((p) => p.id === f.paymentProviderId)
+            ? f.paymentProviderId
+            : (pay[0]?.id ?? ''),
+        }));
+      } catch (err) {
+        if (!cancelled) setStepError(describeError(err));
+      } finally {
+        if (!cancelled) setOptionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [live, form.country]);
+
   // 步骤切换 → 焦点落新步标题（h2 tabindex=-1）
   useEffect(() => {
     headingRef.current?.focus();
@@ -75,11 +130,147 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     setErrors((e) => ({ ...e, [key]: errs[key] }));
   };
 
-  const selectedShipping = SHIPPING_OPTIONS.find((o) => o.id === form.shippingOptionId);
+  const selectedShipping = shippingOptions.find((o) => o.id === form.shippingOptionId);
   const shippingMinor = selectedShipping?.amountMinor ?? 0;
   const taxMinor = 0;
   const totalMinor = subtotal.amountMinor + shippingMinor + taxMinor;
   const currency = subtotal.currencyCode;
+
+  /**
+   * 提交订单并发起支付（live 模式）。
+   *
+   * 调用顺序不能换：
+   * 1. setShippingMethod —— 运费方案要落进购物车，下单时才会算进订单金额；
+   * 2. completeCart —— 后端按购物车生成订单与支付集合；
+   * 3. createPaymentSession —— 必须传 cart_id，后端据此复用第 2 步的支付集合
+   *    （带正确金额与 order_id），否则支付成功后订单永远收不到 paid。
+   *
+   * 整段在「购物车锁」里跑：加购写操作必须与下单互斥，否则「刚加购就结算」
+   * 会在购物车行还没写进去时就完成下单快照，顾客看到的金额和实际扣的不一样。
+   */
+  const submitLive = useCallback(async () => {
+    // 购物车内容指纹：决定「复用这辆车重试」还是「换辆车出一笔新单」，
+    // 也是下单幂等键的一部分（连点两次 → 同一个键 → 后端重放同一笔订单）。
+    const lines = items.map((i) => ({ id: i.id, quantity: i.quantity }));
+    const fingerprint = cartFingerprint(lines, form.shippingOptionId, form.email);
+
+    const { order, session } = await withLiveCartLock(async () => {
+      // 下单前把购物车整理成「可下单」状态（邮箱要对上 / 内容变了要换车）。
+      const cartId = await prepareCartForOrder({
+        email: form.email,
+        items: lines.map((l) => ({ variantId: l.id, quantity: l.quantity })),
+        fingerprint,
+      });
+      if (!cartId) throw new Error('购物车为空，请先选购商品');
+
+      const result = await submitLiveCheckout({
+        cartId,
+        shippingOptionId: form.shippingOptionId,
+        providerId: form.paymentProviderId,
+        returnUrlFor: (orderId) =>
+          `${window.location.origin}/${locale}/${channel}/checkout/result?order=${orderId}`,
+        idempotencyKey: `checkout_${cartId}_${fingerprint}`,
+      });
+      // 记下「这辆车按此内容出过单」：重试同一内容复用这辆车，内容变了才换车。
+      markCartOrdered(fingerprint);
+      return result;
+    });
+
+    savePendingPayment({
+      orderId: order.id,
+      qrPayload: session.qrPayload,
+      amountMinor: session.amountMinor,
+      currencyCode: session.currencyCode,
+      providerId: session.providerId,
+      providerLabel:
+        paymentProviders.find((p) => p.id === form.paymentProviderId)?.label ?? '支付',
+      kind: session.kind,
+    });
+
+    const launch = resolvePaymentLaunch(session);
+    if (launch.type === 'qrcode') {
+      // 二维码形态（支付宝当面付）：跳到支付页展示二维码并轮询订单状态。
+      router.push(`/${locale}/${channel}/checkout/pay?order=${order.id}`);
+      return;
+    }
+    if (launch.type === 'redirect') {
+      // 收银台形态（PayPal）：直接跳转支付商，付完由 return_url 回到结果页。
+      window.location.href = launch.url;
+      return;
+    }
+    throw new Error(launch.message);
+  }, [
+    form.email,
+    form.shippingOptionId,
+    form.paymentProviderId,
+    items,
+    paymentProviders,
+    router,
+    locale,
+    channel,
+  ]);
+
+  const goNext = () => {
+    const errs = validateStep(step, form);
+    if (Object.keys(errs).length > 0) {
+      setErrors(errs);
+      setStepError('请完善当前步骤的必填信息');
+      return;
+    }
+    setStepError(null);
+    setErrors({});
+    if (step < 4) {
+      setStep(step + 1);
+      return;
+    }
+    // 提交：创建订单（mock）→ 跳支付结果页（mock）；live → 真下单 + 发起支付
+    setSubmitting(true);
+    if (!live) {
+      const order = createMockOrder();
+      window.setTimeout(() => {
+        router.push(`/${locale}/${channel}/checkout/result?order=${order.id}`);
+      }, 400);
+      return;
+    }
+    void (async () => {
+      try {
+        await submitLive();
+      } catch (err) {
+        setSubmitting(false);
+        setStepError(describeError(err));
+      }
+    })();
+  };
+
+  const createMockOrder = () => {
+    // mock 模式：本地造假订单（沙箱演示，不产生真实扣款）
+    return createOrder({
+      form,
+      items: items.map((i) => ({
+        title: i.title,
+        variantTitle: i.variantTitle,
+        quantity: i.quantity,
+        unitPriceMinor: i.unitPriceMinor,
+        imageUrl: i.imageUrl,
+      })),
+      subtotalMinor: subtotal.amountMinor,
+      shippingMinor,
+      taxMinor,
+      totalMinor,
+      currencyCode: currency,
+      shippingOptionName: selectedShipping?.name ?? '标准跨境专线',
+    });
+  };
+
+  const goBack = () => {
+    setStepError(null);
+    if (step > 1) setStep(step - 1);
+  };
+
+  const paymentLabel =
+    paymentProviders.find((p) => p.id === form.paymentProviderId)?.label ?? '去支付';
+  const ctaLabel = step === 4 ? `${paymentLabel} ${formatMoney(totalMinor, currency)}` : '下一步';
+  const stepProps = { form, errors, setField, onBlurField };
 
   // 回填完成前先骨架，避免把「尚未加载」误判为空车
   if (!hydrated) {
@@ -111,51 +302,6 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     );
   }
 
-  const goNext = () => {
-    const errs = validateStep(step, form);
-    if (Object.keys(errs).length > 0) {
-      setErrors(errs);
-      setStepError('请完善当前步骤的必填信息');
-      return;
-    }
-    setStepError(null);
-    setErrors({});
-    if (step < 4) {
-      setStep(step + 1);
-      return;
-    }
-    // 提交：创建订单（mock）→ 跳支付结果页
-    setSubmitting(true);
-    const order = createOrder({
-      form,
-      items: items.map((i) => ({
-        title: i.title,
-        variantTitle: i.variantTitle,
-        quantity: i.quantity,
-        unitPriceMinor: i.unitPriceMinor,
-        imageUrl: i.imageUrl,
-      })),
-      subtotalMinor: subtotal.amountMinor,
-      shippingMinor,
-      taxMinor,
-      totalMinor,
-      currencyCode: currency,
-      shippingOptionName: selectedShipping?.name ?? '标准跨境专线',
-    });
-    window.setTimeout(() => {
-      router.push(`/${locale}/${channel}/checkout/result?order=${order.id}`);
-    }, 400);
-  };
-
-  const goBack = () => {
-    setStepError(null);
-    if (step > 1) setStep(step - 1);
-  };
-
-  const paymentLabel = PAYMENT_PROVIDERS.find((p) => p.id === form.paymentProviderId)?.label ?? '去支付';
-  const ctaLabel = step === 4 ? `${paymentLabel} ${formatMoney(totalMinor, currency)}` : '下一步';
-  const stepProps = { form, errors, setField, onBlurField };
-
   return (
     <div className="mx-auto max-w-content px-4 py-6 pb-28 lg:pb-6">
       <h1 className="mb-4 text-xl md:text-2xl">结算</h1>
@@ -174,8 +320,21 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
 
           {step === 1 && <ContactStep {...stepProps} />}
           {step === 2 && <AddressStep {...stepProps} />}
-          {step === 3 && <ShippingStep {...stepProps} />}
-          {step === 4 && <PaymentStep {...stepProps} />}
+          {step === 3 && (
+            <ShippingStep
+              {...stepProps}
+              options={shippingOptions}
+              loading={optionsLoading}
+            />
+          )}
+          {step === 4 && (
+            <PaymentStep
+              {...stepProps}
+              providers={paymentProviders}
+              loading={optionsLoading}
+              live={live}
+            />
+          )}
 
           {/* 底部操作条：移动吸底，桌面内联 */}
           <div className="fixed inset-x-0 bottom-0 z-[var(--z-sticky)] flex items-center gap-3 border-t border-border bg-card px-4 py-3 pb-[calc(0.75rem+var(--safe-area-bottom))] lg:static lg:mt-6 lg:border-0 lg:bg-transparent lg:p-0">

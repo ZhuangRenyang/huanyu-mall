@@ -38,5 +38,7 @@ catalog:
   # 测试栈：Radix 的 Portal 在 SSR 下不产出节点，焦点/Escape/aria 关联必须用真实 DOM 验证
   "@testing-library/react": 16.3.3
   jsdom: 31.0.0
+  # 二维码渲染（纯 React 组件，无 node 依赖 → Next.js 客户端组件可直接用）
+  qrcode.react: 4.2.0
 
 # 允许运行 install 构建脚本的依赖（原生二进制：esbuild / msgpackr-extract）

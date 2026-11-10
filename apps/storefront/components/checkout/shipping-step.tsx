@@ -1,13 +1,20 @@
 import { formatMoney, cn } from '@mall/ui';
-import { CHECKOUT_STEPS, SHIPPING_OPTIONS, type StepProps } from '@/lib/checkout';
+import { CHECKOUT_STEPS, type ShippingOptionView, type StepProps } from '@/lib/checkout';
+
+interface ShippingStepProps extends StepProps {
+  /** 配送方式列表：live 模式取自后端，mock 模式用本地常量。 */
+  options: ShippingOptionView[];
+  /** 列表加载中（live 模式首屏）。 */
+  loading?: boolean;
+}
 
 /** 步骤 3 配送方式：单选卡片（承运商 + 时效 + 运费）。选中态 border-primary + bg-muted。 */
-export function ShippingStep({ form, errors, setField }: StepProps) {
+export function ShippingStep({ form, errors, setField, options, loading }: ShippingStepProps) {
   return (
     <fieldset className="space-y-3">
       <legend className="sr-only">{CHECKOUT_STEPS[2]}</legend>
       <div role="radiogroup" aria-label="配送方式" className="space-y-2">
-        {SHIPPING_OPTIONS.map((opt) => {
+        {options.map((opt) => {
           const checked = form.shippingOptionId === opt.id;
           return (
             <label
@@ -28,15 +35,27 @@ export function ShippingStep({ form, errors, setField }: StepProps) {
                 />
                 <span>
                   <span className="block text-sm font-medium text-foreground">{opt.name}</span>
-                  <span className="block text-xs text-muted-foreground">{opt.eta}</span>
+                  {opt.eta && <span className="block text-xs text-muted-foreground">{opt.eta}</span>}
                 </span>
               </span>
               <span className="tabular shrink-0 text-sm">
-                {opt.amountMinor === 0 ? '免运费' : formatMoney(opt.amountMinor, 'CNY')}
+                {opt.amountMinor === 0
+                  ? '免运费'
+                  : formatMoney(opt.amountMinor, opt.currencyCode)}
               </span>
             </label>
           );
         })}
+        {loading && options.length === 0 && (
+          <p className="text-sm text-muted-foreground" role="status">
+            正在加载配送方式…
+          </p>
+        )}
+        {!loading && options.length === 0 && (
+          <p className="text-sm text-destructive" role="alert">
+            当前渠道暂无可用配送方式，请联系客服。
+          </p>
+        )}
       </div>
       {errors.shippingOptionId && (
         <p className="text-sm text-destructive" role="alert">

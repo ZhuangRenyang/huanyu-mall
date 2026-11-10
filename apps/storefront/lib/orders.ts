@@ -183,6 +183,11 @@ export function findOrder(id: string): OrderView | null {
   return listOrders().find((o) => o.id === id) ?? null;
 }
 
+/** 订单记录 → 列表/详情视图（mock 与 live 共用）。 */
+export function orderRecordToView(rec: OrderRecord): OrderView {
+  return recordToView(rec);
+}
+
 /** 游客查单：单号 + 手机后四位 / 邮箱。 */
 export function findOrderByIdentity(orderId: string, identity: string): { order?: OrderView; error?: string } {
   const order = findOrder(orderId);
