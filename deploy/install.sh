@@ -157,6 +157,12 @@ MALL_DIR=${MALL_DIR}
 # CORS_ORIGINS=
 # 应用镜像标签（api / worker / migrator 共用这一个；改标签后需重新 build api）
 # IMAGE_NAME=mall-app:local
+# 店面数据源模式：mock（离线预览，无后端也能看界面）| live（真调后端，能真的下单付款）
+# ⚠️ NEXT_PUBLIC_* 是**构建期**注入（会被内联进客户端 bundle），
+#    改这个值必须重新构建镜像才生效，光重启容器无效：
+#      docker compose --env-file "$MALL_DIR/config/.env" build storefront
+#      docker compose --env-file "$MALL_DIR/config/.env" up -d storefront
+# NEXT_PUBLIC_API_MODE=live
 EOF
   chmod 0600 "$env_file"
   log "已生成 .env (0600)"
