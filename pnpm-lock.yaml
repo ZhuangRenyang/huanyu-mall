@@ -359,6 +359,9 @@ importers:
       '@mall/product':
         specifier: workspace:*
         version: link:../../packages/modules/product
+      '@mall/promotion':
+        specifier: workspace:*
+        version: link:../../packages/modules/promotion
       '@mall/region-channel':
         specifier: workspace:*
         version: link:../../packages/modules/region-channel

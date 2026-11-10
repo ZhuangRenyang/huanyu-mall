@@ -13,7 +13,6 @@ import type {
   CartLineItemDTO,
   CartRepository,
   CartServiceDeps,
-  CartShippingMethodDTO,
   CartTotals,
   CreateCartInput,
   ICartModuleService,
@@ -40,26 +39,54 @@ export class CartService implements ICartModuleService {
     /*
      * totals 在**读时动态计算**（不依赖「某次写操作后落库」的时序）：
      * 购物车小计 = Σ(单价×数量)，运费 = 已选方案的规则价，合计 = 小计+运费+税-折扣。
-     * 这是金额的唯一权威算法 —— 任何读方（运费列表 free_over、结账下单、支付集合）
-     * 拿到的都是同一份服务端算出的金额，杜绝「展示价 ≠ 实收价」。
+     * 目录促销折扣（阶段 2）也在此动态算：先按商品批量查分类，再调 promotion 端口算行级折扣，
+     * 累加进 discount_minor，并把每行折扣金额回填到 items 上（前端展示「原价 → 折后」）。
+     * 这是金额的唯一权威算法 —— 任何读方拿到的都是同一份服务端算出的金额。
      */
-    return { ...cart, totals: this.computeTotals(items, shipping), items, shipping_method: shipping };
+    const subtotal = this.subtotal(items);
+    const categoryIdsByProduct = await this.deps.product.listCategoryIdsByProducts(
+      [...new Set(items.map((i) => i.product_id))],
+    );
+    const categoryMap = new Map(categoryIdsByProduct.map((c) => [c.productId, c.categoryIds]));
+
+    const discounts = await this.deps.promotion.computeDiscounts({
+      currencyCode: cart.currency_code,
+      customerId: cart.customer_id,
+      items: items.map((i) => ({
+        id: i.id,
+        variantId: i.variant_id,
+        categoryIds: categoryMap.get(i.product_id) ?? [],
+        quantity: i.quantity,
+        unitPriceMinor: i.unit_price_minor,
+      })),
+      subtotalMinor: subtotal,
+      shippingMinor: shipping?.amount_minor ?? 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+
+    const discountByItem = new Map(discounts.lineAdjustments.map((a) => [a.itemId, a.amountMinor]));
+    // 目录促销阶段 order/voucher/giftCard 折扣恒 0；discount = 行级折扣合计。
+    const discountMinor = discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+
+    const totals: CartTotals = {
+      subtotal_minor: subtotal,
+      shipping_minor: shipping?.amount_minor ?? 0n,
+      tax_minor: 0n,
+      discount_minor: discountMinor,
+      total_minor: subtotal + (shipping?.amount_minor ?? 0n) - discountMinor,
+    };
+    const enrichedItems: CartLineItemDTO[] = items.map((i) => ({
+      ...i,
+      discount_minor: discountByItem.get(i.id) ?? 0n,
+    }));
+    return { ...cart, totals, items: enrichedItems, shipping_method: shipping };
   }
 
-  /** 金额权威计算：小计=Σ(单价×数量)，合计=小计+运费+税-折扣。税/折扣一期恒 0，结构留出。 */
-  private computeTotals(items: CartLineItemDTO[], shipping: CartShippingMethodDTO | null): CartTotals {
-    let subtotal = 0n;
-    for (const item of items) subtotal += item.unit_price_minor * BigInt(item.quantity);
-    const shippingMinor = shipping?.amount_minor ?? 0n;
-    const taxMinor = 0n;
-    const discountMinor = 0n;
-    return {
-      subtotal_minor: subtotal,
-      shipping_minor: shippingMinor,
-      tax_minor: taxMinor,
-      discount_minor: discountMinor,
-      total_minor: subtotal + shippingMinor + taxMinor - discountMinor,
-    };
+  private subtotal(items: CartLineItemDTO[]): bigint {
+    let s = 0n;
+    for (const item of items) s += item.unit_price_minor * BigInt(item.quantity);
+    return s;
   }
 
   /** 加购：客户端只传 variantId + quantity；商品标题与单价一律后端解析（铁律 13，防篡改价格）。 */

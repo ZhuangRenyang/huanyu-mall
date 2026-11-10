@@ -1,7 +1,6 @@
 import { prefixedUlid } from "@mall/core";
 import {
   giftCardNotFound,
-  promotionComputeNotImplemented,
   promotionNotFound,
   promotionRuleNotFound,
   voucherCodeNotFound,
@@ -28,10 +27,11 @@ import type {
   VoucherCodeDTO,
   VoucherDTO,
 } from "../types.js";
+import { evalPredicate } from "./predicate.js";
 
 /**
- * M-promotion 对外门面。阶段 1 只交付四类实体（promotion / voucher / gift_card + 子表）的 CRUD 骨架；
- * 折扣计算 computeDiscounts 为占位（阶段 2-5 落地，见 ADR-012 §5）。
+ * M-promotion 对外门面。阶段 1 交付四类实体（promotion / voucher / gift_card + 子表）的 CRUD 骨架；
+ * 阶段 2 落地目录促销（catalogue）行级折扣 computeDiscounts（order/voucher/gift card 阶段 3-5 落地，见 ADR-012 §5）。
  */
 export class PromotionService implements IPromotionModuleService {
   constructor(private readonly repo: PromotionRepository) {}
@@ -160,8 +160,71 @@ export class PromotionService implements IPromotionModuleService {
     return this.repo.listEventsByGiftCard(giftCardId);
   }
 
-  // —— 折扣计算（阶段 2-5 落地）——
-  async computeDiscounts(_ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
-    throw promotionComputeNotImplemented();
+  // —— 折扣计算（阶段 2：目录促销 catalogue 行级折扣；order/voucher/gift card 阶段 3-5 落地）——
+  async computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
+    const now = new Date();
+    const active = await this.repo.listActiveCataloguePromotionsWithRules(now);
+
+    const lineAdjustments: ComputeDiscountsResult["lineAdjustments"] = [];
+
+    for (const item of ctx.items) {
+      const lineSubtotalMinor = item.unitPriceMinor * BigInt(item.quantity);
+      let best: { amountMinor: bigint; promotionId: string; code: string } | null = null;
+
+      for (const { promotion, rules } of active) {
+        for (const rule of rules) {
+          const matched = evalPredicate(rule.predicate, {
+            variantId: item.variantId,
+            categoryIds: item.categoryIds,
+            subtotalMinor: ctx.subtotalMinor,
+            currencyCode: ctx.currencyCode,
+          });
+          if (!matched) continue;
+
+          const amount = computeCatalogueRuleDiscount(rule, item.unitPriceMinor, item.quantity);
+          // 同一行命中多条目录促销规则时取折扣金额最大的一条（Saleor 的做法）。
+          if (best === null || amount > best.amountMinor) {
+            best = { amountMinor: amount, promotionId: promotion.id, code: promotion.code ?? "" };
+          }
+        }
+      }
+
+      // 资金安全硬约束 3：折扣不能为负、不能超过行项小计（结果为负/超额直接归零封顶）。
+      if (best && best.amountMinor > 0n) {
+        const clamped = best.amountMinor > lineSubtotalMinor ? lineSubtotalMinor : best.amountMinor;
+        lineAdjustments.push({
+          itemId: item.id,
+          amountMinor: clamped,
+          promotionId: best.promotionId,
+          code: best.code,
+        });
+      }
+    }
+
+    return {
+      lineAdjustments,
+      orderDiscountMinor: 0n,
+      voucherDiscountMinor: 0n,
+      giftCardAppliedMinor: 0n,
+    };
   }
+}
+
+/**
+ * 目录促销单条规则的行级折扣金额（ADR-012 / 资金安全硬约束 1：全程 bigint，禁浮点）。
+ * - fixed：折扣 = reward_value（minor unit）× quantity
+ * - percentage：折扣 = round(unitPriceMinor × quantity × reward_value / 10000)，reward_value 为万分比 bps
+ * 结果恒 >= 0（reward_value/数量/单价均为非负）；封顶到行项小计由调用方负责。
+ */
+function computeCatalogueRuleDiscount(
+  rule: PromotionRuleDTO,
+  unitPriceMinor: bigint,
+  quantity: number,
+): bigint {
+  if (rule.reward_type === "fixed") {
+    return rule.reward_value * BigInt(quantity);
+  }
+  // percentage（bps）：round half up，与 core money.toMinor 的「round half away from zero」一致。
+  const numerator = unitPriceMinor * BigInt(quantity) * rule.reward_value;
+  return (numerator + 5000n) / 10000n;
 }

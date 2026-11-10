@@ -23,5 +23,5 @@
     "@types/node": "catalog:",
     "@types/pg": "catalog:"
   },
-  "mall": { "dependencies": ["product", "pricing", "region-channel", "inventory"] }
+  "mall": { "dependencies": ["product", "pricing", "region-channel", "inventory", "promotion"] }
 }

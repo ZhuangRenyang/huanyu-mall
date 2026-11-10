@@ -27,6 +27,7 @@ class InMemoryProductRepository implements ProductRepository {
   readonly values: AttributeValueDTO[] = [];
   readonly channelVisible = new Map<string, Set<string>>();
   readonly variantPriceSet = new Map<string, string>();
+  readonly categoryLinks = new Map<string, Set<string>>();
 
   async findById(id: string): Promise<ProductDTO | null> {
     return this.products.get(id) ?? null;
@@ -93,7 +94,18 @@ class InMemoryProductRepository implements ProductRepository {
     return created;
   }
   async createImages(_: string, __: CreateImageInput[]): Promise<void> {}
-  async linkCategories(): Promise<void> {}
+  async linkCategories(productId: string, categoryIds: string[]): Promise<void> {
+    const set = this.categoryLinks.get(productId) ?? new Set<string>();
+    for (const cid of categoryIds) set.add(cid);
+    this.categoryLinks.set(productId, set);
+  }
+  async listCategoryIdsByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; categoryIds: string[] }>> {
+    return productIds
+      .map((id) => ({ productId: id, categoryIds: [...(this.categoryLinks.get(id) ?? new Set<string>())] }))
+      .filter((e) => e.categoryIds.length > 0);
+  }
   async listSellableProductIds(channelId: string): Promise<string[]> {
     return [...(this.channelVisible.get(channelId) ?? new Set<string>())];
   }
@@ -205,6 +217,22 @@ describe("ProductService（M01 契约）", () => {
     expect(found).toHaveLength(2);
     expect(await service.listVariantsByIds([])).toEqual([]);
     void p;
+  });
+
+  it("listCategoryIdsByProducts 批量查商品→分类（含去重与空输入）", async () => {
+    const { repo, service } = setup();
+    const a = await service.createProduct({ title: "A", handle: "a", categoryIds: ["cat_1", "cat_2"] });
+    const b = await service.createProduct({ title: "B", handle: "b", categoryIds: ["cat_2"] });
+    const c = await service.createProduct({ title: "C", handle: "c" }); // 无分类
+
+    const res = await service.listCategoryIdsByProducts([a.id, b.id, c.id]);
+    const byId = new Map(res.map((e) => [e.productId, e.categoryIds]));
+    expect([...(byId.get(a.id) ?? [])].sort()).toEqual(["cat_1", "cat_2"]);
+    expect(byId.get(b.id)).toEqual(["cat_2"]);
+    expect(byId.has(c.id)).toBe(false); // 无分类的商品不出现在映射里
+
+    expect(await service.listCategoryIdsByProducts([])).toEqual([]);
+    void repo;
   });
 
   it("resolveSellableVariants：渠道可见 + published + price_set_id", async () => {

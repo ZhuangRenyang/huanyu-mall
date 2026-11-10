@@ -9,6 +9,7 @@ import type {
   CreateCartInput,
   PricingLookupPort,
   ProductLookupPort,
+  PromotionLookupPort,
   ResolvedLineItem,
   SetShippingInput,
   ShippingLookupPort,
@@ -69,6 +70,7 @@ class InMemoryCartRepository implements CartRepository {
       quantity: input.quantity,
       unit_price_minor: input.unitPriceMinor,
       currency_code: input.currencyCode,
+      discount_minor: 0n,
     };
     this.items.push(dto);
     return dto;
@@ -103,7 +105,10 @@ class InMemoryCartRepository implements CartRepository {
 
 /** 商品端口桩：变体 → 商品/标题。 */
 class FakeProductLookup implements ProductLookupPort {
-  constructor(private readonly status = "published") {}
+  constructor(
+    private readonly status = "published",
+    private readonly categoryIdsByProduct: Map<string, string[]> = new Map(),
+  ) {}
   async listVariantsByIds(ids: string[]) {
     return ids.map((id) => ({
       id,
@@ -112,6 +117,11 @@ class FakeProductLookup implements ProductLookupPort {
       title: "T 恤 黑色",
       status: this.status,
     }));
+  }
+  async listCategoryIdsByProducts(productIds: string[]) {
+    return productIds
+      .map((id) => ({ productId: id, categoryIds: this.categoryIdsByProduct.get(id) ?? [] }))
+      .filter((e) => e.categoryIds.length > 0);
   }
 }
 
@@ -148,13 +158,57 @@ class FakeShippingLookup implements ShippingLookupPort {
   }
 }
 
-function setup(opts: { productStatus?: string; price?: bigint | null; freeOverThreshold?: bigint | null } = {}) {
+/** 促销端口桩：目录促销行级折扣（对每行返回固定折扣金额）。 */
+class FakePromotionLookup implements PromotionLookupPort {
+  constructor(private readonly fixedDiscountMinor: bigint = 0n) {}
+  async computeDiscounts(ctx: {
+    currencyCode: string;
+    customerId?: string | null;
+    items: Array<{
+      id: string;
+      variantId: string;
+      categoryIds: string[];
+      quantity: number;
+      unitPriceMinor: bigint;
+    }>;
+    subtotalMinor: bigint;
+    shippingMinor: bigint;
+    voucherCodes: string[];
+    giftCardCodes: string[];
+  }) {
+    const lineAdjustments = ctx.items
+      .map((i) => ({
+        itemId: i.id,
+        amountMinor: this.fixedDiscountMinor,
+        promotionId: "promo_1",
+        code: "",
+      }))
+      .filter((a) => a.amountMinor > 0n);
+    return {
+      lineAdjustments,
+      orderDiscountMinor: 0n,
+      voucherDiscountMinor: 0n,
+      giftCardAppliedMinor: 0n,
+    };
+  }
+}
+
+function setup(
+  opts: {
+    productStatus?: string;
+    price?: bigint | null;
+    freeOverThreshold?: bigint | null;
+    categoryIdsByProduct?: Map<string, string[]>;
+    fixedDiscountMinor?: bigint;
+  } = {},
+) {
   const repo = new InMemoryCartRepository();
   const service = new CartService({
     repo,
-    product: new FakeProductLookup(opts.productStatus),
+    product: new FakeProductLookup(opts.productStatus, opts.categoryIdsByProduct ?? new Map()),
     pricing: new FakePricingLookup(opts.price === undefined ? 9900n : opts.price),
     shipping: new FakeShippingLookup(opts.freeOverThreshold ?? null),
+    promotion: new FakePromotionLookup(opts.fixedDiscountMinor ?? 0n),
   });
   return { repo, service };
 }
@@ -251,6 +305,32 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     expect(withShipping.shipping_method?.amount_minor).toBe(0n); // 免运费
     expect(withShipping.totals?.shipping_minor).toBe(0n);
     expect(withShipping.totals?.total_minor).toBe(9900n);
+  });
+
+  it("目录促销折扣进 totals：discount_minor 累加 + 每行折扣回填", async () => {
+    const { service } = setup({ fixedDiscountMinor: 1980n });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 }); // 小计 19800
+    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }); // 运费 800
+
+    const detail = await service.retrieveCart(cart.id);
+    expect(detail.totals?.subtotal_minor).toBe(19800n);
+    expect(detail.totals?.shipping_minor).toBe(800n);
+    expect(detail.totals?.discount_minor).toBe(1980n);
+    expect(detail.totals?.total_minor).toBe(19800n + 800n - 1980n); // 18620
+    expect(detail.items[0]?.discount_minor).toBe(1980n);
+  });
+
+  it("无促销命中时 discount_minor 为 0，合计不变", async () => {
+    const { service } = setup(); // fixedDiscountMinor 默认 0
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
+    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+
+    const detail = await service.retrieveCart(cart.id);
+    expect(detail.totals?.discount_minor).toBe(0n);
+    expect(detail.totals?.total_minor).toBe(20600n);
+    expect(detail.items[0]?.discount_minor).toBe(0n);
   });
 
   it("completeCart 软删 + completed；restoreCart 补偿回 open", async () => {

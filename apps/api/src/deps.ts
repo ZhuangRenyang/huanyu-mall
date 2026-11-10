@@ -19,6 +19,7 @@ import fileModule from "@mall/file";
 import authModule from "@mall/auth";
 import inventoryModule from "@mall/inventory";
 import cartModule from "@mall/cart";
+import promotionModule from "@mall/promotion";
 import orderModule from "@mall/order";
 import paymentModule from "@mall/payment";
 import fulfillmentModule from "@mall/fulfillment";
@@ -32,6 +33,7 @@ import type { IFileModuleService } from "@mall/file";
 import type { IAuthModuleService } from "@mall/auth";
 import type { IInventoryModuleService } from "@mall/inventory";
 import type { ICartModuleService } from "@mall/cart";
+import type { IPromotionModuleService } from "@mall/promotion";
 import type { IOrderModuleService } from "@mall/order";
 import type { IPaymentModuleService } from "@mall/payment";
 import type { IFulfillmentModuleService } from "@mall/fulfillment";
@@ -50,6 +52,7 @@ export interface AppServices {
   auth: IAuthModuleService;
   inventory: IInventoryModuleService;
   cart: ICartModuleService;
+  promotion: IPromotionModuleService;
   order: IOrderModuleService;
   payment: IPaymentModuleService;
   fulfillment: IFulfillmentModuleService;
@@ -83,13 +86,14 @@ const MODULES: ModuleDefinition[] = [
   authModule,
   inventoryModule,
   cartModule,
+  promotionModule,
   orderModule,
   paymentModule,
   fulfillmentModule,
   themeModule,
 ];
 
-/** 组合根：按依赖拓扑序把 12 个模块注册进容器，实例化 workflow 引擎。 */
+/** 组合根：按依赖拓扑序把各业务模块注册进容器，实例化 workflow 引擎。 */
 export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
   const container = new Container();
   container.register("pool", () => pool);
@@ -123,6 +127,7 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     auth: container.resolve<IAuthModuleService>("auth"),
     inventory: container.resolve<IInventoryModuleService>("inventory"),
     cart: container.resolve<ICartModuleService>("cart"),
+    promotion: container.resolve<IPromotionModuleService>("promotion"),
     order: container.resolve<IOrderModuleService>("order"),
     payment: container.resolve<IPaymentModuleService>("payment"),
     fulfillment: container.resolve<IFulfillmentModuleService>("fulfillment"),

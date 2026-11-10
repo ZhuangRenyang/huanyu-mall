@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -95,6 +95,44 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .update(schema.promotion)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.promotion.id, id));
+  }
+
+  async listActiveCataloguePromotionsWithRules(
+    now: Date,
+  ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>> {
+    const promos = await this.db
+      .select()
+      .from(schema.promotion)
+      .where(
+        and(
+          eq(schema.promotion.type, "catalogue"),
+          eq(schema.promotion.status, "active"),
+          isNull(schema.promotion.deletedAt),
+          or(isNull(schema.promotion.startsAt), lte(schema.promotion.startsAt, now)),
+          or(isNull(schema.promotion.endsAt), gte(schema.promotion.endsAt, now)),
+        ),
+      );
+    if (promos.length === 0) return [];
+
+    const ruleRows = await this.db
+      .select()
+      .from(schema.promotionRule)
+      .where(
+        and(
+          inArray(
+            schema.promotionRule.promotionId,
+            promos.map((p) => p.id),
+          ),
+          isNull(schema.promotionRule.deletedAt),
+        ),
+      );
+    const rulesByPromo = new Map<string, PromotionRuleDTO[]>();
+    for (const r of ruleRows) {
+      const list = rulesByPromo.get(r.promotionId) ?? [];
+      list.push(toPromotionRuleDTO(r));
+      rulesByPromo.set(r.promotionId, list);
+    }
+    return promos.map((p) => ({ promotion: toPromotionDTO(p), rules: rulesByPromo.get(p.id) ?? [] }));
   }
 
   // —— promotion_rule ——

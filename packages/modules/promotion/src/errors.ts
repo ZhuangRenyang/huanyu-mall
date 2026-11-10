@@ -41,8 +41,3 @@ export function voucherExpired(id: string): DomainError {
 export function voucherUsageLimitReached(code: string): DomainError {
   return new DomainError({ code: 30002, message: `Voucher usage limit reached: ${code}` });
 }
-
-/** 阶段 1 占位：折扣计算尚未实现（阶段 2-5 落地）。 */
-export function promotionComputeNotImplemented(): DomainError {
-  return new DomainError({ code: 50001, message: "computeDiscounts not implemented in stage 1" });
-}

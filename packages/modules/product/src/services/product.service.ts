@@ -112,4 +112,12 @@ export class ProductService implements IProductModuleService {
     const limit = q.limit ?? 20;
     return { items: items.slice(offset, offset + limit), count: items.length };
   }
+
+  /** 批量查「商品 → 分类」映射（供 promotion 目录促销算折扣，禁 N+1）。 */
+  async listCategoryIdsByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; categoryIds: string[] }>> {
+    if (productIds.length === 0) return [];
+    return this.repo.listCategoryIdsByProducts(productIds);
+  }
 }

@@ -73,6 +73,21 @@ class InMemoryPromotionRepository implements PromotionRepository {
   async softDeletePromotion(id: string): Promise<void> {
     this.promotions.delete(id);
   }
+  async listActiveCataloguePromotionsWithRules(
+    now: Date,
+  ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>> {
+    const inWindow = (p: PromotionDTO) => {
+      if (p.starts_at && p.starts_at.getTime() > now.getTime()) return false;
+      if (p.ends_at && p.ends_at.getTime() < now.getTime()) return false;
+      return true;
+    };
+    return [...this.promotions.values()]
+      .filter((p) => p.type === "catalogue" && p.status === "active" && inWindow(p))
+      .map((p) => ({
+        promotion: p,
+        rules: [...this.rules.values()].filter((r) => r.promotion_id === p.id),
+      }));
+  }
 
   async insertPromotionRule(input: CreatePromotionRuleInput & { id: string }): Promise<PromotionRuleDTO> {
     const dto: PromotionRuleDTO = {
@@ -320,19 +335,149 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
     expect(events[0]?.type).toBe("issued");
   });
 
-  it("computeDiscounts 阶段 1 抛 notImplemented", async () => {
+  it("computeDiscounts：目录促销 fixed 折扣 = reward_value × quantity", async () => {
     const repo = new InMemoryPromotionRepository();
     const service = new PromotionService(repo);
-    await expect(
-      service.computeDiscounts({
-        currencyCode: "CNY",
-        items: [],
-        subtotalMinor: 0n,
-        shippingMinor: 0n,
-        voucherCodes: [],
-        giftCardCodes: [],
-      }),
-    ).rejects.toThrow(/not implemented/);
+    const promo = await service.createPromotion({ name: "指定变体减 20", type: "catalogue" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { variantIds: ["var_1"] },
+      rewardType: "fixed",
+      rewardValue: 2000n,
+      allocation: "each",
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 3, unitPriceMinor: 9900n }],
+      subtotalMinor: 29700n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.lineAdjustments).toEqual([
+      { itemId: "cli_1", amountMinor: 6000n, promotionId: promo.id, code: "" },
+    ]);
+    expect(res.orderDiscountMinor).toBe(0n);
+    expect(res.voucherDiscountMinor).toBe(0n);
+    expect(res.giftCardAppliedMinor).toBe(0n);
+  });
+
+  it("computeDiscounts：percentage 折扣 = round(单价×数量×bps/10000)", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promo = await service.createPromotion({ name: "分类 8 折", type: "catalogue" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { categoryIds: ["cat_1"] },
+      rewardType: "percentage",
+      rewardValue: 2000n, // 20%
+      allocation: "each",
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [
+        { id: "cli_1", variantId: "var_1", categoryIds: ["cat_1"], quantity: 2, unitPriceMinor: 9900n },
+        { id: "cli_2", variantId: "var_2", categoryIds: ["cat_2"], quantity: 1, unitPriceMinor: 9900n },
+      ],
+      subtotalMinor: 29700n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    // 9900 × 2 × 2000 / 10000 = 3960
+    expect(res.lineAdjustments).toEqual([
+      { itemId: "cli_1", amountMinor: 3960n, promotionId: promo.id, code: "" },
+    ]);
+  });
+
+  it("computeDiscounts：多规则命中取折扣最大的一条（Saleor）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promoA = await service.createPromotion({ name: "减 10", type: "catalogue" });
+    await service.updatePromotion(promoA.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promoA.id,
+      predicate: { variantIds: ["var_1"] },
+      rewardType: "fixed",
+      rewardValue: 1000n,
+    });
+    const promoB = await service.createPromotion({ name: "减 30", type: "catalogue" });
+    await service.updatePromotion(promoB.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promoB.id,
+      predicate: { categoryIds: ["cat_1"] },
+      rewardType: "fixed",
+      rewardValue: 3000n,
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: ["cat_1"], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.lineAdjustments).toHaveLength(1);
+    expect(res.lineAdjustments[0]?.amountMinor).toBe(3000n);
+    expect(res.lineAdjustments[0]?.promotionId).toBe(promoB.id);
+  });
+
+  it("computeDiscounts：折扣封顶到行项小计（不超过应付）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promo = await service.createPromotion({ name: "超额百分比", type: "catalogue" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { variantIds: ["var_1"] },
+      rewardType: "percentage",
+      rewardValue: 20000n, // 200%，超出小计
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.lineAdjustments[0]?.amountMinor).toBe(9900n);
+  });
+
+  it("computeDiscounts：draft/inactive/过期促销不命中", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const draft = await service.createPromotion({ name: "草稿", type: "catalogue" });
+    await service.addPromotionRule({
+      promotionId: draft.id,
+      predicate: { variantIds: ["var_1"] },
+      rewardType: "fixed",
+      rewardValue: 1000n,
+    });
+    const expired = await service.createPromotion({ name: "过期", type: "catalogue", endsAt: new Date("2020-01-01") });
+    await service.updatePromotion(expired.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: expired.id,
+      predicate: { variantIds: ["var_1"] },
+      rewardType: "fixed",
+      rewardValue: 1000n,
+    });
+
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 9900n }],
+      subtotalMinor: 9900n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    });
+    expect(res.lineAdjustments).toHaveLength(0);
   });
 
   it("查询不存在的资源抛领域错误", async () => {

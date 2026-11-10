@@ -9,6 +9,7 @@ export * from "./types.js";
 export * from "./errors.js";
 export { linkable } from "./linkable.js";
 export { PromotionService } from "./services/promotion.service.js";
+export { evalPredicate, type PredicateContext } from "./services/predicate.js";
 
 export default Module("promotion", {
   service: (ctx) =>

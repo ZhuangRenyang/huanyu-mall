@@ -23,6 +23,7 @@
     "@mall/auth": "workspace:*",
     "@mall/inventory": "workspace:*",
     "@mall/cart": "workspace:*",
+    "@mall/promotion": "workspace:*",
     "@mall/order": "workspace:*",
     "@mall/payment": "workspace:*",
     "@mall/fulfillment": "workspace:*",

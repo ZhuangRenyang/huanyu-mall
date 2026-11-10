@@ -153,6 +153,8 @@ export interface ProductRepository {
   createVariants(productId: string, variants: CreateVariantInput[]): Promise<VariantDTO[]>;
   createImages(productId: string, images: CreateImageInput[]): Promise<void>;
   linkCategories(productId: string, categoryIds: string[]): Promise<void>;
+  /** product_category_link：批量查「商品 → 分类」映射（供 promotion 目录促销算折扣，禁 N+1）。 */
+  listCategoryIdsByProducts(productIds: string[]): Promise<Array<{ productId: string; categoryIds: string[] }>>;
   /** product_channel link：返回该渠道可见的商品 id（is_visible=true）。 */
   listSellableProductIds(channelId: string): Promise<string[]>;
   /** variant_price_set link：批量取 price_set_id（禁循环）。 */
@@ -185,4 +187,6 @@ export interface IProductModuleService {
   updateVariant(variantId: string, patch: { title?: string; status?: ProductStatus }): Promise<VariantDTO>;
   listVariantsByIds(ids: string[]): Promise<VariantDTO[]>;
   resolveSellableVariants(q: SellableVariantQuery): Promise<{ items: SellableVariantDTO[]; count: number }>;
+  /** 批量查「商品 → 分类」映射（供 promotion 目录促销算折扣）。 */
+  listCategoryIdsByProducts(productIds: string[]): Promise<Array<{ productId: string; categoryIds: string[] }>>;
 }

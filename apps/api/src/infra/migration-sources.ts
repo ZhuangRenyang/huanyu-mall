@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 13 个业务模块（迁移 namespace 与目录名一致）。 */
+/** 业务模块（迁移 namespace 与目录名一致）。 */
 export const MODULES = [
   "region-channel",
   "product",
@@ -13,6 +13,7 @@ export const MODULES = [
   "auth",
   "inventory",
   "cart",
+  "promotion",
   "order",
   "payment",
   "fulfillment",

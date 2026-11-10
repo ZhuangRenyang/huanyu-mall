@@ -19,6 +19,8 @@ export interface CartLineItemDTO {
   quantity: number;
   unit_price_minor: bigint;
   currency_code: string;
+  /** 目录促销行级折扣（minor unit），读时动态算（retrieveCart），落库行恒 0。 */
+  discount_minor: bigint;
 }
 
 export interface CartShippingMethodDTO {
@@ -74,6 +76,10 @@ export interface ProductLookupPort {
   listVariantsByIds(
     ids: string[],
   ): Promise<Array<{ id: string; product_id: string; sku: string; title: string; status: string }>>;
+  /** 批量查「商品 → 分类」映射（供目录促销算折扣）。 */
+  listCategoryIdsByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; categoryIds: string[] }>>;
 }
 
 /** 定价端口：按币种/渠道/数量算价（唯一计价入口）。 */
@@ -84,12 +90,37 @@ export interface PricingLookupPort {
   }): Promise<Array<{ variantId: string; amountMinor: bigint; currencyCode: string }>>;
 }
 
-/** Cart 模块依赖：repo + 商品/定价/运费查询端口（跨模块走端口，架构 §2）。 */
+/** Cart 模块依赖：repo + 商品/定价/运费/促销查询端口（跨模块走端口，架构 §2）。 */
 export interface CartServiceDeps {
   repo: CartRepository;
   product: ProductLookupPort;
   pricing: PricingLookupPort;
   shipping: ShippingLookupPort;
+  promotion: PromotionLookupPort;
+}
+
+/** 促销查询端口（跨模块走端口，M-promotion）：算目录促销行级折扣（金额服务端算，客户端永不传价）。 */
+export interface PromotionLookupPort {
+  computeDiscounts(ctx: {
+    currencyCode: string;
+    customerId?: string | null;
+    items: Array<{
+      id: string;
+      variantId: string;
+      categoryIds: string[];
+      quantity: number;
+      unitPriceMinor: bigint;
+    }>;
+    subtotalMinor: bigint;
+    shippingMinor: bigint;
+    voucherCodes: string[];
+    giftCardCodes: string[];
+  }): Promise<{
+    lineAdjustments: Array<{ itemId: string; amountMinor: bigint; promotionId: string; code: string }>;
+    orderDiscountMinor: bigint;
+    voucherDiscountMinor: bigint;
+    giftCardAppliedMinor: bigint;
+  }>;
 }
 
 /** 选运费：只传方案 id，方案名与运费由后端解析（铁律 13，防客户端指定运费）。 */

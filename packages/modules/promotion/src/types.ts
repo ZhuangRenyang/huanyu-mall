@@ -180,6 +180,10 @@ export interface PromotionRepository {
   listPromotions(q: ListQuery): Promise<{ items: PromotionDTO[]; count: number }>;
   updatePromotion(id: string, patch: UpdatePromotionInput): Promise<PromotionDTO | null>;
   softDeletePromotion(id: string): Promise<void>;
+  /** 目录促销算折扣：active + catalogue + 有效期内的 promotion 连同其 rules（一次查询，禁 N+1）。 */
+  listActiveCataloguePromotionsWithRules(
+    now: Date,
+  ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>>;
 
   // promotion_rule
   insertPromotionRule(input: CreatePromotionRuleInput & { id: string }): Promise<PromotionRuleDTO>;

@@ -192,6 +192,30 @@ export class DrizzleProductRepository implements ProductRepository {
       .values(categoryIds.map((categoryId) => ({ id: prefixedUlid("pcat"), productId, categoryId })));
   }
 
+  async listCategoryIdsByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; categoryIds: string[] }>> {
+    if (productIds.length === 0) return [];
+    // product_category_link 无 deleted_at，靠 uq_pcat(product_id, category_id) 唯一，仍按 Set 去重兜底。
+    const rows = await this.db
+      .select({
+        productId: schema.productCategoryLink.productId,
+        categoryId: schema.productCategoryLink.categoryId,
+      })
+      .from(schema.productCategoryLink)
+      .where(inArray(schema.productCategoryLink.productId, productIds));
+    const byProduct = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const set = byProduct.get(r.productId) ?? new Set<string>();
+      set.add(r.categoryId);
+      byProduct.set(r.productId, set);
+    }
+    return [...byProduct.entries()].map(([productId, categoryIds]) => ({
+      productId,
+      categoryIds: [...categoryIds],
+    }));
+  }
+
   async listSellableProductIds(channelId: string): Promise<string[]> {
     const res = await this.db.execute(
       sql`SELECT product_id FROM product_channel WHERE channel_id = ${channelId} AND is_visible = true AND deleted_at IS NULL`,

@@ -27,6 +27,9 @@ function mapLineItem(li: CartLineItemDTO) {
     unit_price_minor: li.unit_price_minor,
     currency_code: li.currency_code,
     line_total_minor: li.unit_price_minor * BigInt(li.quantity),
+    // 目录促销行级折扣（阶段 2，前端展示「原价 → 折后」）
+    discount_minor: li.discount_minor,
+    line_total_after_discount_minor: li.unit_price_minor * BigInt(li.quantity) - li.discount_minor,
   };
 }
 

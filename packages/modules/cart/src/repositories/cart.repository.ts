@@ -177,6 +177,7 @@ function toLineItemDTO(r: typeof schema.cartLineItem.$inferSelect): CartLineItem
     quantity: r.quantity,
     unit_price_minor: r.unitPriceMinor,
     currency_code: r.currencyCode,
+    discount_minor: 0n, // 落库行无折扣，retrieveCart 读时动态算
   };
 }
 
