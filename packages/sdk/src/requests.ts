@@ -224,3 +224,51 @@ export interface AdjustGiftCardRequest {
   delta_minor: number;
   reason?: string;
 }
+
+/**
+ * 促销条件谓词（ADR-012 §2）：and/or 组合 + 叶子条件。
+ * 金额一律 minor unit；空对象 `{}` 视为不命中，因此最小条件也要显式给一条。
+ */
+export type PromotionPredicateInput =
+  | { and: PromotionPredicateInput[] }
+  | { or: PromotionPredicateInput[] }
+  | { variantIds: string[] }
+  | { categoryIds: string[] }
+  | { collectionIds: string[] }
+  | { subtotalGte: number }
+  | { currencyEq: string };
+
+/** 促销规则（条件 + 动作）。percentage 为万分比 bps（2000=20%），fixed 为 minor unit。 */
+export interface PromotionRuleInput {
+  predicate?: PromotionPredicateInput;
+  reward_type: 'fixed' | 'percentage';
+  reward_value: number;
+  allocation?: 'each' | 'across' | 'once' | null;
+}
+
+/** 创建促销（目录促销 catalogue / 订单促销 order），可同时附带规则。 */
+export interface CreatePromotionRequest {
+  name: string;
+  code?: string | null;
+  type: 'catalogue' | 'order';
+  status?: 'draft' | 'active' | 'inactive';
+  is_automatic?: boolean;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  usage_limit?: number | null;
+  metadata?: Record<string, unknown> | null;
+  rules?: PromotionRuleInput[];
+}
+
+/** 更新促销（规则走 addPromotionRule / deletePromotionRule 单独维护）。 */
+export interface UpdatePromotionRequest {
+  name?: string;
+  code?: string | null;
+  type?: 'catalogue' | 'order';
+  status?: 'draft' | 'active' | 'inactive';
+  is_automatic?: boolean;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  usage_limit?: number | null;
+  metadata?: Record<string, unknown> | null;
+}

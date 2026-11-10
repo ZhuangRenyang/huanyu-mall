@@ -36,6 +36,13 @@ export {
   adjustGiftCard,
   listGiftCardEvents,
   giftCardEventLabel,
+  listPromotions,
+  getPromotion,
+  createPromotion,
+  setPromotionStatus,
+  deletePromotion,
+  addPromotionRule,
+  deletePromotionRule,
 } from './admin-promotions';
 export type {
   VoucherView,
@@ -45,6 +52,10 @@ export type {
   GiftCardView,
   GiftCardEventView,
   GiftCardInput,
+  PromotionView,
+  PromotionDetailView,
+  PromotionRuleView,
+  PromotionInput,
 } from './admin-promotions';
 
 export { changePassword } from './admin-password';

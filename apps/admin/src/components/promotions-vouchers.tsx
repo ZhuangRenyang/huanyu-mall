@@ -55,9 +55,10 @@ const TYPE_LABEL: Record<VoucherView['type'], string> = {
 };
 
 function discountText(v: Pick<VoucherView, 'discountType' | 'discountValue'>): string {
+  // 百分比是「减去多少」：2000 bps = 减 20%。写成「打 20 折」会误导（中文 8 折才是付 80%）。
   return v.discountType === 'fixed'
     ? `减 ${formatMoney(v.discountValue, 'CNY')}`
-    : `打 ${bpsToPercent(v.discountValue)} 折`;
+    : `减 ${bpsToPercent(v.discountValue)}%`;
 }
 
 /* ------------------------------------------------------------------ *

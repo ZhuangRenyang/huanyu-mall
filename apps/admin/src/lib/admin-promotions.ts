@@ -11,6 +11,8 @@ import { ApiError } from '@mall/sdk';
 import type {
   AdminGiftCard,
   AdminGiftCardEvent,
+  AdminPromotion,
+  AdminPromotionRule,
   AdminVoucher,
   AdminVoucherCode,
 } from '@mall/sdk';
@@ -142,7 +144,11 @@ function mapEvent(e: AdminGiftCardEvent): GiftCardEventView {
 // mock（localStorage 种子数据）
 // ------------------------------------------------------------------ *
 
-const KEYS = { vouchers: 'admin:vouchers', giftCards: 'admin:gift-cards' } as const;
+const KEYS = {
+  vouchers: 'admin:vouchers',
+  giftCards: 'admin:gift-cards',
+  promotions: 'admin:promotions',
+} as const;
 
 const SEED_VOUCHERS: VoucherView[] = [
   {
@@ -460,4 +466,241 @@ export function giftCardEventLabel(type: string): string {
     activated: '启用',
   };
   return map[type] ?? type;
+}
+
+// ------------------------------------------------------------------ *
+// 目录 / 订单促销（promotion 表）
+// ------------------------------------------------------------------ *
+
+export interface PromotionRuleView {
+  id: string;
+  promotionId: string;
+  predicate: Record<string, unknown>;
+  rewardType: 'fixed' | 'percentage';
+  rewardValue: number;
+  allocation: 'each' | 'across' | 'once' | null;
+}
+
+export interface PromotionView {
+  id: string;
+  name: string;
+  code: string | null;
+  type: 'catalogue' | 'order';
+  status: 'draft' | 'active' | 'inactive';
+  isAutomatic: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  usageLimit: number | null;
+  used: number;
+}
+
+export interface PromotionDetailView extends PromotionView {
+  rules: PromotionRuleView[];
+}
+
+/** 新建促销：一条规则随促销一起建（多规则在详情里追加）。 */
+export interface PromotionInput {
+  name: string;
+  type: 'catalogue' | 'order';
+  isAutomatic: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  usageLimit: number | null;
+  predicate: Record<string, unknown>;
+  rewardType: 'fixed' | 'percentage';
+  rewardValue: number;
+}
+
+function mapPromotionRule(r: AdminPromotionRule): PromotionRuleView {
+  return {
+    id: r.id,
+    promotionId: r.promotion_id,
+    predicate: r.predicate,
+    rewardType: r.reward_type,
+    rewardValue: r.reward_value,
+    allocation: r.allocation,
+  };
+}
+
+function mapPromotion(p: AdminPromotion): PromotionView {
+  return {
+    id: p.id,
+    name: p.name,
+    code: p.code,
+    type: p.type,
+    status: p.status,
+    isAutomatic: p.is_automatic,
+    startsAt: p.starts_at,
+    endsAt: p.ends_at,
+    usageLimit: p.usage_limit,
+    used: p.used,
+  };
+}
+
+const SEED_PROMOTIONS: PromotionDetailView[] = [
+  {
+    id: 'promo_demo1',
+    name: '满 200 减 30',
+    code: null,
+    type: 'order',
+    status: 'active',
+    isAutomatic: true,
+    startsAt: null,
+    endsAt: null,
+    usageLimit: null,
+    used: 0,
+    rules: [
+      {
+        id: 'prorul_demo1',
+        promotionId: 'promo_demo1',
+        predicate: { subtotalGte: 20000 },
+        rewardType: 'fixed',
+        rewardValue: 3000,
+        allocation: null,
+      },
+    ],
+  },
+];
+
+function mockListPromotions(): PromotionDetailView[] {
+  return read<PromotionDetailView[]>(KEYS.promotions, SEED_PROMOTIONS);
+}
+
+function mockSavePromotion(p: PromotionDetailView): void {
+  const list = mockListPromotions();
+  const idx = list.findIndex((x) => x.id === p.id);
+  if (idx >= 0) list[idx] = p;
+  else list.unshift(p);
+  write(KEYS.promotions, list);
+}
+
+export async function listPromotions(): Promise<PromotionView[]> {
+  if (getAdminApiMode() !== 'live') return mockListPromotions();
+  const res = (await adminClient().listPromotions({ limit: 100 })) as { items?: AdminPromotion[] };
+  return (res.items ?? []).map(mapPromotion);
+}
+
+export async function getPromotion(id: string): Promise<PromotionDetailView | null> {
+  if (getAdminApiMode() !== 'live') return mockListPromotions().find((x) => x.id === id) ?? null;
+  try {
+    const res = (await adminClient().getPromotion(id)) as AdminPromotion & { rules?: AdminPromotionRule[] };
+    return { ...mapPromotion(res), rules: (res.rules ?? []).map(mapPromotionRule) };
+  } catch {
+    return null;
+  }
+}
+
+export async function createPromotion(input: PromotionInput): Promise<PromotionDetailView> {
+  if (getAdminApiMode() !== 'live') {
+    const id = newMockId('promo');
+    const p: PromotionDetailView = {
+      id,
+      name: input.name,
+      code: null,
+      type: input.type,
+      status: 'draft',
+      isAutomatic: input.isAutomatic,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      usageLimit: input.usageLimit,
+      used: 0,
+      rules: [
+        {
+          id: newMockId('prorul'),
+          promotionId: id,
+          predicate: input.predicate,
+          rewardType: input.rewardType,
+          rewardValue: input.rewardValue,
+          allocation: null,
+        },
+      ],
+    };
+    mockSavePromotion(p);
+    return p;
+  }
+  const res = (await adminClient().createPromotion({
+    name: input.name,
+    type: input.type,
+    is_automatic: input.isAutomatic,
+    starts_at: input.startsAt,
+    ends_at: input.endsAt,
+    usage_limit: input.usageLimit,
+    rules: [
+      {
+        predicate: input.predicate as never,
+        reward_type: input.rewardType,
+        reward_value: input.rewardValue,
+      },
+    ],
+  })) as AdminPromotion & { rules?: AdminPromotionRule[] };
+  return { ...mapPromotion(res), rules: (res.rules ?? []).map(mapPromotionRule) };
+}
+
+export async function setPromotionStatus(id: string, active: boolean): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const p = mockListPromotions().find((x) => x.id === id);
+    if (p) {
+      p.status = active ? 'active' : 'inactive';
+      mockSavePromotion(p);
+    }
+    return;
+  }
+  const client = adminClient();
+  if (active) await client.activatePromotion(id);
+  else await client.deactivatePromotion(id);
+}
+
+export async function deletePromotion(id: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    write(
+      KEYS.promotions,
+      mockListPromotions().filter((x) => x.id !== id),
+    );
+    return;
+  }
+  try {
+    await adminClient().deletePromotion(id);
+  } catch (err) {
+    // 后端 204 无响应体，SDK 按 JSON 解析失败抛 ApiError(204) —— 删除成功。
+    if (!(err instanceof ApiError && err.code === 204)) throw err;
+  }
+}
+
+export async function addPromotionRule(
+  promotionId: string,
+  input: { predicate: Record<string, unknown>; rewardType: 'fixed' | 'percentage'; rewardValue: number },
+): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const p = mockListPromotions().find((x) => x.id === promotionId);
+    if (p) {
+      p.rules.push({
+        id: newMockId('prorul'),
+        promotionId,
+        predicate: input.predicate,
+        rewardType: input.rewardType,
+        rewardValue: input.rewardValue,
+        allocation: null,
+      });
+      mockSavePromotion(p);
+    }
+    return;
+  }
+  await adminClient().addPromotionRule(promotionId, {
+    predicate: input.predicate as never,
+    reward_type: input.rewardType,
+    reward_value: input.rewardValue,
+  });
+}
+
+export async function deletePromotionRule(ruleId: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const list = mockListPromotions().map((p) => ({ ...p, rules: p.rules.filter((r) => r.id !== ruleId) }));
+    write(KEYS.promotions, list);
+    return;
+  }
+  try {
+    await adminClient().deletePromotionRule(ruleId);
+  } catch (err) {
+    if (!(err instanceof ApiError && err.code === 204)) throw err;
+  }
 }

@@ -13,12 +13,14 @@ import type {
   CreateGiftCardRequest,
   CreatePaymentSessionRequest,
   CreateProductRequest,
+  CreatePromotionRequest,
   CreateRefundRequest,
   CreateShipmentRequest,
   CreateVariantRequest,
   CreateVoucherRequest,
   LoginRequest,
   PutPricesRequest,
+  PromotionRuleInput,
   RegisterRequest,
   SetGiftCardCodesRequest,
   SetShippingMethodRequest,
@@ -28,6 +30,7 @@ import type {
   UpdateLineItemRequest,
   UpdatePaymentProviderRequest,
   UpdateProductRequest,
+  UpdatePromotionRequest,
   UpdateSettingsRequest,
   UpdateThemeRequest,
   UpdateVariantRequest,
@@ -233,6 +236,18 @@ export function createAdminClient(opts: ClientOptions) {
     updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
       put(`/api/v1/admin/settings/payment-providers/${id}`, b),
     // —— 促销（阶段 6）——
+    listPromotions: (q?: Query) => get("/api/v1/admin/promotions", q),
+    createPromotion: (b: CreatePromotionRequest) => post("/api/v1/admin/promotions", b),
+    getPromotion: (id: string) => get(`/api/v1/admin/promotions/${id}`),
+    updatePromotion: (id: string, b: UpdatePromotionRequest) =>
+      put(`/api/v1/admin/promotions/${id}`, b),
+    deletePromotion: (id: string) => del(`/api/v1/admin/promotions/${id}`),
+    activatePromotion: (id: string) => post(`/api/v1/admin/promotions/${id}/activate`),
+    deactivatePromotion: (id: string) => post(`/api/v1/admin/promotions/${id}/deactivate`),
+    addPromotionRule: (id: string, b: PromotionRuleInput) =>
+      post(`/api/v1/admin/promotions/${id}/rules`, b),
+    deletePromotionRule: (ruleId: string) =>
+      del(`/api/v1/admin/promotions/rules/${ruleId}`),
     listVouchers: (q?: Query) => get("/api/v1/admin/promotions/vouchers", q),
     createVoucher: (b: CreateVoucherRequest) => post("/api/v1/admin/promotions/vouchers", b),
     getVoucher: (id: string) => get(`/api/v1/admin/promotions/vouchers/${id}`),

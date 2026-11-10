@@ -150,3 +150,28 @@ export interface AdminGiftCardEvent {
   parameters: Record<string, unknown> | null;
   created_at: string;
 }
+
+/** 促销规则（后台视图）：predicate 为类型化 JSON，reward_value 为 bps 或 minor unit。 */
+export interface AdminPromotionRule {
+  id: string;
+  promotion_id: string;
+  predicate: Record<string, unknown>;
+  reward_type: 'fixed' | 'percentage';
+  reward_value: number;
+  allocation: 'each' | 'across' | 'once' | null;
+}
+
+/** 目录促销 / 订单促销（后台视图）。 */
+export interface AdminPromotion {
+  id: string;
+  name: string;
+  code: string | null;
+  type: 'catalogue' | 'order';
+  status: 'draft' | 'active' | 'inactive';
+  is_automatic: boolean;
+  starts_at: string | null;
+  ends_at: string | null;
+  usage_limit: number | null;
+  used: number;
+  metadata: Record<string, unknown> | null;
+}
