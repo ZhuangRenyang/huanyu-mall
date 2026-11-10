@@ -114,6 +114,29 @@ describe('发起支付', () => {
     expect(res.redirectUrl).not.toContain('+');
   });
 
+  it('请求签名原文包含 sign_type，通知验签原文排除它（两条规则不能混）', () => {
+    /*
+     * 实测踩过：把两条规则混为一谈 → 请求签名报 40002 / isv.invalid-signature。
+     * 支付宝在报错里回传的「网关生成的验签字符串」里带着 sign_type，是同一件事的旁证。
+     *   请求签名：只排除 sign，sign_type 要参与
+     *   通知验签：sign 与 sign_type 都排除
+     */
+    const params = {
+      app_id: '2021000000000001',
+      method: 'alipay.trade.query',
+      sign_type: 'RSA2',
+      timestamp: '2026-01-01 00:00:00',
+      version: '1.0',
+    };
+    const requestScope = canonicalizeParams(params, { scope: 'request' });
+    const notifyScope = canonicalizeParams(params, { scope: 'notify' });
+    expect(requestScope).toContain('sign_type=RSA2');
+    expect(notifyScope).not.toContain('sign_type');
+    /* 两者都排除 sign 本身 */
+    expect(requestScope).not.toContain('sign=');
+    expect(notifyScope).not.toContain('sign=');
+  });
+
   it('时间戳是北京时间格式 yyyy-MM-dd HH:mm:ss（不是 ISO）', () => {
     const ts = alipayTimestamp(new Date('2026-11-09T16:00:00Z'));
     expect(ts).toBe('2026-11-10 00:00:00');
@@ -283,7 +306,8 @@ describe('配置与密钥格式', () => {
     url.searchParams.forEach((v, k) => {
       if (k !== 'sign') params[k] = v;
     });
-    expect(rsaSha256Verify(pair.publicKey, canonicalizeParams(params), sign)).toBe(true);
+    /* 请求签名按 scope:'request' 验（含 sign_type） */
+    expect(rsaSha256Verify(pair.publicKey, canonicalizeParams(params, { scope: 'request' }), sign)).toBe(true);
   });
 
   it('healthCheck 在配置齐全时返回 true、缺失时 false（不抛）', async () => {

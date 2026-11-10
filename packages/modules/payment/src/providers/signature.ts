@@ -98,18 +98,35 @@ export function encryptWechatResource(apiV3Key: string, nonce: string, plaintext
 }
 
 /**
- * 支付宝/通用：参数按 key 字典序拼接 `k=v&k=v`。
+ * 支付宝参数原文拼接（按 key 字典序 `k=v&k=v`）。
  *
- * 规则细节（支付宝文档「异步通知验签」）：
- * - 排除 `sign` 与 `sign_type`
- * - **排除值为空的参数** —— 支付宝不把空值参数纳入签名原文。少了这条，
- *   只要回调里带一个空值参数（如 `buyer_pay_amount=`），签名就永远对不上，
- *   而现象是"验签失败"，很难联想到是空值造成的
+ * ⚠️ **两种场景的排除规则不同，这是最容易搞混的地方**（实测踩过）：
+ *
+ * | 场景 | 排除 sign | 排除 sign_type |
+ * |---|---|---|
+ * | **请求签名**（调用支付宝接口时对我们自己的参数签名） | ✅ 排除 | ❌ **要参与签名** |
+ * | **异步通知验签**（验支付宝回调的签名） | ✅ 排除 | ✅ 排除 |
+ *
+ * 实测证据：用 `alipay.trade.query` 打真网关，签名原文排除 `sign_type`
+ * → `40002 / isv.invalid-signature`；包含 `sign_type` → 验签通过（返回业务层错误）。
+ * 支付宝在报错信息里回传的「网关生成的验签字符串」里也**带着 sign_type**，是同一件事的旁证。
+ *
+ * 另外两条通用规则：
+ * - **值为空的参数不参与签名**（支付宝回调常带 `buyer_pay_amount=` 这类空值字段，
+ *   把空值算进原文会导致永远验签失败，而现象只是「验签失败」，极难联想到空值）
  * - 值**不做** URL 编码（原文里的值就是解码后的原值）
+ *
+ * @param scope `request` = 请求签名（保留 sign_type）；`notify` = 通知验签（排除 sign_type）。
+ *              默认为 `notify`，以保持通知验签调用方行为不变。
  */
-export function canonicalizeParams(params: Record<string, string>): string {
+export function canonicalizeParams(
+  params: Record<string, string>,
+  options: { scope?: "request" | "notify" } = {},
+): string {
+  const isNotify = (options.scope ?? "notify") === "notify";
   return Object.keys(params)
-    .filter((k) => k !== "sign" && k !== "sign_type")
+    .filter((k) => k !== "sign")
+    .filter((k) => !(isNotify && k === "sign_type"))
     .filter((k) => {
       const v = params[k];
       return v !== undefined && v !== null && v !== "";

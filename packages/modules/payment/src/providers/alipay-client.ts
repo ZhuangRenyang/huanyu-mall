@@ -82,7 +82,8 @@ export class AlipayClient {
   }
 
   private sign(params: Record<string, string>): string {
-    return rsaSha256Sign(this.config.privateKeyPem, canonicalizeParams(params));
+    /* scope:'request' —— 请求签名要**包含** sign_type（与通知验签规则不同，见 signature.ts 注释） */
+    return rsaSha256Sign(this.config.privateKeyPem, canonicalizeParams(params, { scope: 'request' }));
   }
 
   /**
@@ -176,6 +177,11 @@ export class AlipayClient {
   verifyNotify(params: Record<string, string>): boolean {
     const sign = params.sign;
     if (!sign) return false;
-    return rsaSha256Verify(this.config.alipayPublicKeyPem, canonicalizeParams(params), sign);
+    /* scope:'notify' —— 通知验签要**排除** sign_type（与请求签名规则相反，见 signature.ts 注释） */
+    return rsaSha256Verify(
+      this.config.alipayPublicKeyPem,
+      canonicalizeParams(params, { scope: 'notify' }),
+      sign,
+    );
   }
 }
