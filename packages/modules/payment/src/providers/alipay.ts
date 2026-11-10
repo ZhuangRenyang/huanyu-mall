@@ -1,3 +1,5 @@
+import { createPrivateKey } from 'node:crypto';
+
 import { fromMinor, toMinor } from '@mall/core';
 import { AbstractPaymentProvider } from './abstract.js';
 import { AlipayApiError, AlipayClient, type AlipayClientConfig } from './alipay-client.js';
@@ -227,8 +229,20 @@ export class AlipayPaymentProvider extends AbstractPaymentProvider {
 /**
  * 把配置里的密钥规范成 PEM。
  *
- * 用户在后台粘贴密钥时常见两种形态：完整 PEM，或只有 base64 主体（甚至把换行写成了 `\n`）。
- * 这里统一兼容，避免「密钥明明填了却报签名失败」这种极难排查的问题。
+ * 用户在后台粘贴密钥时常见三种形态：
+ * 1. 完整 PEM（带 BEGIN/END）—— 原样使用
+ * 2. 只有 base64 主体
+ * 3. 只有 base64 主体，且换行被写成了字面量 `\n`
+ *
+ * 第 2/3 种要自己补 PEM 头，但**私钥的头不能猜**：
+ * - PKCS#8（PrivateKeyInfo）→ `BEGIN PRIVATE KEY`，base64 通常以 MIIEv 开头
+ * - PKCS#1（RSAPrivateKey）→ `BEGIN RSA PRIVATE KEY`，base64 通常以 MIIEo/MIIEp 开头
+ * 支付宝密钥工具给的「非 Java 适用」是 PKCS#8，「Java 适用」是 PKCS#1，
+ * 用户经常把 PKCS#1 主体粘进来。包错头时 node 会报
+ * `DECODER routines::unsupported`（甚至误判成 EncryptedPrivateKeyInfo），
+ * 现象是「密钥明明填了却签名失败」，极难排查。
+ *
+ * 所以这里不按前缀猜，而是**两种头都试，用 createPrivateKey 验证哪个真能解析**。
  */
 function normalizePem(raw: string, kind: 'PRIVATE' | 'PUBLIC'): string {
   const text = raw.replace(/\\n/g, '\n').trim();
@@ -236,7 +250,22 @@ function normalizePem(raw: string, kind: 'PRIVATE' | 'PUBLIC'): string {
   if (text.includes('-----BEGIN')) return text;
 
   const body = text.replace(/\s+/g, '');
-  const label = kind === 'PRIVATE' ? 'PRIVATE KEY' : 'PUBLIC KEY';
+  if (kind === 'PUBLIC') return wrapPem(body, 'PUBLIC KEY');
+
+  for (const label of ['PRIVATE KEY', 'RSA PRIVATE KEY'] as const) {
+    const pem = wrapPem(body, label);
+    try {
+      createPrivateKey(pem);
+      return pem;
+    } catch {
+      /* 换下一个头再试 */
+    }
+  }
+  /* 两种都不行：返回 PKCS#8 形态，让上层在真正使用时抛出可定位的错误 */
+  return wrapPem(body, 'PRIVATE KEY');
+}
+
+function wrapPem(body: string, label: string): string {
   const chunks = body.match(/.{1,64}/g) ?? [body];
   return `-----BEGIN ${label}-----\n${chunks.join('\n')}\n-----END ${label}-----`;
 }

@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AlipayPaymentProvider } from '../src/providers/alipay.js';
 import { AlipayClient, alipayTimestamp } from '../src/providers/alipay-client.js';
-import { canonicalizeParams, rsaSha256Sign } from '../src/providers/signature.js';
+import { canonicalizeParams, rsaSha256Sign, rsaSha256Verify } from '../src/providers/signature.js';
 import { WebhookSignatureError } from '../src/errors.js';
 
 /**
@@ -234,6 +234,33 @@ describe('配置与密钥格式', () => {
     return expect(
       provider.initiatePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' }),
     ).resolves.toBeTruthy();
+  });
+
+  it('PKCS#1 私钥（支付宝「Java 适用」格式）也能用，且签出的名可被验证', async () => {
+    /*
+     * 支付宝密钥工具给两种私钥：非 Java 适用是 PKCS#8（BEGIN PRIVATE KEY），
+     * Java 适用是 PKCS#1（BEGIN RSA PRIVATE KEY）。用户经常直接粘 PKCS#1 的 base64 主体，
+     * 若 normalizePem 一律包成 PKCS#8 头，node 会解析失败 —— 现象只是"签名失败"，很难查。
+     * 这条用例既验证能签，也用对应公钥验签，确认签出来的确实是有效签名。
+     */
+    const pair = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    });
+    const bare = pair.privateKey.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+    expect(bare.startsWith('MIIE')).toBe(true);
+
+    const provider = makeProvider({ privateKey: bare, alipayPublicKey: pair.publicKey });
+    const res = await provider.initiatePayment({ sessionId: 's', amountMinor: 100n, currencyCode: 'CNY' });
+
+    const url = new URL(res.redirectUrl);
+    const sign = url.searchParams.get('sign') ?? '';
+    const params: Record<string, string> = {};
+    url.searchParams.forEach((v, k) => {
+      if (k !== 'sign') params[k] = v;
+    });
+    expect(rsaSha256Verify(pair.publicKey, canonicalizeParams(params), sign)).toBe(true);
   });
 
   it('healthCheck 在配置齐全时返回 true、缺失时 false（不抛）', async () => {
