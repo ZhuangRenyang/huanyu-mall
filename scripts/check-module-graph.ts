@@ -20,6 +20,7 @@ const LAYERS: Record<string, number> = {
   product: 2,
   pricing: 2,
   tax: 2,
+  promotion: 2,
   inventory: 2,
   cart: 3,
   fulfillment: 3,
