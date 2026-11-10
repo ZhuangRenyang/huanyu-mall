@@ -84,12 +84,19 @@ export class AlipayPaymentProvider extends AbstractPaymentProvider {
      * - `qr`（默认）：当面付 `alipay.trade.precreate` → 返回二维码。
      *   支付宝**沙箱只支持这一条**（`page.pay` 网关直接 404），而且当面付也是
      *   国内主流形态，生产环境同样适用。
-     * - `redirect`：`alipay.trade.page.pay` → 跳转收银台，仅生产环境可用。
+     * - `redirect`：跳转收银台。**按设备自动分流** ——
+     *   - 手机端 → `alipay.trade.wap.pay`（手机网站支付，唤起支付宝 App）
+     *   - PC 端 → `alipay.trade.page.pay`（电脑网站支付）
+     *   page.pay 沙箱 404，但 **wap.pay 沙箱是支持的**，所以跳转链路在沙箱也能联调。
+     * - `wap`：强制手机网站支付（wap.pay），不分设备。适合纯移动场景。
      *
-     * 两条路径都传 out_trade_no = 商户单号（= collection.id），支付宝原样回传，
+     * 设备判定来自前端在 createPaymentSession 时传的 metadata.device，
+     * 缺省按 PC（page.pay）处理。
+     *
+     * 各路径都传 out_trade_no = 商户单号（= collection.id），支付宝原样回传，
      * 回调据此定位支付单（见 payment.service 的 resolvePaymentForWebhook）。
      */
-    const flow = String(this.config.flow ?? 'qr') === 'redirect' ? 'redirect' : 'qr';
+    const flow = this.resolveFlow(input);
 
     if (flow === 'qr') {
       const { qrCode, tradeNo } = await this.client().createQrcode({
@@ -105,17 +112,23 @@ export class AlipayPaymentProvider extends AbstractPaymentProvider {
       };
     }
 
-    const url = this.client().buildPagePayUrl({
-      outTradeNo: input.sessionId,
-      totalAmount,
-      subject,
-    });
+    const isMobile = flow === 'wap' || String(input.metadata?.device ?? '') === 'mobile';
+    const url = isMobile
+      ? this.client().buildWapPayUrl({ outTradeNo: input.sessionId, totalAmount, subject })
+      : this.client().buildPagePayUrl({ outTradeNo: input.sessionId, totalAmount, subject });
     return {
       kind: 'redirectUrl',
       redirectUrl: url,
       providerReference: input.sessionId,
-      raw: { outTradeNo: input.sessionId, flow },
+      raw: { outTradeNo: input.sessionId, flow, method: isMobile ? 'wap.pay' : 'page.pay' },
     };
+  }
+
+  /** 解析支付形态：qr / redirect / wap。非法值退回默认 qr。 */
+  private resolveFlow(input: InitiatePaymentInput): 'qr' | 'redirect' | 'wap' {
+    const cfg = String(this.config.flow ?? 'qr').trim();
+    if (cfg === 'redirect' || cfg === 'wap') return cfg;
+    return 'qr';
   }
 
   async authorizePayment(input: AuthorizePaymentInput): Promise<AuthorizePaymentOutput> {

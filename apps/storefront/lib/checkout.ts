@@ -344,6 +344,12 @@ export async function createLivePaymentSession(input: {
     cart_id: input.cartId,
     provider_id: input.providerId,
     return_url: input.returnUrl,
+    /*
+     * 设备类型：让支付宝 provider 决定走 wap.pay（手机唤起 App）还是 page.pay（PC）。
+     * 判定标准是触摸屏（pointer:coarse）而不是 UA —— UA 易被误判，触摸屏更贴近
+     * 「这到底是不是手机」的本质。SSR 下 window 不可用，此时退 desktop（PC 收银台）。
+     */
+    ...(isTouchDevice() ? { device: 'mobile' as const } : {}),
   })) as PaymentSession;
   const context = session.context ?? {};
   return {
@@ -355,6 +361,12 @@ export async function createLivePaymentSession(input: {
     amountMinor: session.amount_minor,
     currencyCode: session.currency_code,
   };
+}
+
+/** 触摸屏判定（手机/平板）：SSR 环境无 window 时返回 false（退 PC 收银台）。 */
+function isTouchDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia?.('(pointer: coarse)').matches ?? false;
 }
 
 /**

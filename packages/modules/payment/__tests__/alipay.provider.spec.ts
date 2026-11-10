@@ -93,6 +93,51 @@ describe('发起支付', () => {
     expect(biz.product_code).toBe('FAST_INSTANT_TRADE_PAY');
   });
 
+  it('flow=wap → 走 alipay.trade.wap.pay，product_code=QUICK_WAP_WAY（手机网站支付）', async () => {
+    const res = await makeProvider({ flow: 'wap' }).initiatePayment({
+      sessionId: 'sess_wap',
+      amountMinor: 100n,
+      currencyCode: 'CNY',
+    });
+    const url = new URL(res.redirectUrl);
+    expect(url.searchParams.get('method')).toBe('alipay.trade.wap.pay');
+    const biz = JSON.parse(url.searchParams.get('biz_content') ?? '{}');
+    expect(biz.product_code).toBe('QUICK_WAP_WAY');
+    expect(biz.out_trade_no).toBe('sess_wap');
+  });
+
+  it('flow=redirect + device=mobile → 自动分流到 wap.pay（唤起支付宝 App）', async () => {
+    const res = await makeProvider({ flow: 'redirect' }).initiatePayment({
+      sessionId: 'sess_m',
+      amountMinor: 100n,
+      currencyCode: 'CNY',
+      metadata: { device: 'mobile', subject: '测试单' },
+    });
+    const url = new URL(res.redirectUrl);
+    expect(url.searchParams.get('method')).toBe('alipay.trade.wap.pay');
+  });
+
+  it('flow=redirect + device=desktop → 走 page.pay（PC 收银台）', async () => {
+    const res = await makeProvider({ flow: 'redirect' }).initiatePayment({
+      sessionId: 'sess_d',
+      amountMinor: 100n,
+      currencyCode: 'CNY',
+      metadata: { device: 'desktop' },
+    });
+    const url = new URL(res.redirectUrl);
+    expect(url.searchParams.get('method')).toBe('alipay.trade.page.pay');
+  });
+
+  it('flow=redirect 未传 device → 默认 page.pay（PC）', async () => {
+    const res = await makeProvider({ flow: 'redirect' }).initiatePayment({
+      sessionId: 'sess_x',
+      amountMinor: 100n,
+      currencyCode: 'CNY',
+    });
+    const url = new URL(res.redirectUrl);
+    expect(url.searchParams.get('method')).toBe('alipay.trade.page.pay');
+  });
+
   it('query string 里的空格必须是 %20 而非 +（否则支付宝报 missing-timestamp）', async () => {
     /*
      * URLSearchParams 按 form 规则把空格编码成 `+`，而支付宝解析 query string 时

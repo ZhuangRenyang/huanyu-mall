@@ -39,6 +39,8 @@ export interface CreatePaymentSessionRequest {
   provider_id: string;
   /** 支付完成后的回跳地址（PayPal 必填：缺了用户付完款无处可去）。 */
   return_url?: string;
+  /** 发起支付的设备：mobile（手机，支付宝走 wap.pay 唤起 App）/ desktop（PC）。 */
+  device?: 'mobile' | 'desktop';
 }
 
 /** 顾客注册。 */

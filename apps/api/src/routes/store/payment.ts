@@ -12,6 +12,8 @@ const createSessionBody = z.object({
   provider_id: z.string(),
   /** 支付完成后的回跳地址（PayPal 必填：缺了用户付完款无处可去）。 */
   return_url: z.string().url().optional(),
+  /** 发起支付的设备：mobile（手机，支付宝走 wap.pay 唤起 App）/ desktop（PC）。 */
+  device: z.enum(["mobile", "desktop"]).optional(),
 });
 
 /** 扣款：金额可由客户端指定（默认取 payment 记录金额），幂等键必填。 */
@@ -85,7 +87,7 @@ export function storePaymentRoutes(app: FastifyInstance, deps: AppDeps): void {
         paymentCollectionId: collectionId,
         providerId: b.provider_id,
         ...(b.return_url ? { returnUrl: b.return_url } : {}),
-        metadata: { subject },
+        metadata: { subject, ...(b.device ? { device: b.device } : {}) },
       });
       await deps.audit.record(
         auditEntry(req, {

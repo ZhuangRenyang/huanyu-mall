@@ -122,21 +122,48 @@ export class AlipayClient {
   /**
    * 电脑/手机网站支付：拼出可直接跳转的收银台 URL。
    *
-   * ⚠️ 支付宝**沙箱不支持**该接口（网关返回 404），所以它只在生产环境有意义；
-   * 沙箱联调请走 `createQrcode`（当面付）。
+   * ⚠️ 支付宝**沙箱不支持 `page.pay`**（网关返回 404，真机联调实测），
+   * 但**支持 `wap.pay`**（手机网站支付）。所以：
+   * - 生产：PC 用 `page.pay`，手机用 `wap.pay`（唤起支付宝 App）；
+   * - 沙箱：联调跳转链路只能走 `wap.pay`。
    *
-   * 用 `alipay.trade.page.pay`（PC）；移动端可换 `alipay.trade.wap.pay`，
-   * 两者参数一致，只是收银台形态不同。
+   * `wap.pay` 的 `product_code` 是 `QUICK_WAP_WAY`（不是 `FAST_INSTANT_TRADE_PAY`，
+   * 那是 `page.pay` 的）。写错不会立刻报参数错误，而是网关判产品码不匹配，
+   * 返回 `isv.invalid-parameter`，容易误往签名/密钥方向排查。
    */
   buildPagePayUrl(input: { outTradeNo: string; totalAmount: string; subject: string; body?: string }): string {
+    return this.buildRedirectUrl('alipay.trade.page.pay', 'FAST_INSTANT_TRADE_PAY', input, {});
+  }
+
+  /** 手机网站支付：手机浏览器点支付 → 唤起支付宝 App 收银台。沙箱/生产都支持。 */
+  buildWapPayUrl(input: { outTradeNo: string; totalAmount: string; subject: string; body?: string }): string {
+    /*
+     * quit_url：用户付款中途退出时返回的地址（wap 支付特有，PC page.pay 没有）。
+     * 这里用 returnUrl 兜底 —— 用户中途退出也回到订单结果页，不会卡在支付宝。
+     */
+    return this.buildRedirectUrl(
+      'alipay.trade.wap.pay',
+      'QUICK_WAP_WAY',
+      input,
+      this.config.returnUrl ? { quit_url: this.config.returnUrl } : {},
+    );
+  }
+
+  private buildRedirectUrl(
+    method: string,
+    productCode: string,
+    input: { outTradeNo: string; totalAmount: string; subject: string; body?: string },
+    extraBiz: Record<string, string>,
+  ): string {
     const params: Record<string, string> = {
-      ...this.commonParams('alipay.trade.page.pay'),
+      ...this.commonParams(method),
       biz_content: JSON.stringify({
         out_trade_no: input.outTradeNo,
         total_amount: input.totalAmount,
         subject: input.subject,
         ...(input.body ? { body: input.body } : {}),
-        product_code: 'FAST_INSTANT_TRADE_PAY',
+        product_code: productCode,
+        ...extraBiz,
       }),
     };
     if (this.config.notifyUrl) params.notify_url = this.config.notifyUrl;
