@@ -191,6 +191,50 @@ app_image_name() {
   printf '%s' "$v"
 }
 
+# 源码指纹：对决定镜像内容的源码做哈希。
+#
+# 为什么不能用镜像 ID 做指纹：`docker compose build` 每次都产生**新的**镜像 ID
+# （Dockerfile 里 `pnpm install --no-frozen-lockfile` 等步骤非确定性，代码完全没变、
+# 连续 build 两次 ID 也不同）。用镜像 ID 判断「代码变了没」永远是「变了」。
+#
+# 所以改成对源码目录算内容哈希：代码没变 → 哈希相同 → 跳过迁移/重建；
+# 代码变了 → 哈希不同 → 强制重跑。这是「镜像内容是否更新」的可靠代理。
+SRC_FP_FILE="$MALL_DIR/config/.source-fingerprint"
+
+source_fingerprint() {
+  local src_dir="$COMPOSE_DIR/.."
+  # 排除依赖与构建产物、非源码目录；只对真正进镜像的源文件算哈希。
+  # 注意必须与 pack.sh 的排除列表保持同步的「思路」，但这里只做指纹，不必完全一致。
+  ( cd "$src_dir" && find . \
+      -type f \
+      -not -path './node_modules/*' \
+      -not -path './.git/*' \
+      -not -path './.workbuddy/*' \
+      -not -path './apps/*/dist/*' \
+      -not -path './apps/*/.next/*' \
+      -not -path './packages/*/dist/*' \
+      -not -path './.turbo/*' \
+      -not -name '*.log' \
+      -print0 \
+    | sort -z \
+    | xargs -0 sha256sum \
+    | sha256sum \
+    | awk '{print $1}' )
+}
+
+# 源码变了 = 当前源码指纹 ≠ 上次成功记录的指纹（首次无记录也视为「变了」）。
+source_changed() {
+  local cur prev
+  cur="$(source_fingerprint)"
+  prev="$(cat "$SRC_FP_FILE" 2>/dev/null || echo '')"
+  [[ -n "$cur" && "$cur" != "$prev" ]]
+}
+
+record_source_fp() {
+  mkdir -p "$(dirname "$SRC_FP_FILE")"
+  source_fingerprint > "$SRC_FP_FILE"
+}
+
 # 构建应用镜像（api / worker / migrator 共用这一个标签，构建一次三处使用）。
 # 刻意不走 install-state 门禁：镜像必须始终与当前 app/ 目录里的代码一致。
 # 若用步骤状态门禁，换代码后重跑安装会跳过构建，容器继续跑旧镜像 —— 那正是
@@ -217,8 +261,12 @@ step8_seed() {
 }
 
 # [9] 拉起应用
+# $1 传 "force" 时用 --force-recreate：镜像变了必须重建容器，
+# 否则 up -d 会复用旧容器继续跑旧镜像（重建镜像 ≠ 容器自动换新）。
 step9_apps() {
-  ( cd "$COMPOSE_DIR" && docker compose --env-file "$MALL_DIR/config/.env" up -d api worker storefront )
+  local recreate=""
+  [[ "${1:-}" == "force" ]] && recreate="--force-recreate"
+  ( cd "$COMPOSE_DIR" && docker compose --env-file "$MALL_DIR/config/.env" up -d $recreate api worker storefront )
   ( cd "$COMPOSE_DIR" && docker compose --env-file "$MALL_DIR/config/.env" up -d nginx )
   # nginx.conf 以 bind mount 挂载：首次安装即生效，但「重跑安装 / 改过配置」时
   # 容器不会自动重载，必须显式 reload，否则新配置不生效（真机问题 #28 的配套修法）。
@@ -243,6 +291,9 @@ main() {
       cp "$STATE_FILE" "$STATE_FILE.bak.$(date +%s)" 2>/dev/null || true
       rm -f "$STATE_FILE"
     fi
+    # 源码指纹一并清掉：否则 reset 后源码没变，source_changed 判 false，
+    # 迁移/重建仍会被跳过，reset 语义就失效了。
+    rm -f "$SRC_FP_FILE"
   fi
   run_step 1 step1_detect "环境探测"
   run_step 2 step2_docker "检查 Docker"
@@ -254,6 +305,22 @@ main() {
   # 不先构建它就会去 pull 一个本地不存在的标签而失败；更危险的是 pull 到同名旧镜像
   # ——那正是「migrator 用旧镜像 → 新迁移没加载 → 新表不存在」的成因。
   build_app_image
+
+  # 关键判定：源码变了（换代码重跑）就必须重跑「迁移 + 重建容器 + 健康检查」，
+  # 不能走 run_step 的「已完成」门禁 —— 门禁会跳过它们，让容器继续跑旧镜像。
+  # 迁移本身幂等（migrator 按版本表跳过已应用项），重建容器也无副作用，重跑安全。
+  if source_changed; then
+    log "检测到源码更新，重跑迁移与容器重建（跳过 install-state 门禁）"
+    step7_migrate
+    # 种子靠 seed_versions 表幂等，重跑安全（源码变了可能带新种子数据）
+    step8_seed
+    step9_apps force
+    step10_health
+    record_source_fp
+    log "完成（源码已更新并重建）"
+    return 0
+  fi
+
   run_step 7 step7_migrate "执行迁移"
   run_step 8 step8_seed "首次种子"
   run_step 9 step9_apps "拉起应用"
