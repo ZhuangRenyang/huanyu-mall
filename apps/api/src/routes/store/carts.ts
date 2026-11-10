@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { errors } from "@mall/core";
-import type { CartDetailDTO, CartLineItemDTO } from "@mall/cart";
+import type { CartDetailDTO, CartDiscountDTO, CartLineItemDTO } from "@mall/cart";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers, resolveChannelId } from "../../plugins/auth.js";
 
@@ -41,6 +41,15 @@ function mapLineItem(li: CartLineItemDTO) {
   };
 }
 
+function mapDiscount(d: CartDiscountDTO) {
+  return {
+    type: d.type,
+    promotion_id: d.promotion_id,
+    code: d.code,
+    amount_minor: d.amount_minor,
+  };
+}
+
 export function mapCart(cart: CartDetailDTO) {
   return {
     id: cart.id,
@@ -55,6 +64,8 @@ export function mapCart(cart: CartDetailDTO) {
     line_items: cart.items.map(mapLineItem),
     shipping_method: cart.shipping_method,
     totals: cart.totals,
+    // 命中的促销折扣明细（优惠券/礼品卡/订单促销逐项展示「-¥20」「-¥50」用）
+    discounts: cart.discounts.map(mapDiscount),
   };
 }
 

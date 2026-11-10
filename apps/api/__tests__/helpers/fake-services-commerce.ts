@@ -17,6 +17,11 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   const giftCardEvents = new Map<string, Record<string, unknown>[]>();
   let gcCounter = 0;
   let gceCounter = 0;
+  // —— 目录/订单促销内存替身（二期补齐 promotion admin 管理路由用）——
+  const promotions = new Map<string, Record<string, unknown>>();
+  const promotionRules = new Map<string, Record<string, unknown>>();
+  let pCounter = 0;
+  let prCounter = 0;
   const promotion = {
     listVouchers: async ({ limit, offset }: { limit: number; offset: number }) => {
       const items = [...vouchers.values()].slice(offset, offset + limit);
@@ -172,6 +177,74 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     listGiftCardEvents: async (id: string) => giftCardEvents.get(id) ?? [],
     consumeGiftCards: async () => {},
     releaseGiftCards: async () => {},
+    // —— 目录/订单促销（promotion 表，二期补齐 admin 路由用）——
+    listPromotions: async ({ limit, offset }: { limit: number; offset: number }) => {
+      const items = [...promotions.values()].slice(offset, offset + limit);
+      return { items, count: promotions.size };
+    },
+    createPromotion: async (input: Record<string, unknown>) => {
+      const id = `promo_${++pCounter}`;
+      const p = {
+        id,
+        name: input.name,
+        code: input.code ?? null,
+        type: input.type,
+        status: input.status ?? "draft",
+        is_automatic: input.isAutomatic ?? false,
+        starts_at: input.startsAt ?? null,
+        ends_at: input.endsAt ?? null,
+        usage_limit: input.usageLimit ?? null,
+        used: 0,
+        metadata: input.metadata ?? null,
+      };
+      promotions.set(id, p);
+      return p;
+    },
+    retrievePromotion: async (id: string) => {
+      const p = promotions.get(id);
+      if (!p) throw errors.notFound("promotion not found");
+      return p;
+    },
+    updatePromotion: async (id: string, patch: Record<string, unknown>) => {
+      const cur = promotions.get(id);
+      if (!cur) throw errors.notFound("promotion not found");
+      const next: Record<string, unknown> = { ...cur };
+      if (patch.name !== undefined) next.name = patch.name;
+      if (patch.code !== undefined) next.code = patch.code;
+      if (patch.type !== undefined) next.type = patch.type;
+      if (patch.status !== undefined) next.status = patch.status;
+      if (patch.isAutomatic !== undefined) next.is_automatic = patch.isAutomatic;
+      if (patch.startsAt !== undefined) next.starts_at = patch.startsAt;
+      if (patch.endsAt !== undefined) next.ends_at = patch.endsAt;
+      if (patch.usageLimit !== undefined) next.usage_limit = patch.usageLimit;
+      if (patch.metadata !== undefined) next.metadata = patch.metadata;
+      promotions.set(id, next);
+      return next;
+    },
+    deletePromotion: async (id: string) => {
+      if (!promotions.has(id)) throw errors.notFound("promotion not found");
+      promotions.delete(id);
+    },
+    addPromotionRule: async (input: Record<string, unknown>) => {
+      const id = `prorul_${++prCounter}`;
+      const r = {
+        id,
+        promotion_id: input.promotionId,
+        predicate: input.predicate ?? {},
+        reward_type: input.rewardType,
+        reward_value: Number(input.rewardValue),
+        allocation: input.allocation ?? null,
+      };
+      promotionRules.set(id, r);
+      return r;
+    },
+    listPromotionRules: async (promotionId: string) => {
+      return [...promotionRules.values()].filter((r) => r.promotion_id === promotionId);
+    },
+    deletePromotionRule: async (id: string) => {
+      if (!promotionRules.has(id)) throw errors.notFound("promotion rule not found");
+      promotionRules.delete(id);
+    },
   };
 
   const orderItem = {

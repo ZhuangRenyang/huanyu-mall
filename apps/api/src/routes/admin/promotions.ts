@@ -2,8 +2,17 @@ import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { errors } from "@mall/core";
-import { PaginationQuerySchema } from "@mall/types";
-import { voucherCodeAlreadyExists, type VoucherCodeDTO, type VoucherDTO, type GiftCardDTO, type GiftCardEventDTO } from "@mall/promotion";
+import { PaginationQuerySchema, MAX_PAGE_OFFSET } from "@mall/types";
+import {
+  voucherCodeAlreadyExists,
+  type VoucherCodeDTO,
+  type VoucherDTO,
+  type GiftCardDTO,
+  type GiftCardEventDTO,
+  type PromotionDTO,
+  type PromotionRuleDTO,
+  type PromotionPredicate,
+} from "@mall/promotion";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { auditEntry } from "../audit-context.js";
@@ -14,19 +23,37 @@ import { auditEntry } from "../audit-context.js";
  * 券码 code：后端生成（48-bit 随机 hex）或管理员指定，唯一性由 DB unique index 兜底。
  */
 
-const createVoucherBody = z.object({
-  name: z.string().min(1),
-  type: z.enum(["entire_order", "shipping", "specific_product"]).optional(),
-  discount_type: z.enum(["fixed", "percentage"]),
-  // percentage 为万分比 bps（如 2000=20%），fixed 为 minor unit。金额一律服务端 bigint。
-  discount_value: z.number().int().nonnegative(),
-  min_spent: z.number().int().nonnegative().nullable().optional(),
-  usage_limit: z.number().int().nonnegative().nullable().optional(),
-  starts_at: z.string().datetime().nullable().optional(),
-  ends_at: z.string().datetime().nullable().optional(),
-  // 管理员指定券码；不传则后端生成 1 个高熵码。
-  codes: z.array(z.string().min(1)).max(100).optional(),
-});
+/** 百分比折扣上限 100%（10000 bps）。后台误配 150% 会把应收折成 0，等同白送（资金安全）。 */
+const MAX_PERCENTAGE_BPS = 10000;
+
+/** 折扣值守卫：percentage 不得超过 100%，fixed 不限（但由 computeDiscounts 封顶到应付）。 */
+function assertDiscountWithinCap(type: "fixed" | "percentage", value: number, label: string): void {
+  if (type === "percentage" && value > MAX_PERCENTAGE_BPS) {
+    throw errors.validation(`${label}百分比折扣不得超过 100%（10000 bps）`, {
+      max_bps: MAX_PERCENTAGE_BPS,
+      got_bps: value,
+    });
+  }
+}
+
+const createVoucherBody = z
+  .object({
+    name: z.string().min(1),
+    type: z.enum(["entire_order", "shipping", "specific_product"]).optional(),
+    discount_type: z.enum(["fixed", "percentage"]),
+    // percentage 为万分比 bps（如 2000=20%），fixed 为 minor unit。金额一律服务端 bigint。
+    discount_value: z.number().int().nonnegative(),
+    min_spent: z.number().int().nonnegative().nullable().optional(),
+    usage_limit: z.number().int().nonnegative().nullable().optional(),
+    starts_at: z.string().datetime().nullable().optional(),
+    ends_at: z.string().datetime().nullable().optional(),
+    // 管理员指定券码；不传则后端生成 1 个高熵码。
+    codes: z.array(z.string().min(1)).max(100).optional(),
+  })
+  .refine(
+    (b) => b.discount_type !== "percentage" || b.discount_value <= MAX_PERCENTAGE_BPS,
+    { path: ["discount_value"], message: "百分比折扣不得超过 100%（10000 bps）" },
+  );
 
 const updateVoucherBody = z.object({
   name: z.string().min(1).optional(),
@@ -121,9 +148,302 @@ const adjustGiftCardBody = z.object({
   reason: z.string().max(500).optional(),
 });
 
+// —— 目录/订单促销（promotion 表）管理（二期补齐，资金安全硬约束 1：促销都要后台可控制）——
+function mapPromotion(p: PromotionDTO) {
+  return {
+    id: p.id,
+    name: p.name,
+    code: p.code,
+    type: p.type,
+    status: p.status,
+    is_automatic: p.is_automatic,
+    starts_at: p.starts_at,
+    ends_at: p.ends_at,
+    usage_limit: p.usage_limit,
+    used: p.used,
+    metadata: p.metadata,
+  };
+}
+
+function mapPromotionRule(r: PromotionRuleDTO) {
+  return {
+    id: r.id,
+    promotion_id: r.promotion_id,
+    predicate: r.predicate,
+    reward_type: r.reward_type,
+    // percentage 为万分比 bps，fixed 为 minor unit。金额一律服务端 bigint。
+    reward_value: r.reward_value,
+    allocation: r.allocation,
+  };
+}
+
+/** 类型化 predicate（ADR-012 §2）：递归校验 and/or 组合 + 叶子谓词，禁客户端传非法结构。 */
+const promotionPredicateSchema: z.ZodType<PromotionPredicate> = z.lazy(() =>
+  z.union([
+    z.object({ and: z.array(promotionPredicateSchema).min(1) }),
+    z.object({ or: z.array(promotionPredicateSchema).min(1) }),
+    z.object({ variantIds: z.array(z.string().min(1)).min(1) }),
+    z.object({ categoryIds: z.array(z.string().min(1)).min(1) }),
+    z.object({ collectionIds: z.array(z.string().min(1)).min(1) }),
+    z.object({ subtotalGte: z.number().int().nonnegative() }),
+    z.object({ currencyEq: z.string().min(1) }),
+  ]),
+);
+
+const createPromotionRuleBody = z
+  .object({
+    predicate: promotionPredicateSchema.optional(),
+    reward_type: z.enum(["fixed", "percentage"]),
+    // percentage 为万分比 bps（如 2000=20%），fixed 为 minor unit。金额一律服务端 bigint。
+    reward_value: z.number().int().nonnegative(),
+    allocation: z.enum(["each", "across", "once"]).nullable().optional(),
+  })
+  .refine((b) => b.reward_type !== "percentage" || b.reward_value <= MAX_PERCENTAGE_BPS, {
+    path: ["reward_value"],
+    message: "百分比折扣不得超过 100%（10000 bps）",
+  });
+
+const createPromotionBody = z.object({
+  name: z.string().min(1),
+  code: z.string().min(1).nullable().optional(),
+  type: z.enum(["catalogue", "order"]),
+  status: z.enum(["draft", "active", "inactive"]).optional(),
+  is_automatic: z.boolean().optional(),
+  starts_at: z.string().datetime().nullable().optional(),
+  ends_at: z.string().datetime().nullable().optional(),
+  usage_limit: z.number().int().nonnegative().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  // 创建时可选附带规则（与 addPromotionRule 同构，缺 promotionId）。
+  rules: z.array(createPromotionRuleBody).max(100).optional(),
+});
+
+const updatePromotionBody = z.object({
+  name: z.string().min(1).optional(),
+  code: z.string().min(1).nullable().optional(),
+  type: z.enum(["catalogue", "order"]).optional(),
+  status: z.enum(["draft", "active", "inactive"]).optional(),
+  is_automatic: z.boolean().optional(),
+  starts_at: z.string().datetime().nullable().optional(),
+  ends_at: z.string().datetime().nullable().optional(),
+  usage_limit: z.number().int().nonnegative().nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+const listPromotionsQuery = PaginationQuerySchema.extend({
+  type: z.enum(["catalogue", "order"]).optional(),
+  status: z.enum(["draft", "active", "inactive"]).optional(),
+});
+
 export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void {
   const auth = makeAuthHelpers(deps);
   const guard = [auth.adminAuth, auth.requirePermission("settings")];
+
+  // —— 目录/订单促销（promotion 表）CRUD + 启停 + 规则（二期补齐，RBAC + 审计）——
+
+  app.get(
+    "/api/v1/admin/promotions",
+    { preHandler: guard, schema: { querystring: listPromotionsQuery } },
+    async (req, reply) => {
+      const q = req.query as {
+        limit: number;
+        offset: number;
+        type?: "catalogue" | "order";
+        status?: "draft" | "active" | "inactive";
+      };
+      let items: PromotionDTO[];
+      let count: number;
+      if (q.type || q.status) {
+        // repo 暂不支持按 type/status 过滤（硬约束不改模块），此处拉全量后内存过滤 + 分页。
+        const all = await deps.services.promotion.listPromotions({ limit: MAX_PAGE_OFFSET, offset: 0 });
+        const filtered = all.items.filter(
+          (p) => (!q.type || p.type === q.type) && (!q.status || p.status === q.status),
+        );
+        count = filtered.length;
+        items = filtered.slice(q.offset, q.offset + q.limit);
+      } else {
+        const res = await deps.services.promotion.listPromotions({ limit: q.limit, offset: q.offset });
+        items = res.items;
+        count = res.count;
+      }
+      reply.ok({
+        items: items.map(mapPromotion),
+        count,
+        offset: q.offset,
+        limit: q.limit,
+        hasMore: q.offset + items.length < count,
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/admin/promotions",
+    { preHandler: guard, schema: { body: createPromotionBody } },
+    async (req, reply) => {
+      const b = req.body as z.infer<typeof createPromotionBody>;
+      const promotion = await deps.services.promotion.createPromotion({
+        name: b.name,
+        code: b.code ?? null,
+        type: b.type,
+        status: b.status,
+        isAutomatic: b.is_automatic,
+        startsAt: b.starts_at !== undefined ? (b.starts_at ? new Date(b.starts_at) : null) : undefined,
+        endsAt: b.ends_at !== undefined ? (b.ends_at ? new Date(b.ends_at) : null) : undefined,
+        usageLimit: b.usage_limit,
+        metadata: b.metadata,
+      });
+      const rules: PromotionRuleDTO[] = [];
+      for (const r of b.rules ?? []) {
+        rules.push(
+          await deps.services.promotion.addPromotionRule({
+            promotionId: promotion.id,
+            predicate: r.predicate,
+            rewardType: r.reward_type,
+            rewardValue: BigInt(r.reward_value),
+            allocation: r.allocation ?? null,
+          }),
+        );
+      }
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "promotion.create",
+          entityType: "promotion",
+          entityId: promotion.id,
+          after: { ...mapPromotion(promotion), rules: rules.map(mapPromotionRule) },
+        }),
+      );
+      reply.code(201).ok({ ...mapPromotion(promotion), rules: rules.map(mapPromotionRule) });
+    },
+  );
+
+  app.get("/api/v1/admin/promotions/:id", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const promotion = await deps.services.promotion.retrievePromotion(id);
+    const rules = await deps.services.promotion.listPromotionRules(id);
+    reply.ok({ ...mapPromotion(promotion), rules: rules.map(mapPromotionRule) });
+  });
+
+  app.put(
+    "/api/v1/admin/promotions/:id",
+    { preHandler: guard, schema: { body: updatePromotionBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof updatePromotionBody>;
+      const before = await deps.services.promotion.retrievePromotion(id);
+      const updated = await deps.services.promotion.updatePromotion(id, {
+        name: b.name,
+        code: b.code,
+        type: b.type,
+        status: b.status,
+        isAutomatic: b.is_automatic,
+        startsAt: b.starts_at !== undefined ? (b.starts_at ? new Date(b.starts_at) : null) : undefined,
+        endsAt: b.ends_at !== undefined ? (b.ends_at ? new Date(b.ends_at) : null) : undefined,
+        usageLimit: b.usage_limit,
+        metadata: b.metadata,
+      });
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "promotion.update",
+          entityType: "promotion",
+          entityId: id,
+          before: mapPromotion(before),
+          after: mapPromotion(updated),
+        }),
+      );
+      reply.ok(mapPromotion(updated));
+    },
+  );
+
+  app.delete("/api/v1/admin/promotions/:id", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const before = await deps.services.promotion.retrievePromotion(id);
+    await deps.services.promotion.deletePromotion(id);
+    await deps.audit.record(
+      auditEntry(req, {
+        action: "promotion.delete",
+        entityType: "promotion",
+        entityId: id,
+        before: mapPromotion(before),
+      }),
+    );
+    reply.code(204).send();
+  });
+
+  // —— 启停（即时生效，硬约束 6：停用后下次 computeDiscounts 立即不命中）——
+  app.post("/api/v1/admin/promotions/:id/activate", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const before = await deps.services.promotion.retrievePromotion(id);
+    const updated = await deps.services.promotion.updatePromotion(id, { status: "active" });
+    await deps.audit.record(
+      auditEntry(req, {
+        action: "promotion.activate",
+        entityType: "promotion",
+        entityId: id,
+        before: mapPromotion(before),
+        after: mapPromotion(updated),
+      }),
+    );
+    reply.ok(mapPromotion(updated));
+  });
+
+  app.post("/api/v1/admin/promotions/:id/deactivate", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const before = await deps.services.promotion.retrievePromotion(id);
+    const updated = await deps.services.promotion.updatePromotion(id, { status: "inactive" });
+    await deps.audit.record(
+      auditEntry(req, {
+        action: "promotion.deactivate",
+        entityType: "promotion",
+        entityId: id,
+        before: mapPromotion(before),
+        after: mapPromotion(updated),
+      }),
+    );
+    reply.ok(mapPromotion(updated));
+  });
+
+  // —— 规则管理（一促销多规则）——
+  app.post(
+    "/api/v1/admin/promotions/:id/rules",
+    { preHandler: guard, schema: { body: createPromotionRuleBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof createPromotionRuleBody>;
+      const rule = await deps.services.promotion.addPromotionRule({
+        promotionId: id,
+        predicate: b.predicate,
+        rewardType: b.reward_type,
+        rewardValue: BigInt(b.reward_value),
+        allocation: b.allocation ?? null,
+      });
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "promotion_rule.create",
+          entityType: "promotion_rule",
+          entityId: rule.id,
+          after: mapPromotionRule(rule),
+        }),
+      );
+      reply.code(201).ok(mapPromotionRule(rule));
+    },
+  );
+
+  app.delete(
+    "/api/v1/admin/promotions/rules/:ruleId",
+    { preHandler: guard },
+    async (req, reply) => {
+      const { ruleId } = req.params as { ruleId: string };
+      await deps.services.promotion.deletePromotionRule(ruleId);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "promotion_rule.delete",
+          entityType: "promotion_rule",
+          entityId: ruleId,
+          before: { rule_id: ruleId },
+        }),
+      );
+      reply.code(204).send();
+    },
+  );
 
   // —— Voucher CRUD ——
   app.get(
@@ -191,6 +511,12 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof updateVoucherBody>;
       const before = await deps.services.promotion.retrieveVoucher(id);
+      // 交叉校验：只改 value 不改 type 时，仍要按现有类型卡 100% 上限（资金安全）。
+      assertDiscountWithinCap(
+        b.discount_type ?? before.discount_type,
+        b.discount_value ?? Number(before.discount_value),
+        "优惠券",
+      );
       const updated = await deps.services.promotion.updateVoucher(id, {
         name: b.name,
         type: b.type,
