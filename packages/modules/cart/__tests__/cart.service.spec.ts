@@ -274,11 +274,12 @@ class FakeTaxLookup {
       taxRateBps: this.rateBps,
       taxAmountMinor: one(l.amountMinor),
     }));
-    const totalTaxMinor =
-      lines.reduce((s, l) => s + l.taxAmountMinor, 0n) + one(input.shippingMinor);
+    const shippingTaxMinor = one(input.shippingMinor);
+    const totalTaxMinor = lines.reduce((s, l) => s + l.taxAmountMinor, 0n) + shippingTaxMinor;
     return {
       lines,
       totalTaxMinor,
+      shippingTaxMinor,
       rateSource: "default" as const,
       included_in_price: this.includedInPrice,
     };
@@ -564,6 +565,8 @@ describe("totals 的税口径（ADR-018：含税价不重复加税）", () => {
 
     const detail = await service.retrieveCart(cart.id, { countryCode: "CN" });
     expect(detail.totals!.tax_minor).toBe(1300n);
+    // 运费 0 时运费税也是 0；合计仍是 11300
+    expect(detail.totals!.shipping_tax_minor).toBe(0n);
     expect(detail.totals!.total_minor).toBe(11300n);
     expect(detail.tax_included_in_price).toBe(false);
   });

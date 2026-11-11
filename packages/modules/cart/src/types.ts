@@ -128,6 +128,8 @@ export interface TaxLookupPort {
   }): Promise<{
     lines: Array<{ lineId: string; taxRateBps: number; taxAmountMinor: bigint }>;
     totalTaxMinor: bigint;
+    /** 其中运费的税（下单必须一并收，见 CartTotals.shipping_tax_minor）。 */
+    shippingTaxMinor: bigint;
     rateSource: "country" | "default" | "none";
     /** 含税价时合计不再加税（见 TaxResultDTO）。 */
     included_in_price: boolean;
