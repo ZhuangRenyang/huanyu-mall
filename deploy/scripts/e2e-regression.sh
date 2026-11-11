@@ -33,14 +33,14 @@ LI=$(curl -s -X POST "$BASE/store/carts/$CART_ID/line-items" -H 'Content-Type: a
   -d "{\"variant_id\":\"$VAR_ID\",\"quantity\":2}")
 echo "$LI" | head -c 400
 
-step "5. 选运费"
+step "5. 设置收货国家（税与运费自动算）"
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" -H 'Content-Type: application/json' \
+  -d '{"country":"CN"}'
+
+step "5.1 选运费（兼容旧接口：金额仍由后端决定）"
 SM=$(curl -s -X POST "$BASE/store/carts/$CART_ID/shipping-methods" -H 'Content-Type: application/json' \
   -d "{\"shipping_option_id\":\"$OPT_ID\"}")
 echo "$SM" | head -c 400
-
-step "5.5 设置收货国家（税与运费自动算）"
-curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" -H 'Content-Type: application/json' \
-  -d '{"country":"CN"}'
 
 step "6. 结账（幂等键）"step "6. 结账（幂等键）"
 CO=$(curl -s -X POST "$BASE/store/carts/$CART_ID/complete" -H 'Content-Type: application/json' \

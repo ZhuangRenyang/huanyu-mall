@@ -223,6 +223,10 @@ if is_int "$SUB" && ((SUB > 0)); then ok "小计 $SUB（minor unit）"; else bad
 CURRENCY="$(jqr '.data.currency_code')"
 ok "购物车币种 $CURRENCY"
 
+# 先设收货国家：运费与税都按国家自动算（ADR-019），选运费前必须已有国家
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" \
+  -H 'Content-Type: application/json' -d '{"country":"CN"}'
+
 sec "3. 选运费（带 cart_id，按小计算价）"
 call GET "/store/shipping-options?country=CN&cart_id=$CART_ID"
 expect_2xx "查询运费方案" || exit 1
@@ -339,7 +343,6 @@ sec "8. 下单（幂等键）"
 curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" \
   -H 'Content-Type: application/json' -d '{"country":"CN"}'
 
-OUT="$(curlsec "8. 下单（幂等键）"
 OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: promo-e2e-$(date +%s)" -d '{}' 2>&1)"
 CODE="${OUT##*$'\n'}"

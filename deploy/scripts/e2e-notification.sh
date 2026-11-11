@@ -172,7 +172,7 @@ expect_2xx "加购 1 件" || exit 1
 curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" \
   -H 'Content-Type: application/json' -d '{"country":"CN"}'
 
-OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete"OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
+OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: e2e-notify-$(date +%s)" -d '{}' 2>&1)"
 CODE="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
 expect_2xx "下单" || exit 1

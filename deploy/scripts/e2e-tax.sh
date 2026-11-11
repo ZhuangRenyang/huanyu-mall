@@ -254,7 +254,8 @@ expect_num "订单合计 = 购物车 CN 合计" "$(jqr '.data.total_minor')" "$T
 expect_num "订单收货国家" "$(jqr '.data.shipping_address.country')" "CN"
 expect_num "订单收货城市" "$(jqr '.data.shipping_address.city')" "深圳"
 expect_num "订单行税率留痕" "$(jqr '.data.line_items[0].tax_rate_bps')" "1300"
-expect_num "订单行税额" "$(jqr '.data.line_items[0].tax_amount_minor')" "$TAX_CN"
+# 行税额只含该行商品的税，运费税在订单税里（两者相加才等于订单税）
+expect_num "订单行税额（不含运费税）" "$(jqr '.data.line_items[0].tax_amount_minor')" "$(tax_of "$BASE_CN" 1300)"
 
 call GET "/admin/orders/$ORDER_ID" "" auth
 expect_num "后台订单税额一致" "$(jqr '.data.tax_minor')" "$TAX_CN"

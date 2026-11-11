@@ -279,6 +279,9 @@ else
   skip "无运费方案，按 0 运费继续"
 fi
 
+# 下单前后要对比主仓预留是否被占用：先记下来
+MAIN_RESERVED_PRE_ORDER="$(level_field "$MAIN_LOC" reserved_quantity)"
+
 # 下单要求购物车已有收货国家（ADR-019：运费与税都按国家自动算）
 curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" \
   -H 'Content-Type: application/json' -d '{"country":"CN"}'
