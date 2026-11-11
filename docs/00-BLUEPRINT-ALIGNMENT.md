@@ -84,17 +84,24 @@
 
 ## 四、二期 / 三期状态
 
+> **2026-11-11 范围收敛（ADR-014）**：不再按 CRMEB / 电商大盘的功能清单铺开。
+> 准入三问：商家每周会用吗？三步内能完成吗？不做会丢单或违规吗？缺一不做。
+
 | 期 | 项目 | 状态 |
 |---|---|---|
-| 二期 | Promotion 三件套 + Gift Card | 未开始 |
-| 二期 | 多仓履约深化 + 税务深化 | 未开始 |
-| 二期 | Search（Meilisearch/Algolia）+ Translation 全量 | 未开始 |
-| 二期 | CMS/博客 + 拖拽装修编辑器（PC/H5 双预览） | 未开始 |
-| 二期 | Notification + 对外 Webhook + API Key/Sales Channel | 未开始 |
-| 二期 | 多市场扩张 + B2B 基础 + 按 Channel 启停支付 | 未开始 |
-| 二期 | AI Gateway + AI Support 基础版 | 未开始 |
-| 二期 | System Update 后台一键升级 | 未开始 |
-| 三期 | Loyalty + Store Credit / B2B 完整 / AI Support Plus / Digital Products / Subscription / 插件市场 | 未开始 |
+| 二期 | Promotion 三件套 + Gift Card | ✅ 已完成（2026-11-10） |
+| 二期 | 多仓履约深化 | ✅ 已完成（ADR-013：优先单仓、不够才拆） |
+| 二期 | 税务深化（K3） | 待做 —— **保留**（合规刚需；当前单一税率可用，税区按真实销售国家再加） |
+| 二期 | 订单通知（邮件） | 待做 —— **保留**（下单/发货通知是基础体验） |
+| 二期 | System Update 后台一键升级 | 待做 —— **保留**（运维刚需） |
+| 二期 | Search（Meilisearch/Algolia） | 按需 —— 商品数 < 200 用 PostgreSQL，不引入搜索引擎 |
+| 二期 | Translation 全量 | ❌ 暂缓（单市场单语言） |
+| 二期 | CMS/博客 + 拖拽装修编辑器 | ❌ 不做（ADR-014；一套模板 + 设计变量够用） |
+| 二期 | Notification + 对外 Webhook + API Key/Sales Channel | ❌ 暂缓（没有外部系统要对接） |
+| 二期 | 多市场扩张 + B2B 基础 + 按 Channel 启停支付 | ❌ 暂缓（单商户单市场） |
+| 二期 | AI Gateway + AI Support 基础版 | ❌ 不做（ADR-014） |
+| 三期 | Loyalty + Store Credit / B2B 完整 / AI Support Plus / Digital Products / Subscription / 插件市场 | ❌ 不做（ADR-014） |
+| — | 秒杀 / 拼团 / 砍价 / 分销 / 积分 / 签到 / 直播 / 抽奖 | ❌ **永久不做**（ADR-014） |
 
 ---
 
