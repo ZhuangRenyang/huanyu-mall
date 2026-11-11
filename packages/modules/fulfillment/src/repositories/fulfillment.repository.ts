@@ -99,6 +99,17 @@ export class DrizzleFulfillmentRepository implements FulfillmentRepository {
     return rows[0] ? toFulfillmentDTO(rows[0]) : null;
   }
 
+  async listByOrder(orderId: string): Promise<FulfillmentDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.fulfillment)
+      .where(
+        and(eq(schema.fulfillment.orderId, orderId), isNull(schema.fulfillment.deletedAt)),
+      )
+      .orderBy(schema.fulfillment.createdAt);
+    return rows.map(toFulfillmentDTO);
+  }
+
   async insertFulfillmentItems(fulfillmentId: string, items: FulfillmentItemInput[]): Promise<void> {
     if (items.length === 0) return;
     await this.db.insert(schema.fulfillmentItem).values(

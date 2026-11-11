@@ -225,4 +225,27 @@ describe("多仓后台接口（ADR-013 阶段 2：仓库 / 按仓库存 / 调拨
       expect(deps.auditRepo.rows.map((r) => r.action)).toContain("fulfillment.create");
     });
   });
+
+  it("订单发货单查询：返回已发仓与运单，供后台看「还差哪个仓」", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/orders/ord_1/fulfillments",
+        headers: admin,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.count).toBe(1);
+      expect(res.json().data.items[0]).toMatchObject({
+        id: "fulf_1",
+        stock_location_id: "loc_1",
+        status: "shipped",
+        tracking_links: [{ carrier: "顺丰", number: "SF1" }],
+      });
+
+      // staff 无 orders 权限（staff 权限为 products/orders/... —— orders 有，故 200）；
+      // 用匿名验证鉴权边界
+      const anon = await app.inject({ method: "GET", url: "/api/v1/admin/orders/ord_1/fulfillments" });
+      expect(anon.statusCode).toBe(401);
+    });
+  });
 });

@@ -51,6 +51,8 @@ export interface StockLocationDTO {
 export interface InventoryTransferDTO {
   id: string;
   inventory_item_id: string;
+  /** 物料 SKU（列表 join 出来，便于后台直接展示；单查时可能为 null）。 */
+  sku: string | null;
   from_location_id: string;
   to_location_id: string;
   quantity: number;

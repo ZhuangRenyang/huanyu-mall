@@ -14,8 +14,19 @@ export { login, logout, type AdminLoginResult } from './admin-session';
 
 export { listProducts, saveProduct, deleteProduct } from './admin-catalog';
 
-export { listOrders, getOrder, shipOrder, refundOrder, listOrderReservations } from './admin-orders';
-export type { OrderReservationView, ShipOrderOptions } from './admin-orders';
+export {
+  listOrders,
+  getOrder,
+  shipOrder,
+  refundOrder,
+  listOrderReservations,
+  listOrderFulfillments,
+} from './admin-orders';
+export type {
+  OrderReservationView,
+  OrderFulfillmentView,
+  ShipOrderOptions,
+} from './admin-orders';
 
 export {
   listStockLocations,

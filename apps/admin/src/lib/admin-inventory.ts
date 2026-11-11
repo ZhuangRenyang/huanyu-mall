@@ -271,13 +271,18 @@ export async function listTransfers(status?: TransferStatus): Promise<TransferVi
     return status ? list.filter((t) => t.status === status) : list;
   }
   const client = adminClient();
-  const [res, skuMap] = await Promise.all([
-    client.listInventoryTransfers({ limit: 100, ...(status ? { status } : {}) }) as Promise<{
-      items?: InventoryTransfer[];
-    }>,
-    liveSkuMap(),
-  ]);
-  return (res.items ?? []).map((t) => mapTransfer(t, skuMap.get(t.inventory_item_id) ?? t.inventory_item_id));
+  const res = (await client.listInventoryTransfers({
+    limit: 100,
+    ...(status ? { status } : {}),
+  })) as { items?: InventoryTransfer[] };
+  const items = res.items ?? [];
+  // 接口已 join 出 sku；只有历史/单查数据缺 sku 时才回落到库存行建映射。
+  const skuMap = items.some((t) => !t.sku)
+    ? await liveSkuMap()
+    : new Map<string, string>();
+  return items.map((t) =>
+    mapTransfer(t, t.sku ?? skuMap.get(t.inventory_item_id) ?? t.inventory_item_id),
+  );
 }
 
 export async function createTransfer(input: TransferInput): Promise<TransferView> {

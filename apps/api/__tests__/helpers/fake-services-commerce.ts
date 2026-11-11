@@ -635,6 +635,16 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         reservation_ids: ["rsv_1"],
         tracking_links: null,
       }),
+      listByOrder: async () => [
+        {
+          id: "fulf_1",
+          order_id: "ord_1",
+          stock_location_id: "loc_1",
+          status: "shipped",
+          reservation_ids: ["rsv_1"],
+          tracking_links: [{ carrier: "顺丰", number: "SF1" }],
+        },
+      ],
       addShipment: async () => ({
         id: "ship_1",
         fulfillment_id: "fulf_1",

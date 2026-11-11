@@ -240,6 +240,8 @@ export function createAdminClient(opts: ClientOptions) {
       patch(`/api/v1/admin/stock-locations/${id}`, b),
     listInventoryLevels: (q?: Query) => get("/api/v1/admin/inventory-levels", q),
     /** 订单预留明细（含仓）：后台按仓拆发货单前选仓用。 */
+    listOrderFulfillments: (orderId: string) =>
+      get(`/api/v1/admin/orders/${orderId}/fulfillments`),
     listOrderReservations: (orderId: string) =>
       get(`/api/v1/admin/orders/${orderId}/reservations`),
     listInventoryTransfers: (q?: Query) => get("/api/v1/admin/inventory-transfers", q),

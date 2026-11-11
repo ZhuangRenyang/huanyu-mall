@@ -178,6 +178,11 @@ function updateOrder(id: string, mutate: (o: AdminOrder) => void): void {
  */
 const SHIPPED_LOCS_KEY = 'admin:order-shipped-locations';
 
+/** mock：读某单已发过的仓（live 模式请用 listOrderFulfillments）。 */
+export function listShippedLocations(id: string): string[] {
+  return read<Record<string, string[]>>(SHIPPED_LOCS_KEY, {})[id] ?? [];
+}
+
 export function shipOrder(
   id: string,
   carrier: string,

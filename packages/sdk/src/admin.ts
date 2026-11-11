@@ -92,10 +92,22 @@ export interface StockLocation {
   priority: number;
 }
 
+/** 发货单（后台）：一张只对应一个仓（ADR-013 §3）。 */
+export interface AdminFulfillment {
+  id: string;
+  order_id: string;
+  stock_location_id: string | null;
+  status: string;
+  reservation_ids: string[];
+  tracking_links: Array<{ carrier: string; number: string }> | null;
+}
+
 /** 仓间调拨流水。pending 只登记不占量；completed 才搬货。 */
 export interface InventoryTransfer {
   id: string;
   inventory_item_id: string;
+  /** 物料 SKU（列表接口 join 出来；单查可能为 null）。 */
+  sku: string | null;
   from_location_id: string;
   to_location_id: string;
   quantity: number;

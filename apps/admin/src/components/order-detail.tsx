@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, CreditCard, MapPin, RotateCcw, Truck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -13,8 +13,14 @@ import {
   cn,
 } from '@mall/ui';
 import { TextField, SelectField } from './field';
-import { listOrderReservations, listStockLocations, refundOrder, shipOrder } from '@/lib/admin-api';
-import type { OrderReservationView, StockLocationView } from '@/lib/admin-api';
+import {
+  listOrderFulfillments,
+  listOrderReservations,
+  listStockLocations,
+  refundOrder,
+  shipOrder,
+} from '@/lib/admin-api';
+import type { OrderFulfillmentView, OrderReservationView, StockLocationView } from '@/lib/admin-api';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
 
@@ -77,6 +83,7 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const [tracking, setTracking] = useState(order.trackingNumber ?? '');
   const [shipError, setShipError] = useState<string | null>(null);
   const [reservations, setReservations] = useState<OrderReservationView[]>([]);
+  const [fulfillments, setFulfillments] = useState<OrderFulfillmentView[]>([]);
   const [locations, setLocations] = useState<StockLocationView[]>([]);
   const [resLoading, setResLoading] = useState(false);
   const [shipLocationId, setShipLocationId] = useState('');
@@ -95,9 +102,18 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const ful = FUL_META[order.fulfillmentStatus];
   const idTail = order.id.slice(-4);
 
-  // —— 按仓发货（ADR-013 §3）：本单预留落在几个仓，决定表单形态 ——
+  // —— 按仓发货（ADR-013 §3）：本单预留落在几个仓、已发过哪些仓，决定表单形态 ——
   const reservedLocationIds = [...new Set(reservations.map((r) => r.locationId))];
-  const multiLocation = reservedLocationIds.length > 1;
+  const shippedLocationIds = new Set(
+    fulfillments.map((f) => f.locationId).filter((id): id is string => Boolean(id)),
+  );
+  const pendingLocationIds = reservedLocationIds.filter((id) => !shippedLocationIds.has(id));
+  const multiLocation = pendingLocationIds.length > 1;
+  // 预留读不到时退回订单状态判断，避免发货入口凭空消失。
+  const canShip =
+    reservedLocationIds.length > 0
+      ? pendingLocationIds.length > 0
+      : order.fulfillmentStatus === 'unfulfilled';
   const reservedAtSelected = reservations
     .filter((r) => r.locationId === shipLocationId)
     .reduce((n, r) => n + r.quantity, 0);
@@ -107,19 +123,34 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   }, 0);
   const locationName = (id: string) => locations.find((l) => l.id === id)?.name ?? id;
 
+  const loadShipContext = async () => {
+    // 任一接口不可用时退回旧行为（单仓简单表单 / 由后端裁决），不阻断发货入口。
+    const [res, locs, fulfs] = await Promise.all([
+      listOrderReservations(order.id).catch(() => [] as OrderReservationView[]),
+      listStockLocations().catch(() => [] as StockLocationView[]),
+      listOrderFulfillments(order.id).catch(() => [] as OrderFulfillmentView[]),
+    ]);
+    setReservations(res);
+    setLocations(locs);
+    setFulfillments(fulfs);
+    const shipped = new Set(fulfs.map((f) => f.locationId).filter(Boolean));
+    const firstPending = [...new Set(res.map((r) => r.locationId))].find((id) => !shipped.has(id));
+    setShipLocationId(firstPending ?? '');
+    return fulfs;
+  };
+
+  useEffect(() => {
+    setResLoading(true);
+    void loadShipContext().finally(() => setResLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在订单切换时重载
+  }, [order.id]);
+
   const openShip = async () => {
     setShowShip(true);
     setShipError(null);
     setAlloc({});
     setResLoading(true);
-    // 预留接口不可用时退回单仓简单表单（提交时由后端裁决），不阻断发货入口。
-    const [res, locs] = await Promise.all([
-      listOrderReservations(order.id).catch(() => [] as OrderReservationView[]),
-      listStockLocations().catch(() => [] as StockLocationView[]),
-    ]);
-    setReservations(res);
-    setLocations(locs);
-    setShipLocationId([...new Set(res.map((r) => r.locationId))][0] ?? '');
+    await loadShipContext();
     setResLoading(false);
   };
 
@@ -163,13 +194,13 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
           order.id,
           carrier.trim(),
           tracking.trim(),
-          reservedLocationIds.length === 1 ? { stockLocationId: reservedLocationIds[0] } : undefined,
+          pendingLocationIds.length === 1 ? { stockLocationId: pendingLocationIds[0] } : undefined,
         );
       }
       setShowShip(false);
       setAlloc({});
-      setReservations([]);
       setShipError(null);
+      await loadShipContext();
       flash('已发货');
       onUpdated();
     } catch (err) {
@@ -246,6 +277,24 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
         </InfoCard>
       </div>
 
+      {fulfillments.length > 0 && (
+        <section aria-label="已发货记录">
+          <h3 className="mb-2 text-sm font-semibold text-foreground">已发货</h3>
+          <ul className="divide-y divide-border rounded-lg border border-border">
+            {fulfillments.map((f) => (
+              <li key={f.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                <span>{f.locationId ? locationName(f.locationId) : '未标记仓库'}</span>
+                <span className="tabular text-xs text-muted-foreground">
+                  {f.carriers.length > 0
+                    ? f.carriers.map((c) => `${c.carrier} · ${c.number}`).join('，')
+                    : '待填运单'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <div className="flex flex-wrap gap-2 border-t border-border pt-4">
         {order.fulfillmentStatus === 'unfulfilled' && (
           <Button size="sm" onClick={() => void openShip()}>
@@ -281,7 +330,7 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
                   setAlloc({});
                   setShipError(null);
                 }}
-                options={reservedLocationIds.map((id) => ({ value: id, label: locationName(id) }))}
+                options={pendingLocationIds.map((id) => ({ value: id, label: locationName(id) }))}
               />
               <p className="text-xs leading-5 text-muted-foreground">
                 本仓预留合计 <span className="tabular font-medium text-foreground">{reservedAtSelected}</span> 件，请分配到各商品行。

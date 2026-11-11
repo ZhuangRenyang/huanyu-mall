@@ -101,6 +101,10 @@ export class FulfillmentService implements IFulfillmentModuleService {
     return fulfillment;
   }
 
+  async listByOrder(orderId: string): Promise<FulfillmentDTO[]> {
+    return this.deps.repo.listByOrder(orderId);
+  }
+
   async addShipment(
     fulfillmentId: string,
     input: { carrierName: string; trackingNumber: string; shippedAt: Date },

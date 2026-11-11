@@ -451,8 +451,12 @@ export class DrizzleInventoryRepository implements InventoryRepository {
       ? eq(schema.inventoryTransfer.status, q.status)
       : sql`true`;
     const rows = await this.db
-      .select()
+      .select({ transfer: schema.inventoryTransfer, sku: schema.inventoryItem.sku })
       .from(schema.inventoryTransfer)
+      .leftJoin(
+        schema.inventoryItem,
+        eq(schema.inventoryItem.id, schema.inventoryTransfer.inventoryItemId),
+      )
       .where(condition)
       .orderBy(sql`${schema.inventoryTransfer.createdAt} DESC`)
       .limit(q.limit)
@@ -461,7 +465,10 @@ export class DrizzleInventoryRepository implements InventoryRepository {
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.inventoryTransfer)
       .where(condition);
-    return { items: rows.map(toTransferDTO), count: countRows[0]?.count ?? 0 };
+    return {
+      items: rows.map((r) => toTransferDTO(r.transfer, r.sku ?? null)),
+      count: countRows[0]?.count ?? 0,
+    };
   }
 
   /**
@@ -483,10 +490,14 @@ export class DrizzleInventoryRepository implements InventoryRepository {
   }
 }
 
-function toTransferDTO(r: typeof schema.inventoryTransfer.$inferSelect): InventoryTransferDTO {
+function toTransferDTO(
+  r: typeof schema.inventoryTransfer.$inferSelect,
+  sku: string | null = null,
+): InventoryTransferDTO {
   return {
     id: r.id,
     inventory_item_id: r.inventoryItemId,
+    sku,
     from_location_id: r.fromLocationId,
     to_location_id: r.toLocationId,
     quantity: r.quantity,

@@ -89,6 +89,8 @@ export interface FulfillmentRepository {
     reservationIds: string[];
   }): Promise<FulfillmentDTO>;
   findFulfillment(id: string): Promise<FulfillmentDTO | null>;
+  /** 按订单列出发货单（后台展示「已发哪些仓」，ADR-013 §3）。 */
+  listByOrder(orderId: string): Promise<FulfillmentDTO[]>;
   insertFulfillmentItems(fulfillmentId: string, items: FulfillmentItemInput[]): Promise<void>;
   updateFulfillmentShipped(
     id: string,
@@ -107,6 +109,8 @@ export interface IFulfillmentModuleService {
   listShippingOptions(input: ListShippingOptionsInput): Promise<ShippingOptionDTO[]>;
   /** 查单个运费方案（跨模块端口用）。 */
   findShippingOption(id: string): Promise<ShippingOptionDTO | null>;
+  /** 按订单列出发货单（后台展示「已发哪些仓」）。 */
+  listByOrder(orderId: string): Promise<FulfillmentDTO[]>;
   calculateShippingPrice(
     optionId: string,
     ctx: ShippingPriceContext,

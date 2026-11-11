@@ -45,6 +45,13 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     reply.ok(mapAdminOrder(await deps.services.order.retrieveOrder(id)));
   });
 
+  // 已发货的仓与运单：跨仓订单靠它看「还差哪个仓没发」（ADR-013 §3）。
+  app.get("/api/v1/admin/orders/:id/fulfillments", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const items = await deps.services.fulfillment.listByOrder(id);
+    reply.ok({ items, count: items.length });
+  });
+
   app.post("/api/v1/admin/orders/:id/cancel", { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const before = await deps.services.order.retrieveOrder(id);

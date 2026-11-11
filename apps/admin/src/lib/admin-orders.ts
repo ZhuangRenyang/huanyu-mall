@@ -1,6 +1,10 @@
 import type { AdminOrder, AdminOrderLine } from './admin-data';
 import { adminClient, getAdminApiMode } from './admin-client';
-import { listOrders as mockListOrders, shipOrder as mockShipOrder } from './admin-store';
+import {
+  listOrders as mockListOrders,
+  listShippedLocations,
+  shipOrder as mockShipOrder,
+} from './admin-store';
 import { MOCK_BACKUP_LOCATION_ID, MOCK_MAIN_LOCATION_ID } from './admin-inventory';
 
 /**
@@ -161,6 +165,40 @@ export async function shipOrder(
     ...(opts?.stockLocationId ? { stock_location_id: opts.stockLocationId } : {}),
   })) as { id: string };
   await client.createShipment(fulfillment.id, { carrier_name: carrier, tracking_number: trackingNumber });
+}
+
+/** 已发货的仓与运单（跨仓订单用它看「还差哪个仓没发」）。 */
+export interface OrderFulfillmentView {
+  id: string;
+  locationId: string | null;
+  status: string;
+  carriers: Array<{ carrier: string; number: string }>;
+}
+
+export async function listOrderFulfillments(orderId: string): Promise<OrderFulfillmentView[]> {
+  if (getAdminApiMode() !== 'live') {
+    const locs = listShippedLocations(orderId);
+    return locs.map((locationId, i) => ({
+      id: `fulf_mock_${i}`,
+      locationId,
+      status: 'shipped',
+      carriers: [],
+    }));
+  }
+  const res = (await adminClient().listOrderFulfillments(orderId)) as {
+    items?: Array<{
+      id: string;
+      stock_location_id: string | null;
+      status: string;
+      tracking_links?: Array<{ carrier: string; number: string }> | null;
+    }>;
+  };
+  return (res.items ?? []).map((f) => ({
+    id: f.id,
+    locationId: f.stock_location_id,
+    status: f.status,
+    carriers: f.tracking_links ?? [],
+  }));
 }
 
 export async function refundOrder(id: string): Promise<void> {
