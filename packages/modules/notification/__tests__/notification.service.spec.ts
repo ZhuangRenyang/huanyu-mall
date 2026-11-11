@@ -85,9 +85,12 @@ class InMemoryRepo implements NotificationRepository {
     const picked = [...this.rows.values()]
       .filter(
         (r) =>
-          (r.status === "pending" || r.status === "failed") &&
           r.attempts < 3 &&
-          (r.next_attempt_at === null || r.next_attempt_at.getTime() <= now),
+          (r.status === "pending"
+            ? r.next_attempt_at === null || r.next_attempt_at.getTime() <= now
+            : r.status === "failed" &&
+              r.next_attempt_at !== null &&
+              r.next_attempt_at.getTime() <= now),
       )
       .sort((a, b) => a.created_at.getTime() - b.created_at.getTime())
       .slice(0, limit);
@@ -278,6 +281,23 @@ describe("派发与重试", () => {
     fail = false;
     const second = await service.resend(id);
     expect(second.status).toBe("sent");
+  });
+
+  it("手动重发失败后不会被派发器自动重发（next_attempt_at 为空 = 放弃）", async () => {
+    const repo = new InMemoryRepo();
+    const service = new NotificationService(repo, async () => {
+      throw new Error("SMTP 拒收");
+    });
+    await service.updateSettings({ enabled: true, from_email: "noreply@example.com", smtp_host: "h" });
+    await service.enqueueOrderConfirmation(payload);
+    const id = [...repo.rows.keys()][0]!;
+    await service.resend(id);
+    expect(repo.rows.get(id)!.status).toBe("failed");
+    expect(repo.rows.get(id)!.next_attempt_at).toBeNull();
+
+    // 换成好的发信实现也不该被自动重发：它已经「放弃」了
+    const claimed = await service.claimPending(10);
+    expect(claimed).toHaveLength(0);
   });
 });
 

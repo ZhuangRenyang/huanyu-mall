@@ -82,9 +82,14 @@ export class DrizzleNotificationRepository implements NotificationRepository {
              attempts = attempts + 1
        WHERE id IN (
          SELECT id FROM notification
-          WHERE status IN ('pending', 'failed')
-            AND attempts < 3
-            AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+          WHERE attempts < 3
+            AND (
+              -- 待发：没排期就是「立即可发」
+              (status = 'pending' AND (next_attempt_at IS NULL OR next_attempt_at <= now()))
+              -- 失败：必须被排了期才重试。next_attempt_at IS NULL 表示「放弃」，
+              -- 不能当成可发——否则手动重发失败的信会被派发器无限次偷偷重发。
+              OR (status = 'failed' AND next_attempt_at IS NOT NULL AND next_attempt_at <= now())
+            )
           ORDER BY created_at
           LIMIT ${limit}
           FOR UPDATE SKIP LOCKED

@@ -134,11 +134,13 @@ ok "夹具已启动：$API_CONTAINER 内 127.0.0.1:$SMTP_PORT"
 sec "3. 配置 SMTP 并测试发送"
 call PUT /admin/notifications/settings "{\"enabled\":true,\"from_name\":\"商城验收\",\"from_email\":\"noreply@example.com\",\"smtp_host\":\"127.0.0.1\",\"smtp_port\":$SMTP_PORT,\"smtp_secure\":false,\"smtp_user\":\"\",\"order_confirmation_enabled\":true,\"shipment_enabled\":true,\"storefront_url\":\"\"}" "$AUTH"
 expect_2xx "保存 SMTP 配置" || exit 1
+BEFORE="$(docker exec "$API_CONTAINER" sh -lc "wc -l < $SMTP_LOG 2>/dev/null || echo 0" | tr -d '\r ')"
 call POST /admin/notifications/test '{"to":"e2e-notify@example.com"}' "$AUTH"
 expect_2xx "测试发送" || exit 1
 sleep 1
-RECEIVED="$(docker exec "$API_CONTAINER" sh -lc "wc -l < $SMTP_LOG 2>/dev/null || echo 0" | tr -d '\r ')"
-expect_num "夹具收到测试邮件" "$RECEIVED" "1"
+AFTER="$(docker exec "$API_CONTAINER" sh -lc "wc -l < $SMTP_LOG 2>/dev/null || echo 0" | tr -d '\r ')"
+# 用增量而不是绝对值：夹具日志可能来自历史轮次，断言「这一封确实到了」才稳
+expect_num "夹具收到测试邮件（增量）" "$((AFTER - BEFORE))" "1"
 
 sec "4. 下单并支付 → 应收到下单确认邮件"
 call GET "/admin/products?limit=100" "" "$AUTH"
