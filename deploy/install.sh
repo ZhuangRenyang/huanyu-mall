@@ -322,8 +322,16 @@ step11_updater() {
   chmod 0700 "$agent_dst.tmp"
   mv -f "$agent_dst.tmp" "$agent_dst"
 
-  if command -v systemctl >/dev/null 2>&1; then
-    cat > "$unit_dst" <<UNIT
+  if ! command -v systemctl >/dev/null 2>&1; then
+    log "警告：本机没有 systemd，升级代理未托管；可手工执行 bash $agent_dst"
+    return 0
+  fi
+
+  # systemd 单元要 root。非 root 时提权；提不了就只告警——
+  # 应用已经起来了，升级代理是增量能力，绝不因为它装不上就让整个安装失败。
+  local unit_tmp run_as
+  unit_tmp="$(mktemp /tmp/mall-updater.unit.XXXXXX)"
+  cat > "$unit_tmp" <<UNIT
 [Unit]
 Description=Mall upgrade agent (one-click upgrade executor)
 After=network-online.target docker.service
@@ -339,12 +347,29 @@ Environment=MALL_DIR=$MALL_DIR
 [Install]
 WantedBy=multi-user.target
 UNIT
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl enable --now mall-updater >/dev/null 2>&1 \
-      && log "升级代理已安装并启动（systemd: mall-updater）" \
-      || log "警告：systemd 启动 mall-updater 失败，可手工执行 bash $agent_dst"
+
+  run_as=""
+  if [[ "$(id -u)" -eq 0 ]]; then
+    run_as=""
+  elif [[ -w /etc/systemd/system ]]; then
+    run_as=""
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+    run_as="sudo"
   else
-    log "警告：本机没有 systemd，升级代理未托管；可手工执行 bash $agent_dst"
+    rm -f "$unit_tmp"
+    log "警告：没有权限写 /etc/systemd/system，升级代理未托管。"
+    log "      手工安装：sudo cp $agent_dst 的单元到 /etc/systemd/system/mall-updater.service 并 enable；"
+    log "      或临时运行：bash $agent_dst"
+    return 0
+  fi
+
+  if $run_as mv -f "$unit_tmp" "$unit_dst" \
+      && $run_as systemctl daemon-reload >/dev/null 2>&1 \
+      && $run_as systemctl enable --now mall-updater >/dev/null 2>&1; then
+    log "升级代理已安装并启动（systemd: mall-updater）"
+  else
+    rm -f "$unit_tmp" 2>/dev/null || true
+    log "警告：安装/启动 mall-updater 失败，可手工执行 bash $agent_dst"
   fi
 }
 
