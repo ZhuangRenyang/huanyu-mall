@@ -6,7 +6,12 @@ import { ProductsPage } from './pages/products';
 import { OrdersPage } from './pages/orders';
 import { InventoryPage } from './pages/inventory';
 import { SettingsPage } from './pages/settings';
-import { PromotionsPage } from './pages/promotions';
+import {
+  MarketingGiftCardsPage,
+  MarketingOverviewPage,
+  MarketingPromotionsPage,
+  MarketingVouchersPage,
+} from './pages/marketing';
 
 export function App() {
   return (
@@ -18,7 +23,15 @@ export function App() {
           <Route path="products" element={<ProductsPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="inventory" element={<InventoryPage />} />
-          <Route path="promotions" element={<PromotionsPage />} />
+          <Route path="marketing">
+            <Route index element={<Navigate to="overview" replace />} />
+            <Route path="overview" element={<MarketingOverviewPage />} />
+            <Route path="promotions" element={<MarketingPromotionsPage />} />
+            <Route path="vouchers" element={<MarketingVouchersPage />} />
+            <Route path="gift-cards" element={<MarketingGiftCardsPage />} />
+          </Route>
+          {/* 旧地址兼容：收藏过 /promotions 的书签仍可用 */}
+          <Route path="promotions" element={<Navigate to="/marketing/overview" replace />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Route>

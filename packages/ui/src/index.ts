@@ -21,6 +21,7 @@ export * from './select';
 export * from './input';
 export * from './textarea';
 export * from './label';
+export * from './switch';
 export * from './toast';
 export { cn } from './lib/cn';
 /**
