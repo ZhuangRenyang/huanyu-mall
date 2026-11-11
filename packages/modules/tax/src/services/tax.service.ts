@@ -1,7 +1,9 @@
 import { errors } from "@mall/core";
+import { buildCheckoutCountries } from "./countries.js";
 import { taxFor } from "./tax-calculator.js";
 import type {
   CalculateTaxInput,
+  CheckoutCountryDTO,
   ITaxModuleService,
   ResolvedRate,
   TaxRateRuleDTO,
@@ -78,6 +80,13 @@ export class TaxService implements ITaxModuleService {
     const fallback = await this.repo.findDefaultRate();
     if (fallback) return { name: fallback.name, rate_bps: fallback.rate_bps, source: "default" };
     return { name: "未配置税率", rate_bps: 0, source: "none" };
+  }
+
+  /** 店面可选国家：内置清单 ∪ 已配税率，带各自实际税率（关掉时统一 0）。 */
+  async listCheckoutCountries(): Promise<CheckoutCountryDTO[]> {
+    const [settings, rates] = await Promise.all([this.getSettings(), this.listRates()]);
+    const defaultBps = rates.find((r) => r.country_code === null)?.rate_bps ?? 0;
+    return buildCheckoutCountries(rates, settings.enabled, defaultBps);
   }
 
   async calculateTax(input: CalculateTaxInput): Promise<TaxResultDTO> {

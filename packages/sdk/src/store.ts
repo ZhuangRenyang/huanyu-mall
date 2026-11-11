@@ -129,6 +129,14 @@ export interface Cart {
   discounts?: CartDiscount[];
 }
 
+/** 结账可选国家/地区（含实际生效税率）。 */
+export interface CheckoutCountry {
+  code: string;
+  name: string;
+  tax_rate_bps: number;
+  rate_source: 'country' | 'default' | 'none';
+}
+
 /** 下单随附的收货地址（后端存单 + 按其中的国家解析税率，ADR-018）。 */
 export interface ShippingAddressInput {
   name?: string;

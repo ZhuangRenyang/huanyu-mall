@@ -5,7 +5,7 @@ import { bootstrapRoutes, productRoutes } from "./store/catalog.js";
 import { cartRoutes } from "./store/carts.js";
 import { shippingRoutes } from "./store/shipping.js";
 import { storePaymentRoutes } from "./store/payment.js";
-import { checkoutRoutes } from "./store/checkout.js";
+import { checkoutMetadataRoutes, checkoutRoutes } from "./store/checkout.js";
 import { storeOrderRoutes } from "./store/orders.js";
 import { storeAuthRoutes } from "./store/auth.js";
 import { storePromotionRoutes } from "./store/promotions.js";
@@ -31,6 +31,7 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   shippingRoutes(app, deps);
   storePaymentRoutes(app, deps);
   checkoutRoutes(app, deps);
+  checkoutMetadataRoutes(app, deps);
   storeOrderRoutes(app, deps);
   storeAuthRoutes(app, deps);
   storePromotionRoutes(app, deps);

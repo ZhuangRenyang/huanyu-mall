@@ -189,3 +189,53 @@ describe("taxFor 边界", () => {
     expect(taxFor(3333n, 1300, true)).toBe(383n);
   });
 });
+
+describe("店面可选国家（ADR-018：清单以后端为准）", () => {
+  it("内置清单默认可用，各国按默认税率标注", async () => {
+    const repo = new InMemoryTaxRepository();
+    const service = new TaxService(repo);
+    await service.updateSettings({ enabled: true });
+    await service.setDefaultRate({ name: "标准税率", rateBps: 1000 });
+
+    const list = await service.listCheckoutCountries();
+    expect(list.length).toBeGreaterThan(10);
+    const cn = list.find((c) => c.code === "CN")!;
+    expect(cn.name).toBe("中国");
+    expect(cn.tax_rate_bps).toBe(1000);
+    expect(cn.rate_source).toBe("default");
+  });
+
+  it("配了该国税率：该国家标 country 且用该国税率，其余仍走默认", async () => {
+    const repo = new InMemoryTaxRepository();
+    const service = new TaxService(repo);
+    await service.updateSettings({ enabled: true });
+    await service.setDefaultRate({ name: "标准税率", rateBps: 1000 });
+    await service.setCountryRate({ countryCode: "JP", name: "消费税", rateBps: 800 });
+
+    const list = await service.listCheckoutCountries();
+    const jp = list.find((c) => c.code === "JP")!;
+    expect([jp.tax_rate_bps, jp.rate_source]).toEqual([800, "country"]);
+    expect(list.find((c) => c.code === "US")!.rate_source).toBe("default");
+  });
+
+  it("税关着时全部标 0（不然界面会写「收 13%」却并不收）", async () => {
+    const repo = new InMemoryTaxRepository();
+    const service = new TaxService(repo);
+    await service.updateSettings({ enabled: false });
+    await service.setDefaultRate({ name: "标准税率", rateBps: 1300 });
+
+    const list = await service.listCheckoutCountries();
+    expect(list.every((c) => c.tax_rate_bps === 0 && c.rate_source === "none")).toBe(true);
+  });
+
+  it("配了内置清单里没有的国家：也要能选（名字先用代码）", async () => {
+    const repo = new InMemoryTaxRepository();
+    const service = new TaxService(repo);
+    await service.updateSettings({ enabled: true });
+    await service.setCountryRate({ countryCode: "KZ", name: "哈萨克斯坦增值税", rateBps: 1200 });
+
+    const list = await service.listCheckoutCountries();
+    const kz = list.find((c) => c.code === "KZ")!;
+    expect([kz.name, kz.tax_rate_bps, kz.rate_source]).toEqual(["KZ", 1200, "country"]);
+  });
+});

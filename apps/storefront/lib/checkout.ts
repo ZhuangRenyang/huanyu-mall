@@ -56,6 +56,8 @@ export function toShippingAddress(form: CheckoutForm): ShippingAddressInput {
 export interface StepProps {
   form: CheckoutForm;
   errors: CheckoutErrors;
+  /** 可选国家（后端下发）；不传则用内置清单，mock 模式不依赖接口。 */
+  countries?: Array<{ code: string; name: string }>;
   setField: <K extends keyof CheckoutForm>(key: K, value: CheckoutForm[K]) => void;
   onBlurField: (key: keyof CheckoutForm) => void;
 }

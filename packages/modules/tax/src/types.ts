@@ -16,6 +16,16 @@ export interface TaxRateDTO {
   is_inclusive: boolean;
 }
 
+/** 店面可选国家/地区：带上该国家实际会用到的税率（税关着时为 0）。 */
+export interface CheckoutCountryDTO {
+  code: string;
+  name: string;
+  /** 该国实际生效税率（bps）。含税价时它是「价内税」比例。 */
+  tax_rate_bps: number;
+  /** 税率来源：country=单独为该国家配的；default=用默认税率；none=不收税。 */
+  rate_source: "country" | "default" | "none";
+}
+
 export interface TaxSettingsDTO {
   enabled: boolean;
   tax_name: string;
@@ -104,5 +114,7 @@ export interface ITaxModuleService {
   deleteCountryRate(countryCode: string): Promise<void>;
   /** 按国家解析税率：国家覆盖 → 默认 → 未配置（0）。 */
   resolveRate(countryCode?: string | null): Promise<ResolvedRate>;
+  /** 店面可选国家/地区（内置常用 ∪ 已配税率），带各自实际生效税率。 */
+  listCheckoutCountries(): Promise<CheckoutCountryDTO[]>;
   calculateTax(input: CalculateTaxInput): Promise<TaxResultDTO>;
 }

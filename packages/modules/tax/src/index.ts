@@ -10,6 +10,7 @@ export * from "./errors.js";
 export { linkable } from "./linkable.js";
 export { TaxService } from "./services/tax.service.js";
 export { taxFor } from "./services/tax-calculator.js";
+export { BASE_COUNTRIES, buildCheckoutCountries } from "./services/countries.js";
 
 export default Module("tax", {
   service: (ctx) =>

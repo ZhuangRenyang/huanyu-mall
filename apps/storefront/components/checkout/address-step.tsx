@@ -2,7 +2,9 @@ import { CHECKOUT_STEPS, COUNTRIES, type StepProps } from '@/lib/checkout';
 import { SelectField, TextAreaField, TextField } from '@/components/form-field';
 
 /** 步骤 2 收货地址：收件人 / 国家 / 省市区 / 详细地址（4 字段，≤4 约束）。 */
-export function AddressStep({ form, errors, setField, onBlurField }: StepProps) {
+export function AddressStep({ form, errors, setField, onBlurField, countries }: StepProps) {
+  // 清单以后端为准（含各国家税率），拿不到时退回内置的最小清单
+  const options = countries && countries.length > 0 ? countries : COUNTRIES;
   return (
     <fieldset className="space-y-4">
       <legend className="sr-only">{CHECKOUT_STEPS[1]}</legend>
@@ -21,7 +23,7 @@ export function AddressStep({ form, errors, setField, onBlurField }: StepProps) 
         id="country"
         label="国家 / 地区"
         required
-        options={COUNTRIES.map((c) => ({ value: c.code, label: c.name }))}
+        options={options.map((c) => ({ value: c.code, label: c.name }))}
         value={form.country}
         onChange={(e) => setField('country', e.target.value)}
         onBlur={() => onBlurField('country')}

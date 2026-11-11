@@ -38,6 +38,8 @@ import {
 } from '@/lib/checkout';
 import { CheckoutStepper } from './checkout-stepper';
 import { OrderSummary } from './order-summary';
+import { countryLabel, loadCheckoutCountries } from '@/lib/countries';
+import type { CheckoutCountry } from '@mall/sdk';
 import { ContactStep } from './contact-step';
 import { AddressStep } from './address-step';
 import { ShippingStep } from './shipping-step';
@@ -64,6 +66,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     live ? [] : PAYMENT_PROVIDERS,
   );
   const [optionsLoading, setOptionsLoading] = useState(live);
+  // 可选国家：以后端为准（内置常用 ∪ 已配税率），带各国家税率
+  const [countries, setCountries] = useState<CheckoutCountry[]>([]);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // mutatePromo 是 useCallback，直接依赖 form.country 会让每个按键都重建；
   // 用 ref 取最新国家，写码后重读合计时就能带上正确税率。
@@ -74,6 +78,24 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const [promo, setPromo] = useState<CartPromoView>(EMPTY_PROMO);
   const [promoBusy, setPromoBusy] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
+
+  // 可选国家清单：进页面拉一次；失败退回最小清单（不阻断下单）
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    void (async () => {
+      const list = await loadCheckoutCountries();
+      if (cancelled) return;
+      setCountries(list);
+      // 草稿里的国家可能已下线：回退到清单第一个，避免「选了却不在列表里」
+      setForm((f) =>
+        list.some((c) => c.code === f.country) ? f : { ...f, country: list[0]?.code ?? f.country },
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [live]);
 
   // 进入结账页 / 换国家都走下面那个 effect（拉码 + 拉合计，刷新不丢，折扣以后端为准）。
   /*
@@ -379,7 +401,11 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const paymentLabel =
     paymentProviders.find((p) => p.id === form.paymentProviderId)?.label ?? '去支付';
   const ctaLabel = step === 4 ? `${paymentLabel} ${formatMoney(totalMinor, currency)}` : '下一步';
-  const stepProps = { form, errors, setField, onBlurField };
+  const countryOptions =
+    countries.length > 0
+      ? countries.map((c) => ({ code: c.code, name: countryLabel(c) }))
+      : undefined;
+  const stepProps = { form, errors, setField, onBlurField, countries: countryOptions };
 
   // 回填完成前先骨架，避免把「尚未加载」误判为空车
   if (!hydrated) {

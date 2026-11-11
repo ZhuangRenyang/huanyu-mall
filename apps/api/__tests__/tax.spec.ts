@@ -137,3 +137,45 @@ describe("税务配置后台接口（ADR-018：可按国家切换、可调整）
     });
   });
 });
+
+describe("店面可选国家（ADR-018：清单以后端为准，顾客真的能选）", () => {
+  it("默认就有多个可选项、默认国家是中国；税关着时全部标 0", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({ method: "GET", url: "/api/v1/store/checkout/countries" });
+      expect(res.statusCode, res.body).toBe(200);
+      const data = res.json().data;
+      expect(data.count).toBeGreaterThan(10);
+      expect(data.default_country).toBe("CN");
+      const cn = data.items.find((c: { code: string }) => c.code === "CN");
+      expect(cn.name).toBe("中国");
+      // 税务默认关闭 → 不能标「收 13%」
+      expect(cn.tax_rate_bps).toBe(0);
+      expect(cn.rate_source).toBe("none");
+    });
+  });
+
+  it("配了 JP 税率与默认税率后：JP 用该国税率，其余走默认", async () => {
+    await withApp(async (app) => {
+      const put = (url: string, payload: Record<string, unknown>) =>
+        app.inject({ method: "PUT", url, headers: adminJson, payload });
+      await put("/api/v1/admin/tax/settings", { enabled: true });
+      await put("/api/v1/admin/tax/default-rate", { name: "标准税率", rate_bps: 1000 });
+      await put("/api/v1/admin/tax/country-rates/JP", { name: "消费税", rate_bps: 800 });
+
+      const res = await app.inject({ method: "GET", url: "/api/v1/store/checkout/countries" });
+      const items = res.json().data.items as Array<{
+        code: string;
+        tax_rate_bps: number;
+        rate_source: string;
+      }>;
+      expect(items.find((c) => c.code === "JP")).toMatchObject({
+        tax_rate_bps: 800,
+        rate_source: "country",
+      });
+      expect(items.find((c) => c.code === "US")).toMatchObject({
+        tax_rate_bps: 1000,
+        rate_source: "default",
+      });
+    });
+  });
+});

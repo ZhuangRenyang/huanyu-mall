@@ -136,6 +136,8 @@ export function createStoreClient(opts: ClientOptions) {
     listCategories: () => get("/api/v1/store/categories"),
     createCart: (b: CreateCartRequest) => post("/api/v1/store/carts", b),
     // country：税率按收货国家解析（ADR-018），合计随所选国家变
+    /** 结账可选国家（内置常用 ∪ 已配税率），带各自实际税率（ADR-018）。 */
+    getCheckoutCountries: () => get("/api/v1/store/checkout/countries"),
     getCart: (id: string, country?: string) =>
       get(`/api/v1/store/carts/${id}`, country ? { country } : undefined),
     addLineItem: (cartId: string, b: AddLineItemRequest) =>

@@ -2,6 +2,7 @@
  * 业务模块的测试替身（mock services）——目录侧：渠道 / 商品 / 计价 / 税。
  * 与真实模块服务保持同名同参，路由层行为可被完整驱动。
  */
+import { buildCheckoutCountries } from "@mall/tax";
 import type { FakeServicesState } from "./fake-services-state.js";
 
 export function makeFakeCatalogServices(state: FakeServicesState) {
@@ -138,6 +139,17 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
         },
         deleteCountryRate: async (countryCode: string) => {
           rates.delete(countryCode.toUpperCase());
+        },
+        listCheckoutCountries: async () => {
+          // 注意别用 rates 命名局部变量：会和闭包里的 Map 同名，触发 TDZ
+          const rows = [...rates.entries()].map(([code, row]) => ({
+            id: row.id,
+            name: row.name,
+            rate_bps: row.rate_bps,
+            country_code: code,
+          }));
+          const defaultBps = rows.find((r) => r.country_code === null)?.rate_bps ?? 0;
+          return buildCheckoutCountries(rows, settings.enabled, defaultBps);
         },
         resolveRate: async (countryCode?: string | null) => {
           const code = countryCode ? countryCode.toUpperCase() : null;

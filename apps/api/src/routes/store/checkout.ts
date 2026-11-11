@@ -29,6 +29,24 @@ const completeBody = z
   // 只写 optional 会让老客户端（不带 body 直接 complete）全部 400。
   .nullish();
 
+/**
+ * 店面可选国家/地区（ADR-018）：内置常用 ∪ 商家配过税率的国家，各带实际税率。
+ *
+ * 之前这份清单写死在前端且只有「中国」一条——顾客根本没得选，
+ * 所谓「按用户选择」也就无从发生。现在以后端为准，商家加国家税率即可出现。
+ */
+export function checkoutMetadataRoutes(app: FastifyInstance, deps: AppDeps): void {
+  app.get("/api/v1/store/checkout/countries", async (_req, reply) => {
+    const items = await deps.services.tax.listCheckoutCountries();
+    reply.ok({
+      items,
+      count: items.length,
+      // 默认国家：优先中国（既有店铺的主市场），否则列表第一个
+      default_country: items.find((c) => c.code === "CN")?.code ?? items[0]?.code ?? "CN",
+    });
+  });
+}
+
 /** POST /store/carts/{id}/complete — 走 cart-complete workflow + 幂等键（openapi 969）。 */
 export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.post(
