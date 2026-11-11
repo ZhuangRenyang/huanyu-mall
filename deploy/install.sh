@@ -113,9 +113,20 @@ ensure_updater_env() {
   mkdir -p "$MALL_DIR/config"
   [[ -f "$env_file" ]] || touch "$env_file"
 
+  # 「机器属性」只补不覆盖（换机器不该变的）
   ensure_env_key() {
     local key="$1" value="$2"
     grep -q "^${key}=" "$env_file" 2>/dev/null || printf '%s=%s\n' "$key" "$value" >>"$env_file"
+  }
+  # 「代码属性」每次安装都要刷新：APP_VERSION 描述的是当前装的这份程序，
+  # 只写一次会让升级后后台仍显示旧版本号（真机演练抓到）。
+  set_env_key() {
+    local key="$1" value="$2"
+    if grep -q "^${key}=" "$env_file" 2>/dev/null; then
+      sed -i "s|^${key}=.*|${key}=${value}|" "$env_file"
+    else
+      printf '%s=%s\n' "$key" "$value" >>"$env_file"
+    fi
   }
 
   local version commit built_at
@@ -126,10 +137,10 @@ ensure_updater_env() {
     || head -1 "$COMPOSE_DIR/../.pack-commit" 2>/dev/null || echo unknown)"
   built_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 
-  ensure_env_key APP_VERSION "$version"
-  ensure_env_key APP_COMMIT "$commit"
-  # 构建时间只在首次写入：它描述「这份程序什么时候装上的」，重跑安装不该刷新
-  ensure_env_key APP_BUILT_AT "$built_at"
+  set_env_key APP_VERSION "$version"
+  set_env_key APP_COMMIT "$commit"
+  # 这份程序装上的时间；每次安装刷新
+  set_env_key APP_BUILT_AT "$built_at"
   ensure_env_key SRC_DIR "$(cd "$COMPOSE_DIR/.." && pwd)"
   if ! grep -q "^UPDATER_TOKEN=" "$env_file" 2>/dev/null; then
     ensure_env_key UPDATER_TOKEN "$(openssl rand -hex 24)"
