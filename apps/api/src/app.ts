@@ -81,6 +81,12 @@ export async function buildApp(
   });
   registerRoutes(app, deps);
 
+  // 通知派发器：事件里只落库，这里异步发信；进程关闭时停掉定时器
+  deps.notificationDispatcher?.start();
+  app.addHook("onClose", async () => {
+    deps.notificationDispatcher?.stop();
+  });
+
   return app;
 }
 

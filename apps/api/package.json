@@ -28,6 +28,7 @@
     "@mall/payment": "workspace:*",
     "@mall/fulfillment": "workspace:*",
     "@mall/theme": "workspace:*",
+    "@mall/notification": "workspace:*",
     "@mall/workflows": "workspace:*",
     "@mall/links": "workspace:*",
     "@fastify/rate-limit": "catalog:",

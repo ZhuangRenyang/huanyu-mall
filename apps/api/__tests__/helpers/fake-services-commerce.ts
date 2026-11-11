@@ -2,7 +2,7 @@
  * 业务模块的测试替身（mock services）——交易侧：顾客 / 文件 / 认证 / 库存 /
  * 购物车 / 订单 / 履约 / 主题。
  */
-import { errors } from "@mall/core";
+import { DomainError, errors } from "@mall/core";
 import { checkPasswordStrength } from "@mall/auth";
 import type { FakeServicesState } from "./fake-services-state.js";
 
@@ -671,5 +671,91 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         return { ...state.theme };
       },
     },
+    // 通知替身：只够跑通路由语义（开关、不回显密码、失败可见）。
+    notification: (() => {
+      const settings = {
+        enabled: false,
+        from_name: "",
+        from_email: "",
+        smtp_host: "",
+        smtp_port: 587,
+        smtp_secure: false,
+        smtp_user: "",
+        smtp_password_set: false,
+        order_confirmation_enabled: true,
+        shipment_enabled: true,
+        storefront_url: "",
+      };
+      const rows: Array<Record<string, unknown>> = [];
+      let seq = 0;
+      return {
+        getSettings: async () => ({ ...settings }),
+        updateSettings: async (patch: Record<string, unknown>) => {
+          // 与真实服务一致：密码只留 set 标记，绝不回显
+          const { smtp_password: _pw, ...rest } = patch as { smtp_password?: string };
+          Object.assign(settings, rest);
+          if ("smtp_password" in patch) {
+            settings.smtp_password_set = Boolean(_pw);
+          }
+          return { ...settings };
+        },
+        sendTest: async (to: string) => {
+          if (!settings.smtp_host) {
+            throw new DomainError({ code: 31003, message: "邮件发送失败：未填写 SMTP 服务器地址" });
+          }
+          if (to.includes("fail")) {
+            throw new DomainError({ code: 31003, message: "邮件发送失败：SMTP 拒收" });
+          }
+          rows.push({ id: `ntf_${++seq}`, template: "test", to_email: to, status: "sent" });
+        },
+        enqueueOrderConfirmation: async (payload: { orderId: string; email: string }) => {
+          rows.push({
+            id: `ntf_${++seq}`,
+            template: "order_confirmation",
+            to_email: payload.email,
+            subject: "订单已确认",
+            status: "pending",
+            attempts: 0,
+            error: null,
+            order_id: payload.orderId,
+            created_at: new Date().toISOString(),
+            sent_at: null,
+          });
+        },
+        enqueueShipmentNotification: async (
+          fulfillmentId: string,
+          payload: { orderId: string; email: string },
+        ) => {
+          rows.push({
+            id: `ntf_${++seq}`,
+            template: "shipment_notification",
+            to_email: payload.email,
+            subject: "订单已发货",
+            status: "pending",
+            attempts: 0,
+            error: null,
+            order_id: `${payload.orderId}:${fulfillmentId}`,
+            created_at: new Date().toISOString(),
+            sent_at: null,
+          });
+        },
+        list: async (q: { limit: number; offset: number; status?: string }) => {
+          const all = rows.filter((r) => (q.status ? r.status === q.status : true));
+          return { items: all.slice(q.offset, q.offset + q.limit), count: all.length };
+        },
+        resend: async (id: string) => {
+          const row = rows.find((r) => r.id === id);
+          if (!row) {
+            throw new DomainError({ code: 31001, message: `通知记录不存在：${id}` });
+          }
+          row.status = settings.smtp_host.includes("127.0.0.1") ? "failed" : "sent";
+          row.error = row.status === "failed" ? "connect ECONNREFUSED" : null;
+          row.sent_at = row.status === "sent" ? new Date().toISOString() : null;
+          return row;
+        },
+        claimPending: async () => [],
+        deliverRow: async () => {},
+      };
+    })(),
   };
 }

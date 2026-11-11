@@ -133,3 +133,139 @@ describe("shipment.created → 订单履约状态推进", () => {
     expect(transitions).toEqual([]);
   });
 });
+
+describe("事件 → 通知入队（ADR-016：只落库，不发信）", () => {
+  const fullOrder = {
+    id: "ord_notify",
+    status: "paid",
+    email: "buyer@example.com",
+    currency_code: "CNY",
+    subtotal_minor: 19800n,
+    shipping_minor: 800n,
+    tax_minor: 0n,
+    discount_minor: 0n,
+    total_minor: 20600n,
+    shipping_address: { name: "张三", city: "深圳" },
+    items: [
+      {
+        id: "oli_a",
+        title: "无线静音鼠标",
+        sku: "MS-BLK",
+        quantity: 2,
+        unit_price_minor: 9900n,
+        total_minor: 19800n,
+      },
+    ],
+  };
+
+  function setup(order: unknown, fulfillments: unknown[], notifyFails = false) {
+    const registry = new SubscriberRegistry();
+    const transitions: Array<{ to: string }> = [];
+    const confirmations: unknown[] = [];
+    const shipments: Array<{ fulfillmentId: string; payload: Record<string, unknown> }> = [];
+    const resolve = (name: string) => {
+      if (name === "order") {
+        return {
+          retrieveOrder: async () => order,
+          transition: async (_id: string, to: string) => {
+            transitions.push({ to });
+            (order as { status: string }).status = to;
+          },
+        };
+      }
+      if (name === "fulfillment") return { listByOrder: async () => fulfillments };
+      if (name === "notification") {
+        return {
+          enqueueOrderConfirmation: async (payload: unknown) => {
+            if (notifyFails) throw new Error("DB 挂了");
+            confirmations.push(payload);
+          },
+          enqueueShipmentNotification: async (fulfillmentId: string, payload: unknown) => {
+            if (notifyFails) throw new Error("DB 挂了");
+            shipments.push({ fulfillmentId, payload: payload as Record<string, unknown> });
+          },
+        };
+      }
+      return undefined;
+    };
+    registerSubscribers(registry, resolve);
+    return {
+      paymentHandlers: registry.get("payment.captured"),
+      shipmentHandlers: registry.get("shipment.created"),
+      transitions,
+      confirmations,
+      shipments,
+    };
+  }
+
+  const payEvt = {
+    id: "evt_p",
+    name: "payment.captured",
+    data: { orderId: "ord_notify" },
+    occurredAt: "2026-11-11T10:00:00Z",
+  };
+
+  it("付款后入队下单确认：金额、行数、收件人正确", async () => {
+    const { paymentHandlers, confirmations } = setup({ ...fullOrder, status: "awaiting_payment" }, []);
+    await paymentHandlers[0](payEvt);
+    expect(confirmations).toHaveLength(1);
+    const payload = confirmations[0] as Record<string, unknown>;
+    expect(payload.orderId).toBe("ord_notify");
+    expect(payload.email).toBe("buyer@example.com");
+    expect(payload.currencyCode).toBe("CNY");
+    expect(payload.subtotalMinor).toBe(19800);
+    expect(payload.totalMinor).toBe(20600);
+    expect((payload.items as unknown[]).length).toBe(1);
+  });
+
+  it("发货后入队发货通知：带承运商与运单号；无运单号不发", async () => {
+    const withTracking = [
+      {
+        id: "fulf_1",
+        status: "shipped",
+        items: [{ orderLineItemId: "oli_a", quantity: 2 }],
+        tracking_links: [{ carrier: "顺丰速运", number: "SF1" }],
+      },
+    ];
+    const a = setup(fullOrder, withTracking);
+    await a.shipmentHandlers[0]({
+      id: "evt_s1",
+      name: "shipment.created",
+      data: { orderId: "ord_notify", fulfillmentId: "fulf_1" },
+      occurredAt: "2026-11-11T12:00:00Z",
+    });
+    expect(a.shipments).toHaveLength(1);
+    expect(a.shipments[0]!.fulfillmentId).toBe("fulf_1");
+    expect(a.shipments[0]!.payload.carrier).toBe("顺丰速运");
+    expect(a.shipments[0]!.payload.trackingNumber).toBe("SF1");
+    expect((a.shipments[0]!.payload.items as Array<{ title: string }>)[0]!.title).toBe(
+      "无线静音鼠标",
+    );
+
+    const b = setup(fullOrder, [
+      {
+        id: "fulf_2",
+        status: "fulfilled",
+        items: [{ orderLineItemId: "oli_a", quantity: 1 }],
+        tracking_links: null,
+      },
+    ]);
+    await b.shipmentHandlers[0]({
+      id: "evt_s2",
+      name: "shipment.created",
+      data: { orderId: "ord_notify", fulfillmentId: "fulf_2" },
+      occurredAt: "2026-11-11T12:00:00Z",
+    });
+    expect(b.shipments).toHaveLength(0);
+  });
+
+  it("通知抛错不影响订单状态推进（顺序：先推进，异常被吞）", async () => {
+    const { paymentHandlers, transitions } = setup(
+      { ...fullOrder, status: "awaiting_payment" },
+      [],
+      true,
+    );
+    await expect(paymentHandlers[0](payEvt)).resolves.toBeUndefined();
+    expect(transitions.map((t) => t.to)).toEqual(["awaiting_payment", "paid"]);
+  });
+});

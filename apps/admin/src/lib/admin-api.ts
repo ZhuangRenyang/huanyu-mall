@@ -96,3 +96,19 @@ export type { ChangePasswordErrorKind, ChangePasswordResult } from './admin-pass
 
 export { getMarketingFeatures, setMarketingFeature } from './admin-promotions';
 export type { MarketingFeature, MarketingFeatureFlags } from './admin-promotions';
+
+export {
+  getNotificationSettings,
+  updateNotificationSettings,
+  sendTestNotification,
+  listNotifications,
+  resendNotification,
+  NOTIFICATION_TEMPLATE_LABEL,
+} from './admin-notifications';
+export type {
+  NotificationSettingsView,
+  NotificationSettingsPatch,
+  NotificationView,
+  NotificationStatus,
+  NotificationTemplate,
+} from './admin-notifications';

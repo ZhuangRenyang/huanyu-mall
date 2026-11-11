@@ -17,6 +17,7 @@ const LAYERS: Record<string, number> = {
   file: 1,
   customer: 1,
   theme: 1,
+  notification: 1,
   product: 2,
   pricing: 2,
   tax: 2,

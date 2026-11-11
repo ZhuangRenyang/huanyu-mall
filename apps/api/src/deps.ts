@@ -24,6 +24,7 @@ import orderModule from "@mall/order";
 import paymentModule from "@mall/payment";
 import fulfillmentModule from "@mall/fulfillment";
 import themeModule from "@mall/theme";
+import notificationModule, { NotificationDispatcher } from "@mall/notification";
 import { createWorkflowRegistry, registerSubscribers } from "@mall/workflows";
 import type { IRegionChannelModuleService } from "@mall/region-channel";import type { IProductModuleService } from "@mall/product";
 import type { IPricingModuleService } from "@mall/pricing";
@@ -38,6 +39,7 @@ import type { IOrderModuleService } from "@mall/order";
 import type { IPaymentModuleService } from "@mall/payment";
 import type { IFulfillmentModuleService } from "@mall/fulfillment";
 import type { IThemeModuleService } from "@mall/theme";
+import type { INotificationModuleService } from "@mall/notification";
 import type { ApiConfig } from "./config.js";
 import { PgAuditRepository } from "./repositories/audit.repository.js";
 import { AuditService } from "./services/audit.service.js";
@@ -57,6 +59,7 @@ export interface AppServices {
   payment: IPaymentModuleService;
   fulfillment: IFulfillmentModuleService;
   theme: IThemeModuleService;
+  notification: INotificationModuleService;
 }
 
 export interface WorkflowRunner {
@@ -74,6 +77,8 @@ export interface AppDeps {
   eventBus: EventBus;
   /** 审计留痕服务（后台写操作落 audit_log）。 */
   audit: AuditService;
+  /** 通知派发器（可选：测试用的 fake deps 不提供，就不会起定时器）。 */
+  notificationDispatcher?: { start(): void; stop(): void };
 }
 
 const MODULES: ModuleDefinition[] = [
@@ -91,6 +96,7 @@ const MODULES: ModuleDefinition[] = [
   paymentModule,
   fulfillmentModule,
   themeModule,
+  notificationModule,
 ];
 
 /** 组合根：按依赖拓扑序把各业务模块注册进容器，实例化 workflow 引擎。 */
@@ -145,6 +151,7 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     payment: container.resolve<IPaymentModuleService>("payment"),
     fulfillment: container.resolve<IFulfillmentModuleService>("fulfillment"),
     theme: container.resolve<IThemeModuleService>("theme"),
+    notification: container.resolve<INotificationModuleService>("notification"),
   };
 
   // workflow 端口适配器：camelCase 端口契约 ↔ module service（id/snake_case DTO，架构铁律 5）
@@ -196,11 +203,15 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
 
   const logger = createLogger({ level: config.logLevel });
 
+  // 事件订阅者只落库，这里异步发信（ADR-016：SMTP 超时不能拖住下单）
+  const notificationDispatcher = new NotificationDispatcher({ service: services.notification });
+
   return {
     config,
     services,
     workflow: workflowRunner,
     eventBus,
     audit: new AuditService(new PgAuditRepository(pool), logger),
+    notificationDispatcher,
   };
 }

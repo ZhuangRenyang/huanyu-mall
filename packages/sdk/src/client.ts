@@ -262,6 +262,12 @@ export function createAdminClient(opts: ClientOptions) {
     updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
       put(`/api/v1/admin/settings/payment-providers/${id}`, b),
     // —— 促销（阶段 6）——
+    getNotificationSettings: () => get("/api/v1/admin/notifications/settings"),
+    updateNotificationSettings: (body: Record<string, unknown>) =>
+      put("/api/v1/admin/notifications/settings", body),
+    sendTestNotification: (to: string) => post("/api/v1/admin/notifications/test", { to }),
+    listNotifications: (q?: Query) => get("/api/v1/admin/notifications", q),
+    resendNotification: (id: string) => post(`/api/v1/admin/notifications/${id}/resend`, {}),
     getMarketingFeatures: () => get("/api/v1/admin/promotions/features"),
     setMarketingFeature: (feature: "promotion" | "voucher" | "gift_card", enabled: boolean) =>
       put(`/api/v1/admin/promotions/features/${feature}`, { enabled }),

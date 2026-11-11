@@ -92,6 +92,34 @@ export interface StockLocation {
   priority: number;
 }
 
+/** 邮件通知配置（ADR-016）。密码只存标记，永不回显。 */
+export interface AdminNotificationSettings {
+  enabled: boolean;
+  from_name: string;
+  from_email: string;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_secure: boolean;
+  smtp_user: string;
+  smtp_password_set: boolean;
+  order_confirmation_enabled: boolean;
+  shipment_enabled: boolean;
+  storefront_url: string;
+}
+
+export interface AdminNotification {
+  id: string;
+  template: "order_confirmation" | "shipment_notification";
+  to_email: string;
+  subject: string;
+  status: "pending" | "sending" | "sent" | "failed";
+  attempts: number;
+  error: string | null;
+  order_id: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+
 /** 营销功能级开关（默认全关，后台各页面独立打开）。 */
 export interface MarketingFeatureFlags {
   promotion: boolean;

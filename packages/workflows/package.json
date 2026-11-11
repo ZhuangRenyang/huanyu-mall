@@ -14,7 +14,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@mall/core": "workspace:*"
+    "@mall/core": "workspace:*",
+    "@mall/notification": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:",

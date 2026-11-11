@@ -1,8 +1,9 @@
-import { CreditCard, Palette, ShieldCheck } from 'lucide-react';
+import { CreditCard, Mail, Palette, ShieldCheck } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@mall/ui';
 import { ThemeSettings } from '@/components/settings-theme';
 import { PaymentSettings } from '@/components/settings-payments';
 import { AccountSettings } from '@/components/settings-account';
+import { NotificationSettings } from '@/components/settings-notifications';
 
 /**
  * 设置页：三个分组用 `@mall/ui` 的 Tabs（Radix 原语）。
@@ -17,6 +18,7 @@ import { AccountSettings } from '@/components/settings-account';
 const TABS = [
   { id: 'theme', label: '外观', icon: Palette, panel: <ThemeSettings /> },
   { id: 'payments', label: '支付方式', icon: CreditCard, panel: <PaymentSettings /> },
+  { id: 'notifications', label: '通知', icon: Mail, panel: <NotificationSettings /> },
   { id: 'account', label: '账号安全', icon: ShieldCheck, panel: <AccountSettings /> },
 ];
 
