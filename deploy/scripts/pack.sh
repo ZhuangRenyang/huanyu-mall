@@ -58,6 +58,14 @@ for s in $(find "$STAGE" -name "*.sh" -type f); do
 done
 log "自检通过"
 
+# 留一份构建提交号：目标机没有 .git，install.sh 靠它显示「当前装的是哪一版」
+# 从仓库根取提交号（pack.sh 在仓库根执行）
+if command -v git >/dev/null 2>&1; then
+  git rev-parse --short HEAD > "$STAGE/.pack-commit" 2>/dev/null || echo "unknown" > "$STAGE/.pack-commit"
+else
+  echo "unknown" > "$STAGE/.pack-commit"
+fi
+
 log "打包 → $OUT"
 tar -czf "$OUT" -C "$STAGE" .
 

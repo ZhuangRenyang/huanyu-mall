@@ -104,9 +104,44 @@ step3_dirs() {
   log "目录就绪: $MALL_DIR/{app,config,data,backup}"
 }
 
+
+# 补齐版本身份与升级代理凭证（幂等：只补缺失的键，不覆盖已有值）。
+# 必须在 **容器创建之前** 执行：compose 只在创建容器时读 .env，
+# 晚于 step9 写进去的 UPDATER_TOKEN 不会被 API 读到，代理就一直 401。
+ensure_updater_env() {
+  local env_file="$MALL_DIR/config/.env"
+  mkdir -p "$MALL_DIR/config"
+  [[ -f "$env_file" ]] || touch "$env_file"
+
+  ensure_env_key() {
+    local key="$1" value="$2"
+    grep -q "^${key}=" "$env_file" 2>/dev/null || printf '%s=%s\n' "$key" "$value" >>"$env_file"
+  }
+
+  local version commit built_at
+  version="$(head -1 "$COMPOSE_DIR/../VERSION" 2>/dev/null | tr -d '[:space:]')"
+  version="${version:-0.0.0}"
+  # pack.sh 会在包里留一份提交号；没有 git 目录时靠它
+  commit="$( (cd "$COMPOSE_DIR/.." && git rev-parse --short HEAD 2>/dev/null) \
+    || head -1 "$COMPOSE_DIR/../.pack-commit" 2>/dev/null || echo unknown)"
+  built_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+
+  ensure_env_key APP_VERSION "$version"
+  ensure_env_key APP_COMMIT "$commit"
+  # 构建时间只在首次写入：它描述「这份程序什么时候装上的」，重跑安装不该刷新
+  ensure_env_key APP_BUILT_AT "$built_at"
+  ensure_env_key SRC_DIR "$(cd "$COMPOSE_DIR/.." && pwd)"
+  if ! grep -q "^UPDATER_TOKEN=" "$env_file" 2>/dev/null; then
+    ensure_env_key UPDATER_TOKEN "$(openssl rand -hex 24)"
+    log "已生成 UPDATER_TOKEN"
+  fi
+}
+
 # [4] 生成配置与密钥（已存在则跳过，不覆盖）
 step4_secrets() {
   local secrets="$MALL_DIR/config/secrets.json"
+  # 先把版本身份/代理凭证补进 .env：这一步必须早于容器创建（见 ensure_updater_env 注释）
+  ensure_updater_env
   if [[ -f "$secrets" ]]; then
     log "secrets.json 已存在，跳过生成"
   else
@@ -288,30 +323,11 @@ step10_health() {
 # 每次安装都刷新：代理脚本被升级本身替换过，必须保证宿主上跑的是最新一份。
 # 不走 run_step 门禁——它便宜、幂等，而且漏装会让「一键升级」按钮变成摆设。
 step11_updater() {
+  ensure_updater_env
   local env_file="$MALL_DIR/config/.env"
   local agent_src="$COMPOSE_DIR/updater/mall-updater.sh"
   local agent_dst="$MALL_DIR/config/mall-updater.sh"
   local unit_dst="/etc/systemd/system/mall-updater.service"
-
-  # .env 是「生成一次就不再写」的，这里补新键而不覆盖旧值
-  ensure_env_key() {
-    local key="$1" value="$2"
-    grep -q "^${key}=" "$env_file" 2>/dev/null || printf '%s=%s\n' "$key" "$value" >>"$env_file"
-  }
-
-  local version commit built_at
-  version="$(head -1 "$COMPOSE_DIR/../VERSION" 2>/dev/null || echo 0.0.0 | tr -d '[:space:]')"
-  commit="$( (cd "$COMPOSE_DIR/.." && git rev-parse --short HEAD 2>/dev/null) || echo unknown)"
-  built_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-  ensure_env_key APP_VERSION "$version"
-  ensure_env_key APP_COMMIT "$commit"
-  # 构建时间只在首次写入：它描述的是「这份程序什么时候装上的」，重跑安装不该刷新
-  ensure_env_key APP_BUILT_AT "$built_at"
-  ensure_env_key SRC_DIR "$(cd "$COMPOSE_DIR/.." && pwd)"
-  if ! grep -q "^UPDATER_TOKEN=" "$env_file" 2>/dev/null; then
-    ensure_env_key UPDATER_TOKEN "$(openssl rand -hex 24)"
-    log "已生成 UPDATER_TOKEN"
-  fi
 
   if [[ ! -f "$agent_src" ]]; then
     log "警告：找不到 $agent_src，跳过升级代理安装"
@@ -363,9 +379,24 @@ UNIT
     return 0
   fi
 
-  if $run_as mv -f "$unit_tmp" "$unit_dst" \
-      && $run_as systemctl daemon-reload >/dev/null 2>&1 \
-      && $run_as systemctl enable --now mall-updater >/dev/null 2>&1; then
+  if ! $run_as mv -f "$unit_tmp" "$unit_dst" \
+      || ! $run_as systemctl daemon-reload >/dev/null 2>&1 \
+      || ! $run_as systemctl enable mall-updater >/dev/null 2>&1; then
+    rm -f "$unit_tmp" 2>/dev/null || true
+    log "警告：安装 mall-updater 单元失败，可手工执行 bash $agent_dst"
+    return 0
+  fi
+
+  # 代理自升级时**不能** restart 自己：作业正跑到一半，杀掉就永远卡在 running。
+  # 这种情况下只更新脚本，下次重启/下次普通安装时生效。
+  if [[ "${MALL_UPDATER_SELF:-}" == "1" ]]; then
+    log "升级代理自升级中，跳过重启（新脚本下次重启生效）"
+    return 0
+  fi
+
+  # 必须 restart 而不是 enable --now：脚本被换掉后旧进程还在跑旧代码，
+  # 不重启就永远用不上新逻辑（心跳那个 bug 就是这么拖了一轮）。
+  if $run_as systemctl restart mall-updater >/dev/null 2>&1; then
     log "升级代理已安装并启动（systemd: mall-updater）"
   else
     rm -f "$unit_tmp" 2>/dev/null || true

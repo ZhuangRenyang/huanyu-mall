@@ -80,30 +80,34 @@ load_config() {
 # ------------------------------------------------------------------ #
 api() {
   local method="$1" path="$2" body="${3:-}"
-  local attempt out
+  local attempt out code payload
   for attempt in 1 2 3 4 5 6; do
     if [[ -n "$body" ]]; then
       out="$(curl -sS -m 20 -X "$method" "$API_BASE$path" \
         -H "Authorization: Bearer $TOKEN" \
         -H 'Content-Type: application/json' \
-        --data-binary "$body" 2>/dev/null)"
+        --data-binary "$body" -w $'\n%{http_code}' 2>/dev/null)"
     else
       out="$(curl -sS -m 20 -X "$method" "$API_BASE$path" \
-        -H "Authorization: Bearer $TOKEN" 2>/dev/null)"
+        -H "Authorization: Bearer $TOKEN" -w $'\n%{http_code}' 2>/dev/null)"
     fi
-    if [[ -n "$out" ]]; then
-      printf '%s' "$out"
+    code="${out##*$'\n'}"
+    payload="${out%$'\n'*}"
+    # 必须看 HTTP 状态：400/401 也带响应体，只判「非空」会把失败当成功吞掉
+    if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+      printf '%s' "$payload"
       return 0
     fi
+    log "API $method $path → HTTP ${code:-无响应}（第 $attempt 次）"
     sleep $((attempt * 2))
   done
-  log "API 调用失败：$method $path"
   return 1
 }
 
 heartbeat() {
+  # 用 jq 构造整个对象：单独 json_str 再拼进引号会得到 ""...""（非法 JSON）
   api POST "/api/v1/system-update/agent/heartbeat" \
-    "{\"version\":\"$(json_str "$AGENT_VERSION")\"}" >/dev/null
+    "$(jq -nc --arg v "$AGENT_VERSION" '{version:$v}')" >/dev/null
 }
 
 set_step() {
@@ -121,8 +125,6 @@ finish() {
   log "作业 $JOB_ID 结束：$status ${error}"
 }
 
-json_str() { jq -n --arg v "$1" '$v'; }
-
 # ------------------------------------------------------------------ #
 # 动作：备份
 # ------------------------------------------------------------------ #
@@ -135,7 +137,7 @@ do_backup() {
     return 1
   fi
   set_step 100 "备份完成" ""
-  finish succeeded "{\"label\":\"$(json_str "$label")\"}"
+  finish succeeded "$(jq -nc --arg l "$label" '{label:$l}')"
 }
 
 # ------------------------------------------------------------------ #
@@ -200,7 +202,9 @@ do_upgrade() {
   prune_snapshots
 
   set_step 70 "重建应用" "install.sh（镜像 + 迁移 + 重启）"
-  if ! ( cd "$SRC_DIR" && MALL_DIR="$MALL_DIR_RESOLVED" bash deploy/install.sh ) \
+  # MALL_UPDATER_SELF=1 告诉 install.sh：现在是代理在自升级，别 restart 代理——
+  # 否则作业跑到一半把自己杀掉，这一单会永远卡在 running。
+  if ! ( cd "$SRC_DIR" && MALL_DIR="$MALL_DIR_RESOLVED" MALL_UPDATER_SELF=1 bash deploy/install.sh ) \
       >"$STATE_DIR/last-upgrade-install.log" 2>&1; then
     log "install.sh 失败，开始回滚"
     set_step 80 "升级失败，自动回滚" "还原旧版并重建"
@@ -219,7 +223,7 @@ do_upgrade() {
 
   rm -rf "$workdir"
   set_step 100 "升级完成" "当前版本 $want_version"
-  finish succeeded "{\"version\":\"$(json_str "$want_version")\"}"
+  finish succeeded "$(jq -nc --arg v "$want_version" '{version:$v}')"
 }
 
 rollback_to() {
@@ -228,7 +232,7 @@ rollback_to() {
   rm -rf "$SRC_DIR"
   mv "$snapshot" "$SRC_DIR" || { log "还原源码失败"; return 1; }
   log "已还原源码到 $(basename "$snapshot")，重建应用"
-  ( cd "$SRC_DIR" && MALL_DIR="$MALL_DIR_RESOLVED" bash deploy/install.sh ) \
+  ( cd "$SRC_DIR" && MALL_DIR="$MALL_DIR_RESOLVED" MALL_UPDATER_SELF=1 bash deploy/install.sh ) \
     >>"$STATE_DIR/last-rollback-install.log" 2>&1 || log "回滚后的 install.sh 失败，需要人工介入"
 }
 
