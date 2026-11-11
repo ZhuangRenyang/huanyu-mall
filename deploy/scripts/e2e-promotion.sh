@@ -335,6 +335,11 @@ if ((RATE_WAIT > 0)); then
 fi
 
 sec "8. 下单（幂等键）"
+# 下单要求购物车已有收货国家（ADR-019：运费与税都按国家自动算）
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" \
+  -H 'Content-Type: application/json' -d '{"country":"CN"}'
+
+OUT="$(curlsec "8. 下单（幂等键）"
 OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: promo-e2e-$(date +%s)" -d '{}' 2>&1)"
 CODE="${OUT##*$'\n'}"

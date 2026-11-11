@@ -45,6 +45,13 @@ describe("API routes（fastify.inject）", () => {
 
   it("3. 加购 → complete 201 返回 order（走 workflow）", async () => {
     await withApp(async (app) => {
+      // 下单要求先有收货国家（ADR-019：税与运费都按国家算）
+      await app.inject({
+        method: "PUT",
+        url: "/api/v1/store/carts/cart_1/address",
+        headers: { "content-type": "application/json" },
+        payload: { country: "CN" },
+      });
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/store/carts/cart_1/complete",
@@ -60,6 +67,12 @@ describe("API routes（fastify.inject）", () => {
   it("3b. 一车一单幂等：同车第二次 complete 返回同一订单（200，不再走 workflow）", async () => {
     await withApp(async (app, deps) => {
       // 第一次下单成功 → workflow 运行 → 订单已存在（state.orderCreated 置位）
+      await app.inject({
+        method: "PUT",
+        url: "/api/v1/store/carts/cart_1/address",
+        headers: { "content-type": "application/json" },
+        payload: { country: "CN" },
+      });
       const first = await app.inject({
         method: "POST",
         url: "/api/v1/store/carts/cart_1/complete",

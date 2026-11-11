@@ -11,11 +11,11 @@ interface PaymentStepProps extends StepProps {
   live?: boolean;
 }
 
-/** 步骤 4 支付方式：单选卡片（live 模式由后端返回已启用的支付渠道）。 */
+/** 步骤 3 支付方式：单选卡片（live 模式由后端返回已启用的支付渠道）。 */
 export function PaymentStep({ form, errors, setField, providers, loading, live }: PaymentStepProps) {
   return (
     <fieldset className="space-y-3">
-      <legend className="sr-only">{CHECKOUT_STEPS[3]}</legend>
+      <legend className="sr-only">{CHECKOUT_STEPS[2]}</legend>
       <div role="radiogroup" aria-label="支付方式" className="space-y-2">
         {providers.map((p) => {
           const checked = form.paymentProviderId === p.id;

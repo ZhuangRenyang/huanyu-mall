@@ -19,6 +19,10 @@ export interface CartPromoView {
   discountMinor: number;
   /** 后端算好的税额（minor unit）。前端绝不自己乘税率（铁律 13）。 */
   taxMinor: number;
+  /** 后端自动选定的运费（minor unit）。 */
+  shippingMinor: number;
+  /** 自动选定的运费方案名，用于合计区展示「含运费」。 */
+  shippingLabel: string;
   /** 后端算好的应付合计：含税价时已含税，价外税时才另加。 */
   totalMinor: number;
   /** 是否已从后端拿到合计。0 元订单与「还没拉到」必须区分开。 */
@@ -32,6 +36,8 @@ export const EMPTY_PROMO: CartPromoView = {
   giftCardCodes: [],
   discountMinor: 0,
   taxMinor: 0,
+  shippingMinor: 0,
+  shippingLabel: '',
   totalMinor: 0,
   totalsLoaded: false,
   discounts: [],
@@ -43,6 +49,8 @@ export function toPromoView(cart: Cart): CartPromoView {
     giftCardCodes: cart.gift_card_codes ?? [],
     discountMinor: cart.totals?.discount_minor ?? 0,
     taxMinor: cart.totals?.tax_minor ?? 0,
+    shippingMinor: cart.totals?.shipping_minor ?? 0,
+    shippingLabel: cart.shipping_method?.name ?? '',
     totalMinor: cart.totals?.total_minor ?? 0,
     totalsLoaded: true,
     discounts: cart.discounts ?? [],
@@ -57,6 +65,11 @@ export async function fetchCartPromo(
 ): Promise<CartPromoView> {
   const cart = (await getStoreClient().getCart(cartId, country)) as Cart;
   return toPromoView(cart);
+}
+
+/** 保存收货国家：税与运费都按它自动算（ADR-019）。 */
+export async function setCartCountry(cartId: string, country: string): Promise<void> {
+  await getStoreClient().setCartAddress(cartId, country);
 }
 
 /** 覆盖式设置优惠券码（后端算折扣，前端只传码）。 */

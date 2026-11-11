@@ -35,6 +35,13 @@ export async function buildApp(
     { parseAs: "string" },
     (req: FastifyRequest & { rawBody?: string }, body: string, done: (err: Error | null, parsed?: unknown) => void) => {
       req.rawBody = body;
+      // 空 body 是合法的「没有参数」，不能当成解析失败：
+      // JSON.parse("") 抛 SyntaxError，会被统一错误处理器兜成 500，
+      // 于是「带 Content-Type 但不带 body」的请求全变 500（真实踩到过）。
+      if (body === "" || body == null) {
+        done(null, null);
+        return;
+      }
       try {
         done(null, JSON.parse(body));
       } catch (err) {

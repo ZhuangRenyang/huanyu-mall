@@ -1,8 +1,10 @@
 import {
   cartNotFound,
   invalidQuantity,
+  invalidShippingCountry,
   lineItemNotFound,
   priceNotFound,
+  shippingCountryRequired,
   shippingOptionNotFound,
   variantNotSellable,
 } from "../errors.js";
@@ -32,14 +34,16 @@ export class CartService implements ICartModuleService {
     return cart;
   }
 
-  async retrieveCart(
-    id: string,
-    opts?: { countryCode?: string | null },
-  ): Promise<CartDetailDTO> {
+  async retrieveCart(id: string): Promise<CartDetailDTO> {
     const cart = await this.deps.repo.findById(id);
     if (!cart) throw cartNotFound(id);
     const items = await this.deps.repo.listLineItems(id);
-    const shipping = await this.deps.repo.findShippingMethod(id);
+    const subtotal = this.subtotal(items);
+    /*
+     * 运费**不由客户端选**（ADR-019）：按购物车上的收货国家取可用方案，自动挑最便宜的。
+     * 每次都按当前小计重算 —— 方案里可能有「满额免运费」，先选后改数量会让金额过期。
+     */
+    const shipping = await this.resolveShipping(cart, subtotal);
     /*
      * totals 在**读时动态计算**（不依赖「某次写操作后落库」的时序）：
      * 购物车小计 = Σ(单价×数量)，运费 = 已选方案的规则价，合计 = 小计+运费+税-折扣。
@@ -47,7 +51,6 @@ export class CartService implements ICartModuleService {
      * 累加进 discount_minor，并把每行折扣金额回填到 items 上（前端展示「原价 → 折后」）。
      * 这是金额的唯一权威算法 —— 任何读方拿到的都是同一份服务端算出的金额。
      */
-    const subtotal = this.subtotal(items);
     const categoryIdsByProduct = await this.deps.product.listCategoryIdsByProducts(
       [...new Set(items.map((i) => i.product_id))],
     );
@@ -85,7 +88,7 @@ export class CartService implements ICartModuleService {
      */
     const shippingMinor = shipping?.amount_minor ?? 0n;
     const tax = await this.deps.tax.calculateTax({
-      countryCode: opts?.countryCode ?? null,
+      countryCode: cart.shipping_country,
       lines: items.map((i) => ({
         lineId: i.id,
         amountMinor: i.unit_price_minor * BigInt(i.quantity) - (discountByItem.get(i.id) ?? 0n),
@@ -116,6 +119,60 @@ export class CartService implements ICartModuleService {
       discounts: discountDetails,
       tax_included_in_price: tax.included_in_price,
     };
+  }
+
+  /**
+   * 自动选运费：按收货国家列可用方案，挑规则价最低的一个。
+   * 没有国家 → 不产生运费（但下单会被 checkout 拒掉）；该国无方案 → null。
+   */
+  private async resolveShipping(
+    cart: CartDTO,
+    subtotal: bigint,
+  ): Promise<CartDetailDTO["shipping_method"]> {
+    const country = cart.shipping_country;
+    if (!country) return null;
+    const options = await this.deps.shipping.listShippingOptions({
+      channelId: cart.channel_id,
+      countryCode: country,
+      cartSubtotalMinor: subtotal,
+    });
+    if (options.length === 0) return null;
+
+    const priced = await Promise.all(
+      options.map(async (option) => ({
+        option,
+        price: await this.deps.shipping.calculateShippingPrice(option.id, {
+          cartSubtotalMinor: subtotal,
+        }),
+      })),
+    );
+    // 价格相同按 id 排，保证同一辆车每次算出来一致（避免展示抖动）
+    priced.sort((a, b) =>
+      a.price.amountMinor !== b.price.amountMinor
+        ? a.price.amountMinor < b.price.amountMinor
+          ? -1
+          : 1
+        : a.option.id.localeCompare(b.option.id),
+    );
+    const best = priced[0]!;
+    return {
+      id: `auto_${best.option.id}`,
+      cart_id: cart.id,
+      shipping_option_id: best.option.id,
+      name: best.option.name,
+      amount_minor: best.price.amountMinor,
+      currency_code: best.price.currencyCode,
+    };
+  }
+
+  /** 设置收货国家：税与运费都按它算（ADR-019）。 */
+  async setShippingCountry(cartId: string, countryCode: string): Promise<CartDetailDTO> {
+    const code = countryCode.trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) throw invalidShippingCountry(countryCode);
+    const cart = await this.deps.repo.findById(cartId);
+    if (!cart) throw cartNotFound(cartId);
+    await this.deps.repo.updateShippingCountry(cartId, code);
+    return this.retrieveCart(cartId);
   }
 
   private subtotal(items: CartLineItemDTO[]): bigint {
@@ -170,33 +227,30 @@ export class CartService implements ICartModuleService {
     await this.deps.repo.softDeleteLineItem(lineId);
   }
 
-  /** 选运费：客户端只传方案 id，方案名与运费金额一律后端解析（铁律 13）。 */
+  /**
+   * 运费选择接口（兼容旧客户端）：**不再改变金额**。
+   *
+   * ADR-019：运费由系统按收货国家自动选最便宜的可用方案，
+   * 客户端传什么都只是「确认」，合计永远由 retrieveCart 重算。
+   * 仍然做两件校验，避免旧客户端误以为「选了就能便宜」：
+   *   1. 必须已经填过收货国家；
+   *   2. 传的方案必须在该国家的可用清单里（防止跨区套用低价方案）。
+   */
   async setShippingMethod(cartId: string, input: SetShippingInput): Promise<CartDetailDTO> {
     const cart = await this.deps.repo.findById(cartId);
     if (!cart) throw cartNotFound(cartId);
+    if (!cart.shipping_country) throw shippingCountryRequired();
     const option = await this.deps.shipping.findShippingOption(input.shippingOptionId);
     if (!option) throw shippingOptionNotFound(input.shippingOptionId);
-
-    /*
-     * 运费金额必须走 calculateShippingPrice（按购物车当前小计算规则价），
-     * 而不是直接存 option.amount_minor（方案基础价）。否则：
-     * - 列表接口返回的是规则算出的价（free_over 命中 = 0「免运费」），
-     * - 这里却存基础价（如 800），
-     * 前端展示「免运费」、实际收基础运费 —— 展示价与实收价不一致（收错钱）。
-     */
-    const items = await this.deps.repo.listLineItems(cartId);
-    let subtotal = 0n;
-    for (const item of items) subtotal += item.unit_price_minor * BigInt(item.quantity);
-    const price = await this.deps.shipping.calculateShippingPrice(input.shippingOptionId, {
-      cartSubtotalMinor: subtotal,
+    const available = await this.deps.shipping.listShippingOptions({
+      channelId: cart.channel_id,
+      countryCode: cart.shipping_country,
+      cartSubtotalMinor: 0n,
     });
-
-    await this.deps.repo.upsertShippingMethod(cartId, {
-      shippingOptionId: option.id,
-      name: option.name,
-      amountMinor: price.amountMinor,
-      currencyCode: cart.currency_code,
-    });
+    if (!available.some((o) => o.id === option.id)) {
+      throw shippingOptionNotFound(input.shippingOptionId);
+    }
+    // 校验通过也不落库：金额以 retrieveCart 的自动选择为准
     return this.retrieveCart(cartId);
   }
 

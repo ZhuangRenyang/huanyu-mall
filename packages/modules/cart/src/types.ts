@@ -51,6 +51,8 @@ export interface CartDTO {
   customer_id: string | null;
   email: string | null;
   status: CartStatus;
+  /** 收货国家（ISO 两位大写）：税与运费的唯一口径来源；null = 还没填地址。 */
+  shipping_country: string | null;
   /** 顾客输入的 voucher 码（持久化，刷新不丢），读时传给 computeDiscounts 算折扣。 */
   voucher_codes: string[];
   /** 顾客输入的 gift card 码（持久化，刷新不丢），读时传给 computeDiscounts 算抵扣。 */
@@ -175,6 +177,12 @@ export interface ShippingMethodInput {
 
 /** 运费方案查询端口（跨模块走端口，M08 fulfillment）。 */
 export interface ShippingLookupPort {
+  /** 按渠道 + 国家列可用运费方案（自动选最便宜的那个）。 */
+  listShippingOptions(input: {
+    channelId: string;
+    countryCode: string;
+    cartSubtotalMinor: bigint;
+  }): Promise<Array<{ id: string; name: string }>>;
   findShippingOption(
     id: string,
   ): Promise<{ id: string; name: string; amount_minor: bigint } | null>;
@@ -193,6 +201,8 @@ export interface CartRepository {
   insert(input: CreateCartInput & { id: string }): Promise<CartDTO>;
   findById(id: string): Promise<CartDTO | null>;
   updateStatus(id: string, status: CartStatus): Promise<void>;
+  /** 持久化收货国家（ISO 两位大写）。 */
+  updateShippingCountry(id: string, countryCode: string): Promise<void>;
   /** 持久化顾客输入的 voucher codes（jsonb string[]）。 */
   updateVoucherCodes(id: string, codes: string[]): Promise<void>;
   /** 持久化顾客输入的 gift card codes（jsonb string[]）。 */
@@ -214,11 +224,10 @@ export interface CartRepository {
 
 export interface ICartModuleService {
   createCart(input: CreateCartInput): Promise<CartDTO>;
-  /** countryCode 用于解析税率（ADR-018）：不传则用默认税率。 */
-  retrieveCart(
-    id: string,
-    opts?: { countryCode?: string | null },
-  ): Promise<CartDetailDTO>;
+  /** 合计一律读购物车上的收货国家（ADR-019），不再接受调用方传国家。 */
+  retrieveCart(id: string): Promise<CartDetailDTO>;
+  /** 设置收货国家，并按该国自动重算运费与税（ADR-019）。 */
+  setShippingCountry(cartId: string, countryCode: string): Promise<CartDetailDTO>;
   addLineItem(cartId: string, input: AddLineItemInput): Promise<CartDetailDTO>;
   updateLineItem(cartId: string, lineId: string, patch: { quantity: number }): Promise<CartDetailDTO>;
   deleteLineItem(cartId: string, lineId: string): Promise<void>;

@@ -13,6 +13,8 @@ export const cart = pgTable(
     status: text("status").notNull().default("open"),
     totals: jsonb("totals"),
     metadata: jsonb("metadata"),
+    /** 收货国家（ISO 两位大写）：税与运费的唯一口径来源（ADR-019）。 */
+    shippingCountry: char("shipping_country", { length: 2 }),
     /** 顾客输入的 voucher codes（string[]），持久化，刷新不丢；金额由 promotion 侧读时算。 */
     voucherCodes: jsonb("voucher_codes"),
     /** 顾客输入的 gift card codes（string[]），持久化，刷新不丢；抵扣金额由 promotion 侧读时算。 */

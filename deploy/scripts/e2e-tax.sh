@@ -210,7 +210,9 @@ CART_ID="$(jqr '.data.id')"
 call POST "/store/carts/$CART_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":2}"
 expect_2xx "加购 2 件" || exit 1
 
-call GET "/store/carts/$CART_ID?country=CN" "" auth
+call PUT "/store/carts/$CART_ID/address" '{"country":"CN"}' auth
+expect_2xx "设置收货国家 CN（服务端据此算运费与税）" || exit 1
+call GET "/store/carts/$CART_ID" "" auth
 expect_2xx "按 CN 读购物车" || exit 1
 SUBTOTAL_CN="$(jqr '.data.totals.subtotal_minor')"
 DISCOUNT_CN="$(jqr '.data.totals.discount_minor // 0')"
@@ -222,7 +224,9 @@ expect_num "中国税率 13% 的税额" "$TAX_CN" "$(tax_of "$BASE_CN" 1300)"
 expect_num "价外税合计 = 商品 + 运费 + 税 - 折扣" "$TOTAL_CN" "$(( BASE_CN + SHIP_CN + TAX_CN ))"
 expect_num "税口径标记（价外 = false）" "$(jqr '.data.tax_included_in_price')" "false"
 
-call GET "/store/carts/$CART_ID?country=JP" "" auth
+call PUT "/store/carts/$CART_ID/address" '{"country":"JP"}' auth
+expect_2xx "切到日本" || exit 1
+call GET "/store/carts/$CART_ID" "" auth
 expect_2xx "按 JP 读购物车" || exit 1
 TAX_JP="$(jqr '.data.totals.tax_minor')"
 expect_num "日本走默认税率 10% 的税额" "$TAX_JP" "$(tax_of "$BASE_CN" 1000)"
@@ -238,6 +242,7 @@ if (( RATE_WAIT > 0 )); then
   printf '  等待 %s 秒让下单限流窗口重置…\n' "$RATE_WAIT"
   sleep "$RATE_WAIT"
 fi
+call PUT "/store/carts/$CART_ID/address" '{"country":"CN"}' auth >/dev/null
 call POST "/store/carts/$CART_ID/complete" \
   '{"shipping_address":{"name":"张三","phone":"13800000000","country":"CN","province":"广东","city":"深圳","address_1":"科技园 1 号"}}' auth
 expect_2xx "下单（带收货地址）" || exit 1
@@ -261,7 +266,8 @@ expect_2xx "关闭计税" || exit 1
 call POST "/store/carts" '{"email":"e2e-tax-off@example.com"}'
 CART2_ID="$(jqr '.data.id')"
 call POST "/store/carts/$CART2_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":1}" >/dev/null
-call GET "/store/carts/$CART2_ID?country=CN" "" auth
+call PUT "/store/carts/$CART2_ID/address" '{"country":"CN"}' auth >/dev/null
+call GET "/store/carts/$CART2_ID" "" auth
 expect_2xx "读关闭后的购物车" || exit 1
 expect_num "关闭后税额为 0" "$(jqr '.data.totals.tax_minor')" "0"
 SUBTOTAL_OFF="$(jqr '.data.totals.subtotal_minor')"
@@ -277,7 +283,8 @@ expect_2xx "切到含税价口径" || exit 1
 call POST "/store/carts" '{"email":"e2e-tax-incl@example.com"}'
 CART3_ID="$(jqr '.data.id')"
 call POST "/store/carts/$CART3_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":1}" >/dev/null
-call GET "/store/carts/$CART3_ID?country=CN" "" auth
+call PUT "/store/carts/$CART3_ID/address" '{"country":"CN"}' auth >/dev/null
+call GET "/store/carts/$CART3_ID" "" auth
 expect_2xx "读含税价购物车" || exit 1
 TAX_INCL="$(jqr '.data.totals.tax_minor')"
 SUBTOTAL_INCL="$(jqr '.data.totals.subtotal_minor')"

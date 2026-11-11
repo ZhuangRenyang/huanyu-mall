@@ -131,8 +131,7 @@ export function validateStep(step: number, form: CheckoutForm): CheckoutErrors {
     const line = form.line1.trim();
     if (line.length < 5 || line.length > 200) errors.line1 = '详细地址需 5–200 个字符';
   }
-  if (step === 3 && !form.shippingOptionId) errors.shippingOptionId = '请选择配送方式';
-  if (step === 4 && !form.paymentProviderId) errors.paymentProviderId = '请选择支付方式';
+  if (step === 3 && !form.paymentProviderId) errors.paymentProviderId = '请选择支付方式';
   return errors;
 }
 
@@ -273,7 +272,7 @@ export function demoOrder(id: string): OrderRecord {
   };
 }
 
-export const CHECKOUT_STEPS = ['联系方式', '收货地址', '配送方式', '支付'] as const;
+export const CHECKOUT_STEPS = ['联系方式', '收货地址', '支付'] as const;
 
 /* ------------------------------------------------------------------ *
  * live 模式：真实后端数据
@@ -419,14 +418,13 @@ function isTouchDevice(): boolean {
  */
 export async function submitLiveCheckout(input: {
   cartId: string;
-  shippingOptionId: string;
   providerId: string;
   returnUrlFor: (orderId: string) => string;
   idempotencyKey: string;
   /** 收货地址：订单要存下来，税率也按其中的国家解析（ADR-018）。 */
   shippingAddress?: ShippingAddressInput;
 }): Promise<{ order: Order; session: LivePaymentSession }> {
-  await applyLiveShippingMethod(input.cartId, input.shippingOptionId);
+  // 运费由后端按收货国家自动选并算进购物车（ADR-019），前端不再设置运费方案
   const order = await completeLiveOrder(input.cartId, input.idempotencyKey, input.shippingAddress);
   const session = await createLivePaymentSession({
     cartId: input.cartId,

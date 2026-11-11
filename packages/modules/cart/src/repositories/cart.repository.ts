@@ -49,6 +49,13 @@ export class DrizzleCartRepository implements CartRepository {
     await this.db.update(schema.cart).set({ status, updatedAt: new Date() }).where(eq(schema.cart.id, id));
   }
 
+  async updateShippingCountry(id: string, countryCode: string): Promise<void> {
+    await this.db
+      .update(schema.cart)
+      .set({ shippingCountry: countryCode, updatedAt: new Date() })
+      .where(eq(schema.cart.id, id));
+  }
+
   async updateVoucherCodes(id: string, codes: string[]): Promise<void> {
     await this.db
       .update(schema.cart)
@@ -165,6 +172,7 @@ function toCartDTO(r: typeof schema.cart.$inferSelect): CartDTO {
     customer_id: r.customerId ?? null,
     email: r.email ?? null,
     status: r.status as CartStatus,
+    shipping_country: r.shippingCountry ?? null,
     voucher_codes: parseVoucherCodes(r.voucherCodes),
     gift_card_codes: parseStringArray(r.giftCardCodes),
     totals: parseTotals(r.totals),

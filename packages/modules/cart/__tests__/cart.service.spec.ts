@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DomainError } from "@mall/core";
 import { CartService } from "../src/services/cart.service.js";
 import type {
   CartDTO,
@@ -27,6 +28,12 @@ class InMemoryCartRepository implements CartRepository {
   readonly giftCardCodes = new Map<string, string[]>();
   private counter = 0;
 
+  async updateShippingCountry(id: string, countryCode: string): Promise<void> {
+    const cart = this.carts.get(id);
+    if (!cart) return;
+    cart.shipping_country = countryCode;
+  }
+
   async insert(input: CreateCartInput & { id: string }): Promise<CartDTO> {
     const dto: CartDTO = {
       id: input.id,
@@ -36,6 +43,7 @@ class InMemoryCartRepository implements CartRepository {
       customer_id: input.customerId ?? null,
       email: input.email ?? null,
       status: "open",
+      shipping_country: null,
       voucher_codes: [],
       gift_card_codes: [],
       totals: null,
@@ -160,11 +168,23 @@ class FakeShippingLookup implements ShippingLookupPort {
     /** 规则价：模拟 free_over 时可按小计返回 0，否则返回方案基础价 800。 */
     private readonly freeOverThreshold: bigint | null = null,
   ) {}
+  /** 可用方案：CN 两个（含一个更便宜的），其它国家只有一个；ZZ 无可用方案。 */
+  async listShippingOptions(input: { channelId: string; countryCode: string }) {
+    if (input.countryCode === "ZZ") return [];
+    if (input.countryCode === "US") {
+      return [
+        { id: "shipopt_1", name: "标准快递" },
+        { id: "shipopt_cheap", name: "经济快递" },
+      ];
+    }
+    return [{ id: "shipopt_1", name: "标准快递" }];
+  }
   async findShippingOption(id: string) {
-    if (id !== "shipopt_1") return null;
-    return { id, name: "标准快递", amount_minor: 800n };
+    if (id !== "shipopt_1" && id !== "shipopt_cheap") return null;
+    return { id, name: id === "shipopt_cheap" ? "经济快递" : "标准快递", amount_minor: 800n };
   }
   async calculateShippingPrice(optionId: string, ctx: { cartSubtotalMinor: bigint }) {
+    if (optionId === "shipopt_cheap") return { amountMinor: 500n, currencyCode: "CNY" };
     if (optionId !== "shipopt_1") throw new Error("unknown option");
     // free_over 命中：小计 ≥ 门槛 → 0（免运费）；否则基础价 800
     if (this.freeOverThreshold !== null && ctx.cartSubtotalMinor >= this.freeOverThreshold) {
@@ -362,9 +382,8 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup();
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     // 客户端只传方案 id，方案名与运费金额由后端解析
-    const withShipping = await service.setShippingMethod(cart.id, {
-      shippingOptionId: "shipopt_1",
-    });
+    // 运费不再由客户端选：填国家后系统自动挑最便宜的可用方案（ADR-019）
+    const withShipping = await service.setShippingCountry(cart.id, "CN");
     expect(withShipping.shipping_method?.amount_minor).toBe(800n);
     expect(withShipping.shipping_method?.name).toBe("标准快递");
   });
@@ -374,7 +393,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     // 加 2 件单价 9900 的商品
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+    await service.setShippingCountry(cart.id, "CN");
 
     const detail = await service.retrieveCart(cart.id);
     expect(detail.totals?.subtotal_minor).toBe(19800n);
@@ -386,7 +405,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup({ freeOverThreshold: 9900n });
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 }); // 小计 9900
-    const withShipping = await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+    const withShipping = await service.setShippingCountry(cart.id, "CN");
 
     expect(withShipping.shipping_method?.amount_minor).toBe(0n); // 免运费
     expect(withShipping.totals?.shipping_minor).toBe(0n);
@@ -397,7 +416,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup({ fixedDiscountMinor: 1980n });
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 }); // 小计 19800
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }); // 运费 800
+    await service.setShippingCountry(cart.id, "CN"); // 运费 800
 
     const detail = await service.retrieveCart(cart.id);
     expect(detail.totals?.subtotal_minor).toBe(19800n);
@@ -411,7 +430,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup(); // fixedDiscountMinor 默认 0
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+    await service.setShippingCountry(cart.id, "CN");
 
     const detail = await service.retrieveCart(cart.id);
     expect(detail.totals?.discount_minor).toBe(0n);
@@ -424,7 +443,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup({ fixedDiscountMinor: 1980n, orderDiscountMinor: 2000n });
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 }); // 小计 19800
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }); // 运费 800
+    await service.setShippingCountry(cart.id, "CN"); // 运费 800
 
     const detail = await service.retrieveCart(cart.id);
     // 行级 1980 + 订单级 2000 = 3980
@@ -458,7 +477,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { repo, service } = setup({ voucherDiscountMinor: 2000n });
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 }); // 小计 19800
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }); // 运费 800
+    await service.setShippingCountry(cart.id, "CN"); // 运费 800
 
     const detail = await service.setVoucherCodes(cart.id, ["V20", "V20", ""]);
     expect(detail.voucher_codes).toEqual(["V20"]);
@@ -478,7 +497,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup({ voucherDiscountMinor: 2000n });
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+    await service.setShippingCountry(cart.id, "CN");
 
     const detail = await service.retrieveCart(cart.id);
     expect(detail.totals?.discount_minor).toBe(0n);
@@ -490,7 +509,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { repo, service } = setup({ giftCardAppliedMinor: 10000n });
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 }); // 小计 19800
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }); // 运费 800
+    await service.setShippingCountry(cart.id, "CN"); // 运费 800
 
     const detail = await service.setGiftCardCodes(cart.id, ["GC-100", "GC-100", ""]);
     expect(detail.gift_card_codes).toEqual(["GC-100"]);
@@ -510,7 +529,7 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     const { service } = setup({ giftCardAppliedMinor: 10000n });
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
     await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
-    await service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" });
+    await service.setShippingCountry(cart.id, "CN");
 
     const detail = await service.retrieveCart(cart.id);
     expect(detail.totals?.discount_minor).toBe(0n);
@@ -556,5 +575,68 @@ describe("totals 的税口径（ADR-018：含税价不重复加税）", () => {
 
     const detail = await service.retrieveCart(cart.id);
     expect(detail.totals!.tax_minor).toBe(2000n);
+  });
+});
+
+describe("运费与税全自动（ADR-019：客户端不再参与金额）", () => {
+  it("填国家后自动选最便宜的可用方案（US：800 vs 500 → 选 500）", async () => {
+    const { service } = setup();
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    const detail = await service.setShippingCountry(cart.id, "us");
+    expect(detail.shipping_country).toBe("US"); // 归一为大写
+    expect(detail.shipping_method?.shipping_option_id).toBe("shipopt_cheap");
+    expect(detail.shipping_method?.amount_minor).toBe(500n);
+    expect(detail.totals?.shipping_minor).toBe(500n);
+  });
+
+  it("没填国家：没有运费，合计不凭空加钱", async () => {
+    const { service } = setup();
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    const detail = await service.retrieveCart(cart.id);
+    expect(detail.shipping_country).toBeNull();
+    expect(detail.shipping_method).toBeNull();
+    expect(detail.totals?.shipping_minor).toBe(0n);
+  });
+
+  it("该国没有可用方案：运费为空，不静默按 0 元发（下单会被 checkout 拦）", async () => {
+    const { service } = setup();
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    const detail = await service.setShippingCountry(cart.id, "ZZ");
+    expect(detail.shipping_method).toBeNull();
+  });
+
+  it("换国家会按新国家重选运费（不是沿用旧方案）", async () => {
+    const { service } = setup();
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    expect((await service.setShippingCountry(cart.id, "CN")).shipping_method?.amount_minor).toBe(800n);
+    expect((await service.setShippingCountry(cart.id, "US")).shipping_method?.amount_minor).toBe(500n);
+  });
+
+  it("旧接口不能跨区套用低价方案：CN 传经济快递（只在 US 有）→ 拒绝", async () => {
+    const { service } = setup();
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.setShippingCountry(cart.id, "CN");
+
+    await expect(
+      service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_cheap" }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("旧接口在没有收货国家时直接拒绝；非法国家码也拒绝", async () => {
+    const { service } = setup();
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+
+    await expect(
+      service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }),
+    ).rejects.toBeInstanceOf(DomainError);
+    await expect(service.setShippingCountry(cart.id, "中国")).rejects.toBeInstanceOf(DomainError);
   });
 });

@@ -38,7 +38,11 @@ SM=$(curl -s -X POST "$BASE/store/carts/$CART_ID/shipping-methods" -H 'Content-T
   -d "{\"shipping_option_id\":\"$OPT_ID\"}")
 echo "$SM" | head -c 400
 
-step "6. 结账（幂等键）"
+step "5.5 设置收货国家（税与运费自动算）"
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" -H 'Content-Type: application/json' \
+  -d '{"country":"CN"}'
+
+step "6. 结账（幂等键）"step "6. 结账（幂等键）"
 CO=$(curl -s -X POST "$BASE/store/carts/$CART_ID/complete" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: regress-$(date +%s)" -d '{}')
 echo "$CO" | head -c 500

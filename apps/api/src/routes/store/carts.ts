@@ -71,6 +71,8 @@ export function mapCart(cart: CartDetailDTO) {
     discounts: cart.discounts.map(mapDiscount),
     // 税口径（ADR-018）：true 时合计已含税，前端不要再加一遍
     tax_included_in_price: cart.tax_included_in_price,
+    // 收货国家：合计口径的来源（ADR-019）
+    shipping_country: cart.shipping_country,
   };
 }
 
@@ -95,16 +97,36 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
-  // country：税率按收货国家解析（ADR-018）。结账页选了国家就带上，合计实时跟着变。
+  /*
+   * 合计口径只认购物车上存的收货国家（ADR-019）。
+   * 这里刻意**不接受 ?country**：查询参数是客户端可控的，
+   * 允许它影响金额就会出现「展示一个价、下单另一个价」。
+   */
   app.get("/api/v1/store/carts/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const q = req.query as { country?: string };
-    const cart = await deps.services.cart.retrieveCart(id, { countryCode: q.country ?? null });
+    const cart = await deps.services.cart.retrieveCart(id);
     if (cart.customer_id && req.auth?.sub && cart.customer_id !== req.auth.sub) {
       throw errors.forbidden("not your cart");
     }
     reply.ok(mapCart(cart));
   });
+
+  /**
+   * 设置收货国家（ADR-019）：税与运费都按它自动算。
+   *
+   * 只收国家码，不收金额——运费由系统按国家自动选最便宜的可用方案，
+   * 税率按国家解析，客户端没有任何可调的金额参数。
+   */
+  app.put(
+    "/api/v1/store/carts/:id/address",
+    { schema: { body: z.object({ country: z.string().min(2).max(2) }) } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as { country: string };
+      const cart = await deps.services.cart.setShippingCountry(id, b.country);
+      reply.ok(mapCart(cart));
+    },
+  );
 
   app.post(
     "/api/v1/store/carts/:id/line-items",

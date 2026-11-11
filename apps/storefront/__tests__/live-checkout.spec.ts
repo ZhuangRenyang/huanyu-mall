@@ -181,36 +181,29 @@ describe("live 模式：提交下单的调用序列", () => {
     vi.resetModules();
   });
 
-  it("按「选运费 → 下单 → 建支付会话」顺序调用，且下单带幂等键", async () => {
+  it("按「下单 → 建支付会话」顺序调用，且下单带幂等键", async () => {
     const { calls } = mockBackend({
-      "POST /api/v1/store/carts/cart_1/shipping-methods": CART_WITH_LINE,
       "POST /api/v1/store/carts/cart_1/complete": ORDER,
       "POST /api/v1/store/payment-sessions": QR_SESSION,
     });
 
     const { order, session } = await submitLiveCheckout({
       cartId: "cart_1",
-      shippingOptionId: "ship_1",
       providerId: "pp_alipay",
       returnUrlFor: (orderId) => `https://shop.test/checkout/result?order=${orderId}`,
       idempotencyKey: "checkout_cart_1",
     });
 
-    // 顺序：运费 → 下单 → 支付会话
+    // 顺序：下单 → 支付会话（运费由后端按国家自动算，不再单独选）
     expect(calls.map((c) => `${c.method} ${c.url.split("?")[0]}`)).toEqual([
-      "POST /api/v1/store/carts/cart_1/shipping-methods",
       "POST /api/v1/store/carts/cart_1/complete",
       "POST /api/v1/store/payment-sessions",
     ]);
-
-    // 选运费只传方案 id，金额由后端解析
-    expect(calls[0]?.body).toEqual({ shipping_option_id: "ship_1" });
-
     // 下单带幂等键：连点两次「去支付」不会产生两笔订单
-    expect(calls[1]?.headers["idempotency-key"]).toBe("checkout_cart_1");
+    expect(calls[0]?.headers["idempotency-key"]).toBe("checkout_cart_1");
 
     // 支付会话必须带 cart_id：后端据此复用下单时建的支付集合
-    expect(calls[2]?.body).toEqual({
+    expect(calls[1]?.body).toEqual({
       cart_id: "cart_1",
       provider_id: "pp_alipay",
       return_url: "https://shop.test/checkout/result?order=ord_1",
@@ -223,7 +216,6 @@ describe("live 模式：提交下单的调用序列", () => {
 
   it("下单失败时不再建支付会话（避免建出没有 order_id 的空壳支付单）", async () => {
     const { calls } = mockBackend({
-      "POST /api/v1/store/carts/cart_1/shipping-methods": CART_WITH_LINE,
       "POST /api/v1/store/carts/cart_1/complete": undefined,
       "POST /api/v1/store/payment-sessions": QR_SESSION,
     });
@@ -231,14 +223,13 @@ describe("live 模式：提交下单的调用序列", () => {
     await expect(
       submitLiveCheckout({
         cartId: "cart_1",
-        shippingOptionId: "ship_1",
-        providerId: "pp_alipay",
+          providerId: "pp_alipay",
         returnUrlFor: (id) => `https://shop.test/result?order=${id}`,
         idempotencyKey: "checkout_cart_1",
       }),
     ).rejects.toThrow();
 
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(1);
     expect(calls.some((c) => c.url.includes("payment-sessions"))).toBe(false);
   });
 });
@@ -347,20 +338,15 @@ describe("live 模式：从加购到支付会话的完整链路", () => {
     sessionStorage.clear();
   });
 
-  it("整条链路一次跑通：建车 → 加行 → 取方案 → 选运费 → 下单 → 建支付会话", async () => {
+  it("整条链路一次跑通：建车 → 加行 → 支付方式 → 下单 → 建支付会话", async () => {
     const { calls } = mockBackend({
       "POST /api/v1/store/carts": EMPTY_CART,
       "GET /api/v1/store/carts/cart_1": EMPTY_CART,
       "POST /api/v1/store/carts/cart_1/line-items": CART_WITH_LINE,
-      "GET /api/v1/store/shipping-options": {
-        items: [{ id: "ship_1", name: "标准跨境专线", type: "flat", amount_minor: 2000, currency_code: "CNY" }],
-        count: 1,
-      },
       "GET /api/v1/store/payment-providers": {
         items: [{ id: "pp_alipay", provider_id: "pp_alipay", label: "支付宝" }],
         count: 1,
       },
-      "POST /api/v1/store/carts/cart_1/shipping-methods": CART_WITH_LINE,
       "POST /api/v1/store/carts/cart_1/complete": ORDER,
       "POST /api/v1/store/payment-sessions": QR_SESSION,
     });
@@ -372,17 +358,14 @@ describe("live 模式：从加购到支付会话的完整链路", () => {
     const cartId = live.getLiveCartId();
     expect(cartId).toBe("cart_1");
 
-    // 2) 取后端的运费方案与支付方式
-    const shipping = await loadLiveShippingOptions("CN", cartId);
+    // 2) 取后端启用的支付方式（运费由后端按国家自动算，前端不再取方案）
     const providers = await loadLivePaymentProviders(cartId);
-    expect(shipping[0]?.id).toBe("ship_1");
     expect(providers[0]?.id).toBe("pp_alipay");
 
     // 3) 提交下单 + 发起支付
-    const fingerprint = cartFingerprint([{ id: "var_1", quantity: 2 }], "ship_1", "buyer@example.com");
+    const fingerprint = cartFingerprint([{ id: "var_1", quantity: 2 }], "CN", "buyer@example.com");
     const { order, session } = await submitLiveCheckout({
       cartId,
-      shippingOptionId: shipping[0]!.id,
       providerId: providers[0]!.id,
       returnUrlFor: (orderId) => `https://shop.test/checkout/result?order=${orderId}`,
       idempotencyKey: `checkout_${cartId}_${fingerprint}`,
@@ -398,9 +381,7 @@ describe("live 模式：从加购到支付会话的完整链路", () => {
       "POST /api/v1/store/carts",
       "GET /api/v1/store/carts/cart_1",
       "POST /api/v1/store/carts/cart_1/line-items",
-      "GET /api/v1/store/shipping-options",
       "GET /api/v1/store/payment-providers",
-      "POST /api/v1/store/carts/cart_1/shipping-methods",
       "POST /api/v1/store/carts/cart_1/complete",
       "POST /api/v1/store/payment-sessions",
     ]);

@@ -279,7 +279,9 @@ else
   skip "无运费方案，按 0 运费继续"
 fi
 
-MAIN_RESERVED_PRE_ORDER="$(level_field "$MAIN_LOC" reserved_quantity)"
+# 下单要求购物车已有收货国家（ADR-019：运费与税都按国家自动算）
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" \
+  -H 'Content-Type: application/json' -d '{"country":"CN"}'
 
 OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: inv-e2e-$(date +%s)" -d '{}' 2>&1)"
@@ -338,6 +340,8 @@ set_available "$BACKUP_LOC" "$LEVEL_BACKUP_ID" 2 >/dev/null
 call POST "/store/carts" "{\"email\":\"inv-split@example.com\"}"
 CART2_ID="$(jqr '.data.id')"
 call POST "/store/carts/$CART2_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":3}" >/dev/null
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART2_ID/address" \
+  -H 'Content-Type: application/json' -d '{"country":"CN"}'
 OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART2_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: inv-split-$(date +%s)" -d '{}' 2>&1)"
 CODE="${OUT##*$'\n'}"
@@ -397,6 +401,8 @@ BACKUP_AVAIL_PRE_REJECT="$(level_field "$BACKUP_LOC" available_quantity)"
 call POST "/store/carts" "{\"email\":\"inv-reject@example.com\"}"
 CART3_ID="$(jqr '.data.id')"
 call POST "/store/carts/$CART3_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":5}" >/dev/null
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART3_ID/address" \
+  -H 'Content-Type: application/json' -d '{"country":"CN"}'
 OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART3_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: inv-reject-$(date +%s)" -d '{}' 2>&1)"
 CODE="${OUT##*$'\n'}"
@@ -433,6 +439,8 @@ ok "已准备 $CONCURRENCY 个购物车（各 $CONC_QTY 件）"
 for i in "${!CART_IDS[@]}"; do
   cid="${CART_IDS[$i]}"
   (
+    curl -s -o /dev/null -X PUT "$BASE/store/carts/$cid/address" \
+      -H 'Content-Type: application/json' -d '{"country":"CN"}'
     curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/store/carts/$cid/complete" \
       -H 'Content-Type: application/json' -H "Idempotency-Key: conc-$i-$(date +%s)" -d '{}' \
       > "$TMPDIR_RUN/$i.status" 2>/dev/null

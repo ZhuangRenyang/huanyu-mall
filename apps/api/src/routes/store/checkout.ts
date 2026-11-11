@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { errors } from "@mall/core";
 import { cartCompleteWorkflow } from "@mall/workflows";
 import type { AppDeps } from "../../deps.js";
 import { mapOrder } from "../mappers.js";
@@ -71,10 +72,27 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
     }
 
     const body = (req.body ?? {}) as z.infer<typeof completeBody>;
-    const shippingAddress = body?.shipping_address ?? {};
-    // 税率按收货国家解析（ADR-018）：购物车合计与订单税额用同一个国家，前后一致
-    const countryCode = (shippingAddress.country as string | undefined) ?? null;
-    const cart = await deps.services.cart.retrieveCart(id, { countryCode });
+    const provided = body?.shipping_address ?? {};
+    /*
+     * 金额口径只认购物车上存的收货国家（ADR-019）：
+     * - 请求体里的 country 只用于「与购物车核对」，不参与任何计价；
+     * - 没有国家就拒绝下单——否则会走默认税率，成了「不填地址就少交税」的绕过口子；
+     * - 该国没有可用运费方案也拒绝：不能按 0 运费把货发到不配送的地区。
+     */
+    const cart = await deps.services.cart.retrieveCart(id);
+    const country = cart.shipping_country;
+    if (!country) throw errors.validation("请先填写收货国家/地区");
+    const providedCountry = provided.country?.trim().toUpperCase();
+    if (providedCountry && providedCountry !== country) {
+      throw errors.validation(
+        `收货国家与购物车不一致（购物车为 ${country}）：请回到收货地址重新确认`,
+      );
+    }
+    if (!cart.shipping_method) {
+      throw errors.validation(`该地区暂不支持配送（${country}）`);
+    }
+    // 订单地址 = 客户填写详情 + 购物车里的国家（国家以服务端为准）
+    const shippingAddress = { ...provided, country };
     // 仓选择只由后端 inventory 模块决定（ADR-013 §5 / 铁律 13）：路由不再取仓、不再下发 locationId。
 
     const input = {

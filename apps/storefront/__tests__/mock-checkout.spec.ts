@@ -16,12 +16,12 @@ import {
 } from "../lib/checkout";
 
 describe("mock 模式：结账表单校验", () => {
-  it("四个步骤的必填项都要校验", () => {
+  it("三步的必填项都要校验（配送方式已取消：运费按国家自动算）", () => {
     const empty = validateStep(1, { ...emptyForm });
     expect(empty.phone).toBeTruthy();
 
-    expect(validateStep(3, { ...emptyForm, shippingOptionId: '' }).shippingOptionId).toBeTruthy();
-    expect(validateStep(4, { ...emptyForm, paymentProviderId: '' }).paymentProviderId).toBeTruthy();
+    expect(validateStep(2, { ...emptyForm, country: '' }).country).toBeTruthy();
+    expect(validateStep(3, { ...emptyForm, paymentProviderId: '' }).paymentProviderId).toBeTruthy();
   });
 
   it("填全后不报错", () => {
@@ -46,8 +46,8 @@ describe("mock 模式：结账表单校验", () => {
     expect(validateStep(1, bad).email).toBeTruthy();
   });
 
-  it("四个步骤名齐全（结账进度条依赖）", () => {
-    expect(CHECKOUT_STEPS).toHaveLength(4);
+  it("三步步骤名齐全（结账进度条依赖；配送方式已自动化去掉）", () => {
+    expect(CHECKOUT_STEPS).toEqual(["联系方式", "收货地址", "支付"]);
   });
 });
 

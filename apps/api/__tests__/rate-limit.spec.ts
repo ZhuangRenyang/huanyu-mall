@@ -156,6 +156,14 @@ describe("限流防刷（Phase 4）", () => {
 
   it("5. 下单端点走中等档，其余 API 走宽松档（分档独立计数）", async () => {
     await withLimitedApp({ authMax: 2, checkoutMax: 2, max: 50 }, async ({ app, counters }) => {
+      // 先补收货国家：没有国家不能下单（ADR-019）
+      await app.inject({
+        method: "PUT",
+        url: "/api/v1/store/carts/cart_1/address",
+        headers: { "content-type": "application/json" },
+        payload: { country: "CN" },
+        remoteAddress: "203.0.113.50",
+      });
       const complete = () =>
         app.inject({
           method: "POST",

@@ -25,7 +25,6 @@ import {
   describeError,
   emptyForm,
   loadLivePaymentProviders,
-  loadLiveShippingOptions,
   resolvePaymentLaunch,
   savePendingPayment,
   submitLiveCheckout,
@@ -34,15 +33,14 @@ import {
   type CheckoutErrors,
   type CheckoutForm,
   type PaymentProviderView,
-  type ShippingOptionView,
 } from '@/lib/checkout';
 import { CheckoutStepper } from './checkout-stepper';
 import { OrderSummary } from './order-summary';
-import { countryLabel, loadCheckoutCountries } from '@/lib/countries';
+import { countryLabel, guessCountry, loadCheckoutCountries } from '@/lib/countries';
+import { setCartCountry } from '@/lib/promo';
 import type { CheckoutCountry } from '@mall/sdk';
 import { ContactStep } from './contact-step';
 import { AddressStep } from './address-step';
-import { ShippingStep } from './shipping-step';
 import { PaymentStep } from './payment-step';
 import { PromoCodes } from './promo-codes';
 
@@ -59,9 +57,6 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const [stepError, setStepError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
-  const [shippingOptions, setShippingOptions] = useState<ShippingOptionView[]>(
-    live ? [] : SHIPPING_OPTIONS,
-  );
   const [paymentProviders, setPaymentProviders] = useState<PaymentProviderView[]>(
     live ? [] : PAYMENT_PROVIDERS,
   );
@@ -109,7 +104,9 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     let cancelled = false;
     void (async () => {
       try {
-        const view = await fetchCartPromo(cartId, form.country || undefined);
+        // 先把国家存到购物车：运费由系统按国家自动选，税率也按国家解析（ADR-019）
+        if (form.country) await setCartCountry(cartId, form.country);
+        const view = await fetchCartPromo(cartId);
         if (!cancelled) setPromo(view);
       } catch {
         /* 失败保持上次的数字，别把合计清成 0 */
@@ -175,7 +172,11 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
       if (raw) {
         const d = JSON.parse(raw) as { form?: Partial<CheckoutForm>; step?: number };
         if (d.form) setForm((f) => ({ ...f, ...d.form }));
-        if (d.step && d.step >= 1 && d.step <= 4) setStep(d.step);
+        if (d.step && d.step >= 1 && d.step <= 3) setStep(d.step);
+      } else {
+        // 首次进结账：按浏览器时区/语言猜一个国家，顾客只需要核对（全自动的起点）
+        const guess = guessCountry();
+        if (guess) setForm((f) => ({ ...f, country: guess }));
       }
     } catch {
       /* sessionStorage 不可用时降级 */
@@ -192,7 +193,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     }
   }, [form, step, draftLoaded]);
 
-  // live 模式：配送方式与支付方式都以后端为准（前端不许硬编码）。
+  // live 模式：支付方式以后端为准（前端不许硬编码）；运费与税由后端按国家自动算。
   useEffect(() => {
     if (!live) return;
     let cancelled = false;
@@ -200,19 +201,12 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
       setOptionsLoading(true);
       try {
         const cartId = getLiveCartId();
-        const [ship, pay] = await Promise.all([
-          loadLiveShippingOptions(form.country, cartId),
-          loadLivePaymentProviders(cartId),
-        ]);
+        const pay = await loadLivePaymentProviders(cartId);
         if (cancelled) return;
-        setShippingOptions(ship);
         setPaymentProviders(pay);
-        // 草稿里可能存着已下线的方案/渠道，回退到第一个可用项。
+        // 草稿里可能存着已下线的渠道，回退到第一个可用项
         setForm((f) => ({
           ...f,
-          shippingOptionId: ship.some((o) => o.id === f.shippingOptionId)
-            ? f.shippingOptionId
-            : (ship[0]?.id ?? ''),
           paymentProviderId: pay.some((p) => p.id === f.paymentProviderId)
             ? f.paymentProviderId
             : (pay[0]?.id ?? ''),
@@ -226,7 +220,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     return () => {
       cancelled = true;
     };
-  }, [live, form.country]);
+  }, [live]);
 
   // 步骤切换 → 焦点落新步标题（h2 tabindex=-1）
   useEffect(() => {
@@ -243,8 +237,9 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     setErrors((e) => ({ ...e, [key]: errs[key] }));
   };
 
-  const selectedShipping = shippingOptions.find((o) => o.id === form.shippingOptionId);
-  const shippingMinor = selectedShipping?.amountMinor ?? 0;
+  // 运费由后端按国家自动选定（ADR-019）；mock 模式用第一个方案演示
+  const shippingMinor = live ? promo.shippingMinor : (SHIPPING_OPTIONS[0]?.amountMinor ?? 0);
+  const shippingLabel = live ? promo.shippingLabel : (SHIPPING_OPTIONS[0]?.name ?? '');
   // live 模式：税与合计都取后端（含税/价外由后端口径决定，前端不再自己加税）。
   const taxMinor = live ? promo.taxMinor : 0;
   const discountMinor = live ? promo.discountMinor : 0;
@@ -261,9 +256,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
    * 提交订单并发起支付（live 模式）。
    *
    * 调用顺序不能换：
-   * 1. setShippingMethod —— 运费方案要落进购物车，下单时才会算进订单金额；
-   * 2. completeCart —— 后端按购物车生成订单与支付集合；
-   * 3. createPaymentSession —— 必须传 cart_id，后端据此复用第 2 步的支付集合
+   * 1. completeCart —— 后端按购物车生成订单与支付集合（运费与税已在服务端算好）；
+   * 2. createPaymentSession —— 必须传 cart_id，后端据此复用第 2 步的支付集合
    *    （带正确金额与 order_id），否则支付成功后订单永远收不到 paid。
    *
    * 整段在「购物车锁」里跑：加购写操作必须与下单互斥，否则「刚加购就结算」
@@ -273,7 +267,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     // 购物车内容指纹：决定「复用这辆车重试」还是「换辆车出一笔新单」，
     // 也是下单幂等键的一部分（连点两次 → 同一个键 → 后端重放同一笔订单）。
     const lines = items.map((i) => ({ id: i.id, quantity: i.quantity }));
-    const fingerprint = cartFingerprint(lines, form.shippingOptionId, form.email);
+    // 运费不再由顾客选，指纹里用购物车国家（换国家 = 换价格 = 应出新单）
+    const fingerprint = cartFingerprint(lines, form.country, form.email);
 
     const { order, session } = await withLiveCartLock(async () => {
       // 下单前把购物车整理成「可下单」状态（邮箱要对上 / 内容变了要换车）。
@@ -293,7 +288,6 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
 
       const result = await submitLiveCheckout({
         cartId,
-        shippingOptionId: form.shippingOptionId,
         providerId: form.paymentProviderId,
         returnUrlFor: (orderId) =>
           `${window.location.origin}/${locale}/${channel}/checkout/result?order=${orderId}`,
@@ -350,7 +344,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     }
     setStepError(null);
     setErrors({});
-    if (step < 4) {
+    if (step < 3) {
       setStep(step + 1);
       return;
     }
@@ -389,7 +383,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
       taxMinor,
       totalMinor,
       currencyCode: currency,
-      shippingOptionName: selectedShipping?.name ?? '标准跨境专线',
+      shippingOptionName: shippingLabel || '标准跨境专线',
     });
   };
 
@@ -400,7 +394,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
 
   const paymentLabel =
     paymentProviders.find((p) => p.id === form.paymentProviderId)?.label ?? '去支付';
-  const ctaLabel = step === 4 ? `${paymentLabel} ${formatMoney(totalMinor, currency)}` : '下一步';
+  const ctaLabel = step === 3 ? `${paymentLabel} ${formatMoney(totalMinor, currency)}` : '下一步';
   const countryOptions =
     countries.length > 0
       ? countries.map((c) => ({ code: c.code, name: countryLabel(c) }))
@@ -450,19 +444,12 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
             </div>
           )}
           <h2 ref={headingRef} tabIndex={-1} className="mb-4 text-lg font-semibold outline-none">
-            {step} / 4 · {CHECKOUT_STEPS[step - 1]}
+            {step} / 3 · {CHECKOUT_STEPS[step - 1]}
           </h2>
 
           {step === 1 && <ContactStep {...stepProps} />}
           {step === 2 && <AddressStep {...stepProps} />}
           {step === 3 && (
-            <ShippingStep
-              {...stepProps}
-              options={shippingOptions}
-              loading={optionsLoading}
-            />
-          )}
-          {step === 4 && (
             <PaymentStep
               {...stepProps}
               providers={paymentProviders}
@@ -504,7 +491,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
             taxMinor={taxMinor}
             totalMinor={totalMinor}
             currencyCode={currency}
-            shippingLabel={selectedShipping?.name}
+            shippingLabel={shippingLabel}
             discountLines={discountLines}
           />
         </div>

@@ -168,7 +168,11 @@ CART_ID="$(jqr '.data.id')"
 call POST "/store/carts/$CART_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":1}"
 expect_2xx "加购 1 件" || exit 1
 
-OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
+# 下单要求购物车已有收货国家（ADR-019：运费与税都按国家自动算）
+curl -s -o /dev/null -X PUT "$BASE/store/carts/$CART_ID/address" \
+  -H 'Content-Type: application/json' -d '{"country":"CN"}'
+
+OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete"OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: e2e-notify-$(date +%s)" -d '{}' 2>&1)"
 CODE="${OUT##*$'\n'}"; BODY="${OUT%$'\n'*}"
 expect_2xx "下单" || exit 1

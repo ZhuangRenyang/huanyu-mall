@@ -7,6 +7,57 @@ import { checkPasswordStrength } from "@mall/auth";
 import type { FakeServicesState } from "./fake-services-state.js";
 
 export function makeFakeCommerceServices(state: FakeServicesState) {
+    const fakeCartState: { country: string | null } = { country: null };
+    const fakeCartView = () => ({
+      id: "cart_1",
+      channel_id: "chn_cn",
+      region_id: "reg_1",
+      currency_code: "CNY",
+      customer_id: null,
+      email: "a@b.com",
+      status: "open",
+      shipping_country: fakeCartState.country,
+      voucher_codes: [],
+      gift_card_codes: [],
+      items: [
+        {
+          id: "cli_1",
+          cart_id: "cart_1",
+          variant_id: "var_1",
+          product_id: "prod_1",
+          title: "T恤",
+          quantity: 1,
+          unit_price_minor: 9900n,
+          currency_code: "CNY",
+          discount_minor: 0n,
+          tax_rate_bps: 0,
+          tax_amount_minor: 0n,
+        },
+      ],
+      // 有国家 = 有可用运费方案（替身简化）；ZZ 表示「该地区不配送」
+      shipping_method:
+        fakeCartState.country && fakeCartState.country !== "ZZ"
+        ? {
+            id: "auto_so_1",
+            cart_id: "cart_1",
+            shipping_option_id: "so_1",
+            name: "标准快递",
+            amount_minor: 800n,
+            currency_code: "CNY",
+          }
+        : null,
+      totals: {
+        subtotal_minor: 9900n,
+        shipping_minor: fakeCartState.country && fakeCartState.country !== "ZZ" ? 800n : 0n,
+        tax_minor: 0n,
+        total_minor:
+          fakeCartState.country && fakeCartState.country !== "ZZ" ? 10700n : 9900n,
+        discount_minor: 0n,
+      },
+      discounts: [],
+      tax_included_in_price: true,
+    });
+
   // —— 促销/优惠券内存替身（阶段 4 后台管理路由用）——
   const vouchers = new Map<string, Record<string, unknown>>();
   const voucherCodes = new Map<string, Record<string, unknown>>();
@@ -510,40 +561,15 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         return { items, count: transfers.size };
       },
     },
+    // 购物车替身：收货国家决定「有没有运费 / 能不能下单」（ADR-019）
     cart: {
-      retrieveCart: async () => ({
-        id: "cart_1",
-        channel_id: "chn_cn",
-        region_id: "reg_1",
-        currency_code: "CNY",
-        customer_id: null,
-        email: "a@b.com",
-        status: "open",
-        voucher_codes: [],
-        gift_card_codes: [],
-        items: [
-          {
-            id: "cli_1",
-            cart_id: "cart_1",
-            variant_id: "var_1",
-            product_id: "prod_1",
-            title: "T恤",
-            quantity: 1,
-            unit_price_minor: 9900n,
-            currency_code: "CNY",
-            discount_minor: 0n,
-          },
-        ],
-        shipping_method: null,
-        totals: {
-          subtotal_minor: 9900n,
-          shipping_minor: 0n,
-          tax_minor: 0n,
-          total_minor: 9900n,
-          discount_minor: 0n,
-        },
-        discounts: [],
-      }),
+      retrieveCart: async () => fakeCartView(),
+      setShippingCountry: async (_id: string, code: string) => {
+        fakeCartState.country = code.trim().toUpperCase();
+        return fakeCartView();
+      },
+      // 运费由服务端自动选：这个接口不再改变金额，只返回当前视图
+      setShippingMethod: async () => fakeCartView(),
       createCart: async () => ({ id: "cart_1" }),
       setVoucherCodes: async (_id: string, codes: string[]) => ({
         id: "cart_1",
