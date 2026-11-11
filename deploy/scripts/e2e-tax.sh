@@ -220,7 +220,8 @@ SHIP_CN="$(jqr '.data.totals.shipping_minor')"
 TAX_CN="$(jqr '.data.totals.tax_minor')"
 TOTAL_CN="$(jqr '.data.totals.total_minor')"
 BASE_CN=$(( SUBTOTAL_CN - DISCOUNT_CN ))
-expect_num "中国税率 13% 的税额" "$TAX_CN" "$(tax_of "$BASE_CN" 1300)"
+# 税 = 商品行税 + 运费税（运费由系统按国家自动选，也要计税）
+expect_num "中国税率 13% 的税额（含运费税）" "$TAX_CN" "$(( $(tax_of "$BASE_CN" 1300) + $(tax_of "$SHIP_CN" 1300) ))"
 expect_num "价外税合计 = 商品 + 运费 + 税 - 折扣" "$TOTAL_CN" "$(( BASE_CN + SHIP_CN + TAX_CN ))"
 expect_num "税口径标记（价外 = false）" "$(jqr '.data.tax_included_in_price')" "false"
 
@@ -229,7 +230,8 @@ expect_2xx "切到日本" || exit 1
 call GET "/store/carts/$CART_ID" "" auth
 expect_2xx "按 JP 读购物车" || exit 1
 TAX_JP="$(jqr '.data.totals.tax_minor')"
-expect_num "日本走默认税率 10% 的税额" "$TAX_JP" "$(tax_of "$BASE_CN" 1000)"
+SHIP_JP="$(jqr '.data.totals.shipping_minor')"
+expect_num "日本走默认税率 10% 的税额" "$TAX_JP" "$(( $(tax_of "$BASE_CN" 1000) + $(tax_of "$SHIP_JP" 1000) ))"
 if (( TAX_CN > TAX_JP )); then
   ok "两国税额不同（CN $TAX_CN > JP $TAX_JP），证明按国家解析"
 else
@@ -292,7 +294,9 @@ SHIP_INCL="$(jqr '.data.totals.shipping_minor')"
 DISCOUNT_INCL="$(jqr '.data.totals.discount_minor // 0')"
 BASE_INCL=$(( SUBTOTAL_INCL - DISCOUNT_INCL ))
 expect_num "含税口径标记（true）" "$(jqr '.data.tax_included_in_price')" "true"
-expect_num "含税价里拆出的税额" "$TAX_INCL" "$(( (BASE_INCL * 1300 + 11300 / 2) / 11300 ))"
+# 含税价：商品与运费各自价内拆税
+expect_num "含税价里拆出的税额（含运费税）" "$TAX_INCL" \
+  "$(( (BASE_INCL * 1300 + 11300 / 2) / 11300 + (SHIP_INCL * 1300 + 11300 / 2) / 11300 ))"
 expect_num "含税价合计不再加税" "$(jqr '.data.totals.total_minor')" "$(( BASE_INCL + SHIP_INCL ))"
 
 # ---------------------------------------------------------------- #

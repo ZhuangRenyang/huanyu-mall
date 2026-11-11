@@ -50,6 +50,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         subtotal_minor: 9900n,
         shipping_minor: fakeCartState.country && fakeCartState.country !== "ZZ" ? 800n : 0n,
         tax_minor: 0n,
+        shipping_tax_minor: 0n,
         total_minor:
           fakeCartState.country && fakeCartState.country !== "ZZ" ? 10700n : 9900n,
         discount_minor: 0n,

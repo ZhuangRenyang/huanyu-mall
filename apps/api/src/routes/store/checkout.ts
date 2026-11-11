@@ -103,6 +103,8 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
       regionId: cart.region_id,
       shippingAddress,
       shippingMinor: cart.shipping_method?.amount_minor ?? 0n,
+      // 运费的税：不传就等于少收一份（购物车含、订单不含）
+      shippingTaxMinor: cart.totals?.shipping_tax_minor ?? 0n,
       // 税：服务端按国家算好传入（铁律 13，客户端永不传价）
       pricesIncludeTax: cart.tax_included_in_price,
       // 折扣由 cart.retrieveCart 服务端算好（行级 + 订单级），禁客户端传价（铁律 13）。

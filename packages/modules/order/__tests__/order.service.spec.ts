@@ -213,6 +213,33 @@ describe("OrderService（M05，状态机 + 行快照冻结 + 全额退款）", (
     expect(repo.snapshots.get(order.items[0]!.id)).toMatchObject({ sku: "TEE-BLK-S" });
   });
 
+  it("运费税额计入订单税（价外税时也计入合计）——少收一份就是少收钱", async () => {
+    const { service } = setup();
+    const order = await service.createOrder(
+      makeInput({
+        shippingTaxMinor: 104n,
+        pricesIncludeTax: false,
+        items: [
+          {
+            variantId: "var_1",
+            productId: "prod_1",
+            title: "T 恤",
+            sku: "TEE-BLK-S",
+            quantity: 2,
+            unitPriceMinor: 9900n,
+            taxRateBps: 1300,
+            taxAmountMinor: 2574n,
+            snapshot: { title: "T 恤" },
+          },
+        ],
+      }),
+    );
+    // 税 = 行税 2574 + 运费税 104
+    expect(order.tax_minor).toBe(2678n);
+    // 合计 = 19800 + 800 + 2678（价外税）
+    expect(order.total_minor).toBe(23278n);
+  });
+
   it("状态机：合法迁移通过，非法迁移抛错", async () => {
     const { service } = setup();
     const order = await service.createOrder(makeInput());

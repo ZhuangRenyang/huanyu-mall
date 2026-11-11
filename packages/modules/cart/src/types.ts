@@ -5,7 +5,14 @@ export type CartStatus = "open" | "completed" | "abandoned";
 export interface CartTotals {
   subtotal_minor: bigint;
   shipping_minor: bigint;
+  /** 商品行税额 + 运费税额（展示口径）。 */
   tax_minor: bigint;
+  /**
+   * 其中的「运费税额」。
+   * 单独留一份是给下单用的：订单只从商品行拿税，必须再补上运费的税，
+   * 否则购物车显示 2678、订单只收 2574（少收钱，且展示与实收不一致）。
+   */
+  shipping_tax_minor: bigint;
   total_minor: bigint;
   discount_minor: bigint;
 }

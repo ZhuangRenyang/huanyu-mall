@@ -31,8 +31,12 @@ export class OrderService implements IOrderModuleService {
     });
     const shipping = input.shippingMinor ?? 0n;
     const discount = input.discountMinor ?? 0n;
+    // 运费的税也要计入订单税，否则购物车与订单差一份税（真机踩到过）
+    const shippingTax = input.shippingTaxMinor ?? 0n;
+    const taxMinor = taxTotal + shippingTax;
     // 含税价：税已在行价内，合计不再加；价外税才加（ADR-018，混用即重复收税）
-    const total = subtotal + shipping - discount + (input.pricesIncludeTax ? 0n : taxTotal);
+    const total =
+      subtotal + shipping - discount + (input.pricesIncludeTax ? 0n : taxMinor);
 
     await this.repo.insertOrder({
       id,
@@ -44,7 +48,7 @@ export class OrderService implements IOrderModuleService {
       regionId: input.regionId,
       subtotalMinor: subtotal,
       shippingMinor: shipping,
-      taxMinor: taxTotal,
+      taxMinor,
       discountMinor: discount,
       totalMinor: total,
       shippingAddress: input.shippingAddress,

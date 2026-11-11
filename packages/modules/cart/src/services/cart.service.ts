@@ -100,6 +100,7 @@ export class CartService implements ICartModuleService {
       subtotal_minor: subtotal,
       shipping_minor: shippingMinor,
       tax_minor: tax.totalTaxMinor,
+      shipping_tax_minor: tax.shippingTaxMinor,
       discount_minor: discountMinor,
       total_minor:
         subtotal + shippingMinor - discountMinor + (tax.included_in_price ? 0n : tax.totalTaxMinor),

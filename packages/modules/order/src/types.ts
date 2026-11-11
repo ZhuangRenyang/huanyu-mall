@@ -110,6 +110,11 @@ export interface CreateOrderInput {
   billingAddress?: Record<string, unknown> | null;
   items: CreateOrderLineInput[];
   shippingMinor?: bigint;
+  /**
+   * 运费税额（minor）：订单税 = 商品行税 + 运费税。
+   * 不传就是把运费的税丢了——购物车显示含运费税、订单少收一份（真机踩到过）。
+   */
+  shippingTaxMinor?: bigint;
   discountMinor?: bigint;
   /**
    * 税是否已含在价格里（ADR-018）。

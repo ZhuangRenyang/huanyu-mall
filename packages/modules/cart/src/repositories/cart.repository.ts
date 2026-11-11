@@ -198,6 +198,7 @@ function parseTotals(raw: unknown): CartTotals | null {
     subtotal_minor: BigInt(o.subtotal_minor ?? 0),
     shipping_minor: BigInt(o.shipping_minor ?? 0),
     tax_minor: BigInt(o.tax_minor ?? 0),
+    shipping_tax_minor: BigInt(o.shipping_tax_minor ?? 0),
     total_minor: BigInt(o.total_minor ?? 0),
     discount_minor: BigInt(o.discount_minor ?? 0),
   };

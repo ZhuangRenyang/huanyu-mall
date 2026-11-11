@@ -9,6 +9,8 @@ export interface CartCompleteInput {
   regionId: string;
   shippingAddress: Record<string, unknown>;
   shippingMinor?: bigint;
+  /** 运费税额（ADR-019）：订单税里必须含这一份。 */
+  shippingTaxMinor?: bigint;
   /** 订单级折扣总额（行级 + 订单促销，minor unit），服务端算好传入，禁客户端传价（铁律 13）。 */
   discountMinor?: bigint;
   /** 税是否已含在价格里（ADR-018）：true 时订单合计不再加税。 */
