@@ -11,6 +11,8 @@ export interface CartCompleteInput {
   shippingMinor?: bigint;
   /** 订单级折扣总额（行级 + 订单促销，minor unit），服务端算好传入，禁客户端传价（铁律 13）。 */
   discountMinor?: bigint;
+  /** 税是否已含在价格里（ADR-018）：true 时订单合计不再加税。 */
+  pricesIncludeTax?: boolean;
   /** 命中的促销折扣明细（供 order 固化 order_discount 留痕）。 */
   discounts?: Array<{
     type: "catalogue" | "order" | "voucher" | "gift_card";
@@ -26,6 +28,9 @@ export interface CartCompleteInput {
     quantity: number;
     unitPriceMinor: bigint;
     snapshot: Record<string, unknown>;
+    /** 服务端算好的行级税（ADR-018）；快照冻结进订单，后续税率调整不影响历史单。 */
+    taxRateBps?: number;
+    taxAmountMinor?: bigint;
   }>;
 }
 

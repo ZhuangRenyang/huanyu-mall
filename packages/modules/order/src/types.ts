@@ -111,6 +111,12 @@ export interface CreateOrderInput {
   items: CreateOrderLineInput[];
   shippingMinor?: bigint;
   discountMinor?: bigint;
+  /**
+   * 税是否已含在价格里（ADR-018）。
+   * true  → 合计不再加税（税已含在行价内，只是拆出来报账）；
+   * false → 合计要加上税。两种口径混用就是重复收税。
+   */
+  pricesIncludeTax?: boolean;
   /** 折扣留痕明细（服务端算好传入，禁客户端传价）。 */
   discounts?: CreateOrderDiscountInput[];
   paymentCollectionId?: string | null;

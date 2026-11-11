@@ -233,6 +233,38 @@ class FakePromotionLookup implements PromotionLookupPort {
   }
 }
 
+/** 税务端口替身：按固定税率计税，够断言 totals 口径。 */
+class FakeTaxLookup {
+  constructor(
+    private readonly rateBps: number,
+    private readonly includedInPrice: boolean,
+  ) {}
+  async calculateTax(input: {
+    countryCode?: string | null;
+    lines: Array<{ lineId: string; amountMinor: bigint }>;
+    shippingMinor: bigint;
+  }) {
+    const rate = BigInt(this.rateBps);
+    const one = (amount: bigint) =>
+      this.includedInPrice
+        ? (amount * rate) / (10000n + rate)
+        : (amount * rate) / 10000n;
+    const lines = input.lines.map((l) => ({
+      lineId: l.lineId,
+      taxRateBps: this.rateBps,
+      taxAmountMinor: one(l.amountMinor),
+    }));
+    const totalTaxMinor =
+      lines.reduce((s, l) => s + l.taxAmountMinor, 0n) + one(input.shippingMinor);
+    return {
+      lines,
+      totalTaxMinor,
+      rateSource: "default" as const,
+      included_in_price: this.includedInPrice,
+    };
+  }
+}
+
 function setup(
   opts: {
     productStatus?: string;
@@ -243,6 +275,10 @@ function setup(
     orderDiscountMinor?: bigint;
     voucherDiscountMinor?: bigint;
     giftCardAppliedMinor?: bigint;
+    /** 税率（bps）；不传 = 0 税。 */
+    taxRateBps?: number;
+    /** 含税价口径；默认 true。 */
+    pricesIncludeTax?: boolean;
   } = {},
 ) {
   const repo = new InMemoryCartRepository();
@@ -258,6 +294,7 @@ function setup(
       "V20",
       opts.giftCardAppliedMinor ?? 0n,
     ),
+    tax: new FakeTaxLookup(opts.taxRateBps ?? 0, opts.pricesIncludeTax ?? true),
   });
   return { repo, service };
 }
@@ -479,5 +516,45 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
     expect(detail.totals?.discount_minor).toBe(0n);
     expect(detail.totals?.total_minor).toBe(20600n);
     expect(detail.discounts).toEqual([]);
+  });
+});
+
+describe("totals 的税口径（ADR-018：含税价不重复加税）", () => {
+  it("含税价：税已含在价格里，合计不再加", async () => {
+    const { service } = setup({ price: 11300n, taxRateBps: 1300, pricesIncludeTax: true });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    const detail = await service.retrieveCart(cart.id, { countryCode: "CN" });
+    // 11300 含 13% 税 → 税额 1300；合计仍等于小计（不能再加一次）
+    expect(detail.totals!.tax_minor).toBe(1300n);
+    expect(detail.totals!.total_minor).toBe(11300n);
+    expect(detail.tax_included_in_price).toBe(true);
+    expect(detail.items[0]!.tax_rate_bps).toBe(1300);
+  });
+
+  it("价外税：合计 = 小计 + 运费 + 税", async () => {
+    const { service } = setup({
+      price: 10000n,
+      taxRateBps: 1300,
+      pricesIncludeTax: false,
+      freeOverThreshold: null,
+    });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    const detail = await service.retrieveCart(cart.id, { countryCode: "CN" });
+    expect(detail.totals!.tax_minor).toBe(1300n);
+    expect(detail.totals!.total_minor).toBe(11300n);
+    expect(detail.tax_included_in_price).toBe(false);
+  });
+
+  it("不传国家也照样计税（用默认税率）", async () => {
+    const { service } = setup({ price: 10000n, taxRateBps: 1000, pricesIncludeTax: false });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 2 });
+
+    const detail = await service.retrieveCart(cart.id);
+    expect(detail.totals!.tax_minor).toBe(2000n);
   });
 });

@@ -31,7 +31,8 @@ export class OrderService implements IOrderModuleService {
     });
     const shipping = input.shippingMinor ?? 0n;
     const discount = input.discountMinor ?? 0n;
-    const total = subtotal + shipping + taxTotal - discount;
+    // 含税价：税已在行价内，合计不再加；价外税才加（ADR-018，混用即重复收税）
+    const total = subtotal + shipping - discount + (input.pricesIncludeTax ? 0n : taxTotal);
 
     await this.repo.insertOrder({
       id,

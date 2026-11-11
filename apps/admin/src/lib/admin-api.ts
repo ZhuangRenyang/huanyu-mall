@@ -130,3 +130,14 @@ export type {
   CheckUpdateView,
   UpdateManifestView,
 } from './admin-system';
+
+export {
+  getTaxConfig,
+  updateTaxSettings,
+  setDefaultRate,
+  setCountryRate,
+  deleteCountryRate,
+  percentToBps,
+  bpsToPercent,
+} from './admin-tax';
+export type { TaxConfigView, TaxSettingsView, TaxRateView } from './admin-tax';

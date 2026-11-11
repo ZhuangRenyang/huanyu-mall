@@ -21,6 +21,9 @@ export interface CartLineItemDTO {
   currency_code: string;
   /** 目录促销行级折扣（minor unit），读时动态算（retrieveCart），落库行恒 0。 */
   discount_minor: bigint;
+  /** 本行适用税率（bps）与税额（minor unit），读时按收货国家动态算。 */
+  tax_rate_bps: number;
+  tax_amount_minor: bigint;
 }
 
 export interface CartShippingMethodDTO {
@@ -60,6 +63,8 @@ export interface CartDetailDTO extends CartDTO {
   shipping_method: CartShippingMethodDTO | null;
   /** 命中的促销折扣明细（目录行级 + 订单级），供下单固化 order_discount 留痕。 */
   discounts: CartDiscountDTO[];
+  /** 税是否已含在价格里：true 时合计不再加税（ADR-018）。 */
+  tax_included_in_price: boolean;
 }
 
 export interface CreateCartInput {
@@ -105,12 +110,28 @@ export interface PricingLookupPort {
 }
 
 /** Cart 模块依赖：repo + 商品/定价/运费/促销查询端口（跨模块走端口，架构 §2）。 */
+/** 税务查询端口（跨模块走端口）：按国家算税，金额服务端算（铁律 13）。 */
+export interface TaxLookupPort {
+  calculateTax(input: {
+    countryCode?: string | null;
+    lines: Array<{ lineId: string; amountMinor: bigint }>;
+    shippingMinor: bigint;
+  }): Promise<{
+    lines: Array<{ lineId: string; taxRateBps: number; taxAmountMinor: bigint }>;
+    totalTaxMinor: bigint;
+    rateSource: "country" | "default" | "none";
+    /** 含税价时合计不再加税（见 TaxResultDTO）。 */
+    included_in_price: boolean;
+  }>;
+}
+
 export interface CartServiceDeps {
   repo: CartRepository;
   product: ProductLookupPort;
   pricing: PricingLookupPort;
   shipping: ShippingLookupPort;
   promotion: PromotionLookupPort;
+  tax: TaxLookupPort;
 }
 
 /** 促销查询端口（跨模块走端口，M-promotion）：算目录促销行级折扣（金额服务端算，客户端永不传价）。 */
@@ -193,7 +214,11 @@ export interface CartRepository {
 
 export interface ICartModuleService {
   createCart(input: CreateCartInput): Promise<CartDTO>;
-  retrieveCart(id: string): Promise<CartDetailDTO>;
+  /** countryCode 用于解析税率（ADR-018）：不传则用默认税率。 */
+  retrieveCart(
+    id: string,
+    opts?: { countryCode?: string | null },
+  ): Promise<CartDetailDTO>;
   addLineItem(cartId: string, input: AddLineItemInput): Promise<CartDetailDTO>;
   updateLineItem(cartId: string, lineId: string, patch: { quantity: number }): Promise<CartDetailDTO>;
   deleteLineItem(cartId: string, lineId: string): Promise<void>;

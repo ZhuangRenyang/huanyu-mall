@@ -32,7 +32,10 @@ export class CartService implements ICartModuleService {
     return cart;
   }
 
-  async retrieveCart(id: string): Promise<CartDetailDTO> {
+  async retrieveCart(
+    id: string,
+    opts?: { countryCode?: string | null },
+  ): Promise<CartDetailDTO> {
     const cart = await this.deps.repo.findById(id);
     if (!cart) throw cartNotFound(id);
     const items = await this.deps.repo.listLineItems(id);
@@ -76,18 +79,43 @@ export class CartService implements ICartModuleService {
     // 折扣明细（供下单固化 order_discount 留痕）：目录行级折扣按促销聚合 + 订单级折扣。
     const discountDetails = buildDiscountDetails(discounts);
 
+    /*
+     * 税（ADR-018）：按顾客收货国家解析税率，**折后**行金额计税。
+     * 含税价：税已含在价格里，合计不再加；价外税才加——两种口径混了就是重复收税。
+     */
+    const shippingMinor = shipping?.amount_minor ?? 0n;
+    const tax = await this.deps.tax.calculateTax({
+      countryCode: opts?.countryCode ?? null,
+      lines: items.map((i) => ({
+        lineId: i.id,
+        amountMinor: i.unit_price_minor * BigInt(i.quantity) - (discountByItem.get(i.id) ?? 0n),
+      })),
+      shippingMinor,
+    });
+
     const totals: CartTotals = {
       subtotal_minor: subtotal,
-      shipping_minor: shipping?.amount_minor ?? 0n,
-      tax_minor: 0n,
+      shipping_minor: shippingMinor,
+      tax_minor: tax.totalTaxMinor,
       discount_minor: discountMinor,
-      total_minor: subtotal + (shipping?.amount_minor ?? 0n) - discountMinor,
+      total_minor:
+        subtotal + shippingMinor - discountMinor + (tax.included_in_price ? 0n : tax.totalTaxMinor),
     };
+    const taxByLine = new Map(tax.lines.map((l) => [l.lineId, l]));
     const enrichedItems: CartLineItemDTO[] = items.map((i) => ({
       ...i,
       discount_minor: discountByItem.get(i.id) ?? 0n,
+      tax_rate_bps: taxByLine.get(i.id)?.taxRateBps ?? 0,
+      tax_amount_minor: taxByLine.get(i.id)?.taxAmountMinor ?? 0n,
     }));
-    return { ...cart, totals, items: enrichedItems, shipping_method: shipping, discounts: discountDetails };
+    return {
+      ...cart,
+      totals,
+      items: enrichedItems,
+      shipping_method: shipping,
+      discounts: discountDetails,
+      tax_included_in_price: tax.included_in_price,
+    };
   }
 
   private subtotal(items: CartLineItemDTO[]): bigint {

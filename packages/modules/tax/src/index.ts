@@ -14,6 +14,6 @@ export { taxFor } from "./services/tax-calculator.js";
 export default Module("tax", {
   service: (ctx) =>
     new TaxService(new DrizzleTaxRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_settings.sql"],
   linkable,
 });

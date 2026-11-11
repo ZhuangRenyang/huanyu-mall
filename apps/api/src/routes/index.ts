@@ -20,6 +20,7 @@ import { adminAuditLogRoutes } from "./admin/audit-logs.js";
 import { adminPromotionRoutes } from "./admin/promotions.js";
 import { adminNotificationRoutes } from "./admin/notifications.js";
 import { adminSystemRoutes } from "./admin/system.js";
+import { adminTaxRoutes } from "./admin/tax.js";
 
 export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   healthRoutes(app, deps.config);
@@ -45,4 +46,5 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   adminPromotionRoutes(app, deps);
   adminNotificationRoutes(app, deps);
   adminSystemRoutes(app, deps);
+  adminTaxRoutes(app, deps);
 }

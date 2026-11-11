@@ -100,14 +100,72 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
       setPrices: async () => ({ priceSetId: "pset_1" }),
       listPriceLists: async () => ({ items: [], count: 0 }),
     },
-    tax: {
-      getRateForChannel: async () => ({
-        id: "t",
-        name: "t",
-        rate_bps: 0,
-        is_inclusive: true,
-      }),
-      calculateTax: async () => ({ lines: [], shippingTaxMinor: 0n, totalTaxMinor: 0n }),
-    },
+    // 税务替身（ADR-018）：开关 + 默认税率 + 国家覆盖，语义与真实服务一致
+    tax: (() => {
+      const settings = { enabled: false, tax_name: "税", prices_include_tax: true };
+      const rates = new Map<string | null, { id: string; name: string; rate_bps: number }>();
+      let seq = 0;
+      const dto = (countryCode: string | null) => {
+        const row = rates.get(countryCode);
+        return row ? { ...row, country_code: countryCode } : null;
+      };
+      return {
+        getRateForChannel: async () => ({
+          id: "t",
+          name: "t",
+          rate_bps: 0,
+          is_inclusive: true,
+        }),
+        getSettings: async () => ({ ...settings }),
+        updateSettings: async (patch: Record<string, unknown>) => {
+          Object.assign(settings, patch);
+          return { ...settings };
+        },
+        listRates: async () =>
+          [...rates.entries()]
+            .map(([code, row]) => ({ ...row, country_code: code }))
+            .sort((a, b) => String(a.country_code).localeCompare(String(b.country_code))),
+        setDefaultRate: async (input: { name: string; rateBps: number }) => {
+          const row = { id: `tax_default`, name: input.name, rate_bps: input.rateBps };
+          rates.set(null, row);
+          return { ...row, country_code: null };
+        },
+        setCountryRate: async (input: { countryCode: string; name: string; rateBps: number }) => {
+          const code = input.countryCode.toUpperCase();
+          const row = { id: `tax_${code}`, name: input.name, rate_bps: input.rateBps };
+          rates.set(code, row);
+          return { ...row, country_code: code };
+        },
+        deleteCountryRate: async (countryCode: string) => {
+          rates.delete(countryCode.toUpperCase());
+        },
+        resolveRate: async (countryCode?: string | null) => {
+          const code = countryCode ? countryCode.toUpperCase() : null;
+          const hit = code ? rates.get(code) : undefined;
+          if (hit) return { rate_bps: hit.rate_bps, source: "country" as const };
+          const fallback = rates.get(null);
+          if (fallback) return { rate_bps: fallback.rate_bps, source: "default" as const };
+          return { rate_bps: 0, source: "none" as const };
+        },
+        calculateTax: async (input: {
+          lines?: Array<{ lineId: string; amountMinor: bigint }>;
+          shippingMinor?: bigint;
+        }) => ({
+          lines: (input.lines ?? []).map((l) => ({
+            lineId: l.lineId,
+            taxRateBps: 0,
+            taxAmountMinor: 0n,
+          })),
+          shippingTaxMinor: 0n,
+          totalTaxMinor: 0n,
+          rateSource: "none" as const,
+          included_in_price: settings.prices_include_tax,
+        }),
+        // 供断言用：当前是否配了某国
+        __rates: rates,
+        __dto: dto,
+        __seq: () => ++seq,
+      };
+    })(),
   };
 }

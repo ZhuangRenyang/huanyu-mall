@@ -17,6 +17,12 @@ export interface CartPromoView {
   giftCardCodes: string[];
   /** 后端算好的折扣合计（minor unit）。 */
   discountMinor: number;
+  /** 后端算好的税额（minor unit）。前端绝不自己乘税率（铁律 13）。 */
+  taxMinor: number;
+  /** 后端算好的应付合计：含税价时已含税，价外税时才另加。 */
+  totalMinor: number;
+  /** 是否已从后端拿到合计。0 元订单与「还没拉到」必须区分开。 */
+  totalsLoaded: boolean;
   /** 折扣明细（后端若未透出则为空数组）。 */
   discounts: CartDiscount[];
 }
@@ -25,6 +31,9 @@ export const EMPTY_PROMO: CartPromoView = {
   voucherCodes: [],
   giftCardCodes: [],
   discountMinor: 0,
+  taxMinor: 0,
+  totalMinor: 0,
+  totalsLoaded: false,
   discounts: [],
 };
 
@@ -33,26 +42,42 @@ export function toPromoView(cart: Cart): CartPromoView {
     voucherCodes: cart.voucher_codes ?? [],
     giftCardCodes: cart.gift_card_codes ?? [],
     discountMinor: cart.totals?.discount_minor ?? 0,
+    taxMinor: cart.totals?.tax_minor ?? 0,
+    totalMinor: cart.totals?.total_minor ?? 0,
+    totalsLoaded: true,
     discounts: cart.discounts ?? [],
   };
 }
 
 /** 拉取当前购物车的促销快照（供刷新 / 恢复）。 */
-export async function fetchCartPromo(cartId: string): Promise<CartPromoView> {
-  const cart = (await getStoreClient().getCart(cartId)) as Cart;
+export async function fetchCartPromo(
+  cartId: string,
+  /** 收货国家：税率按它解析，合计会跟着变（ADR-018）。 */
+  country?: string,
+): Promise<CartPromoView> {
+  const cart = (await getStoreClient().getCart(cartId, country)) as Cart;
   return toPromoView(cart);
 }
 
 /** 覆盖式设置优惠券码（后端算折扣，前端只传码）。 */
-export async function setCartVoucherCodes(cartId: string, codes: string[]): Promise<CartPromoView> {
+export async function setCartVoucherCodes(
+  cartId: string,
+  codes: string[],
+  country?: string,
+): Promise<CartPromoView> {
   const cart = (await getStoreClient().setVoucherCodes(cartId, { codes })) as Cart;
-  return toPromoView(cart);
+  // 写接口不带国家，税额会按默认税率回；有国家就再读一次，保证展示与结账一致
+  return country ? fetchCartPromo(cartId, country) : toPromoView(cart);
 }
 
 /** 覆盖式设置礼品卡码（后端算抵扣，前端只传卡码）。 */
-export async function setCartGiftCardCodes(cartId: string, codes: string[]): Promise<CartPromoView> {
+export async function setCartGiftCardCodes(
+  cartId: string,
+  codes: string[],
+  country?: string,
+): Promise<CartPromoView> {
   const cart = (await getStoreClient().setGiftCardCodes(cartId, { codes })) as Cart;
-  return toPromoView(cart);
+  return country ? fetchCartPromo(cartId, country) : toPromoView(cart);
 }
 
 /**

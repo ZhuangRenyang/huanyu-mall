@@ -38,6 +38,9 @@ function mapLineItem(li: CartLineItemDTO) {
     // 目录促销行级折扣（阶段 2，前端展示「原价 → 折后」）
     discount_minor: li.discount_minor,
     line_total_after_discount_minor: li.unit_price_minor * BigInt(li.quantity) - li.discount_minor,
+    // 行级税（ADR-018）：按收货国家解析，快照进订单后不再随税率调整
+    tax_rate_bps: li.tax_rate_bps,
+    tax_amount_minor: li.tax_amount_minor,
   };
 }
 
@@ -66,6 +69,8 @@ export function mapCart(cart: CartDetailDTO) {
     totals: cart.totals,
     // 命中的促销折扣明细（优惠券/礼品卡/订单促销逐项展示「-¥20」「-¥50」用）
     discounts: cart.discounts.map(mapDiscount),
+    // 税口径（ADR-018）：true 时合计已含税，前端不要再加一遍
+    tax_included_in_price: cart.tax_included_in_price,
   };
 }
 
@@ -90,9 +95,11 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
+  // country：税率按收货国家解析（ADR-018）。结账页选了国家就带上，合计实时跟着变。
   app.get("/api/v1/store/carts/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const cart = await deps.services.cart.retrieveCart(id);
+    const q = req.query as { country?: string };
+    const cart = await deps.services.cart.retrieveCart(id, { countryCode: q.country ?? null });
     if (cart.customer_id && req.auth?.sub && cart.customer_id !== req.auth.sub) {
       throw errors.forbidden("not your cart");
     }

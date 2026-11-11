@@ -206,6 +206,9 @@ function toLineItemDTO(r: typeof schema.cartLineItem.$inferSelect): CartLineItem
     unit_price_minor: r.unitPriceMinor,
     currency_code: r.currencyCode,
     discount_minor: 0n, // 落库行无折扣，retrieveCart 读时动态算
+    // 税额由服务层按收货国家读时算，落库行恒 0（与 discount_minor 同一策略）
+    tax_rate_bps: 0,
+    tax_amount_minor: 0n,
   };
 }
 

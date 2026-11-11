@@ -123,8 +123,22 @@ export interface Cart {
   line_items: CartLineItem[];
   shipping_method?: CartShippingMethod;
   totals: CartTotals;
+  /** 税是否已含在价格里（true 时 totals.total_minor 不再额外加税）。 */
+  tax_included_in_price?: boolean;
   /** 折扣明细（后端现阶段未在 mapCart 透出，预留契约，前端按缺省降级为单条「优惠」合计）。 */
   discounts?: CartDiscount[];
+}
+
+/** 下单随附的收货地址（后端存单 + 按其中的国家解析税率，ADR-018）。 */
+export interface ShippingAddressInput {
+  name?: string;
+  phone?: string;
+  country?: string;
+  province?: string;
+  city?: string;
+  address_1?: string;
+  address_2?: string;
+  postal_code?: string;
 }
 
 /** 可选运费方式。 */

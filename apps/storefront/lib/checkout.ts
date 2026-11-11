@@ -12,7 +12,14 @@
  * 金额一律用最小单位整数（分），展示换算见 @mall/ui 的 formatMoney。
  */
 import { ApiError } from '@mall/sdk';
-import type { Cart, Order, PaymentProviderOption, PaymentSession, ShippingOption } from '@mall/sdk';
+import type {
+  Cart,
+  Order,
+  PaymentProviderOption,
+  PaymentSession,
+  ShippingAddressInput,
+  ShippingOption,
+} from '@mall/sdk';
 import { getStoreClient } from './api';
 
 export interface CheckoutForm {
@@ -27,6 +34,23 @@ export interface CheckoutForm {
 }
 
 export type CheckoutErrors = Partial<Record<keyof CheckoutForm, string>>;
+
+export type { ShippingAddressInput };
+
+/** 结账表单 → 收货地址。空值不下发，避免存一堆空串。 */
+export function toShippingAddress(form: CheckoutForm): ShippingAddressInput {
+  const address: ShippingAddressInput = {
+    name: form.firstName.trim() || undefined,
+    phone: form.phone.trim() || undefined,
+    country: form.country.trim() || undefined,
+    province: form.region.trim() || undefined,
+    address_1: form.line1.trim() || undefined,
+  };
+  for (const key of Object.keys(address) as Array<keyof ShippingAddressInput>) {
+    if (address[key] === undefined) delete address[key];
+  }
+  return address;
+}
 
 /** 结账各步表单组件共享的 props。 */
 export interface StepProps {
@@ -324,8 +348,18 @@ export async function applyLiveShippingMethod(cartId: string, shippingOptionId: 
  * 所以用户连点两次「去支付」不会重复下单。幂等键按购物车固定（存在
  * sessionStorage 里），支付失败后重试也复用同一笔订单。
  */
-export async function completeLiveOrder(cartId: string, idempotencyKey: string): Promise<Order> {
-  return (await getStoreClient().completeCart(cartId, idempotencyKey)) as Order;
+export async function completeLiveOrder(
+  cartId: string,
+  idempotencyKey: string,
+  shippingAddress?: ShippingAddressInput,
+): Promise<Order> {
+  return (
+    (await getStoreClient().completeCart(
+      cartId,
+      idempotencyKey,
+      shippingAddress ? { shipping_address: shippingAddress } : undefined,
+    )) as Order
+  );
 }
 
 /**
@@ -387,9 +421,11 @@ export async function submitLiveCheckout(input: {
   providerId: string;
   returnUrlFor: (orderId: string) => string;
   idempotencyKey: string;
+  /** 收货地址：订单要存下来，税率也按其中的国家解析（ADR-018）。 */
+  shippingAddress?: ShippingAddressInput;
 }): Promise<{ order: Order; session: LivePaymentSession }> {
   await applyLiveShippingMethod(input.cartId, input.shippingOptionId);
-  const order = await completeLiveOrder(input.cartId, input.idempotencyKey);
+  const order = await completeLiveOrder(input.cartId, input.idempotencyKey, input.shippingAddress);
   const session = await createLivePaymentSession({
     cartId: input.cartId,
     providerId: input.providerId,

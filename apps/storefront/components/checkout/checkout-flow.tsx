@@ -29,6 +29,7 @@ import {
   resolvePaymentLaunch,
   savePendingPayment,
   submitLiveCheckout,
+  toShippingAddress,
   validateStep,
   type CheckoutErrors,
   type CheckoutForm,
@@ -64,33 +65,38 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   );
   const [optionsLoading, setOptionsLoading] = useState(live);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // mutatePromo 是 useCallback，直接依赖 form.country 会让每个按键都重建；
+  // 用 ref 取最新国家，写码后重读合计时就能带上正确税率。
+  const countryRef = useRef(form.country);
+  countryRef.current = form.country;
 
   // live 模式：优惠码 / 礼品卡快照（金额一律后端算好，前端只透传展示）。
   const [promo, setPromo] = useState<CartPromoView>(EMPTY_PROMO);
   const [promoBusy, setPromoBusy] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
 
-  // 进入结账页时拉取已输码状态（刷新不丢码，折扣以后端为准）。
+  // 进入结账页 / 换国家都走下面那个 effect（拉码 + 拉合计，刷新不丢，折扣以后端为准）。
+  /*
+   * 国家变了要重算：税率按收货国家解析（ADR-018），
+   * 不重读的话合计还停在旧税率的数字，顾客看到的价与实付不一致。
+   */
   useEffect(() => {
-    if (!live) {
-      setPromo(EMPTY_PROMO);
-      return;
-    }
+    if (!live) return;
     const cartId = getLiveCartId();
     if (!cartId) return;
     let cancelled = false;
     void (async () => {
       try {
-        const view = await fetchCartPromo(cartId);
+        const view = await fetchCartPromo(cartId, form.country || undefined);
         if (!cancelled) setPromo(view);
       } catch {
-        /* 拉取失败保持空态，输码时会重新设置 */
+        /* 失败保持上次的数字，别把合计清成 0 */
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [live]);
+  }, [live, form.country]);
 
   /** 调 store 接口设置码并回填后端算好的折扣（只传码凭证）。 */
   const mutatePromo = useCallback(async (fn: (cartId: string) => Promise<CartPromoView>) => {
@@ -114,28 +120,28 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const applyVoucher = useCallback(
     (code: string) => {
       const next = Array.from(new Set([...promo.voucherCodes, code]));
-      void mutatePromo((cartId) => setCartVoucherCodes(cartId, next));
+      void mutatePromo((cartId) => setCartVoucherCodes(cartId, next, countryRef.current || undefined));
     },
     [promo.voucherCodes, mutatePromo],
   );
   const removeVoucher = useCallback(
     (code: string) => {
       const next = promo.voucherCodes.filter((c) => c !== code);
-      void mutatePromo((cartId) => setCartVoucherCodes(cartId, next));
+      void mutatePromo((cartId) => setCartVoucherCodes(cartId, next, countryRef.current || undefined));
     },
     [promo.voucherCodes, mutatePromo],
   );
   const applyGiftCard = useCallback(
     (code: string) => {
       const next = Array.from(new Set([...promo.giftCardCodes, code]));
-      void mutatePromo((cartId) => setCartGiftCardCodes(cartId, next));
+      void mutatePromo((cartId) => setCartGiftCardCodes(cartId, next, countryRef.current || undefined));
     },
     [promo.giftCardCodes, mutatePromo],
   );
   const removeGiftCard = useCallback(
     (code: string) => {
       const next = promo.giftCardCodes.filter((c) => c !== code);
-      void mutatePromo((cartId) => setCartGiftCardCodes(cartId, next));
+      void mutatePromo((cartId) => setCartGiftCardCodes(cartId, next, countryRef.current || undefined));
     },
     [promo.giftCardCodes, mutatePromo],
   );
@@ -217,10 +223,15 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
 
   const selectedShipping = shippingOptions.find((o) => o.id === form.shippingOptionId);
   const shippingMinor = selectedShipping?.amountMinor ?? 0;
-  const taxMinor = 0;
-  // live 模式：折扣以后端返回的 discount_minor 为准，前端绝不自己算折扣金额（铁律 13）。
+  // live 模式：税与合计都取后端（含税/价外由后端口径决定，前端不再自己加税）。
+  const taxMinor = live ? promo.taxMinor : 0;
   const discountMinor = live ? promo.discountMinor : 0;
-  const totalMinor = subtotal.amountMinor + shippingMinor + taxMinor - discountMinor;
+  const totalMinor = live
+    ? // 后端 total 已含运费与税；还没拉到合计时才退回本地估算
+      (promo.totalsLoaded
+        ? promo.totalMinor
+        : subtotal.amountMinor + shippingMinor - discountMinor)
+    : subtotal.amountMinor + shippingMinor - discountMinor;
   const discountLines = live ? buildDiscountLines(promo) : [];
   const currency = subtotal.currencyCode;
 
@@ -265,6 +276,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
         returnUrlFor: (orderId) =>
           `${window.location.origin}/${locale}/${channel}/checkout/result?order=${orderId}`,
         idempotencyKey: `checkout_${cartId}_${fingerprint}`,
+        shippingAddress: toShippingAddress(form),
       });
       // 记下「这辆车按此内容出过单」：重试同一内容复用这辆车，内容变了才换车。
       markCartOrdered(fingerprint);

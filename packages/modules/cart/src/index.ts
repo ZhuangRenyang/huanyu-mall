@@ -9,6 +9,7 @@ import type {
   ProductLookupPort,
   PromotionLookupPort,
   ShippingLookupPort,
+  TaxLookupPort,
 } from "./types.js";
 
 export * from "./types.js";
@@ -27,6 +28,8 @@ export default Module("cart", {
       shipping: ctx.resolve<ShippingLookupPort>("fulfillment"),
       // 目录促销行级折扣：后端算金额（铁律 13）
       promotion: ctx.resolve<PromotionLookupPort>("promotion"),
+      // 税：按顾客收货国家解析税率（ADR-018）
+      tax: ctx.resolve<TaxLookupPort>("tax"),
     }),
   migrations: ["migrations/0001_init.sql", "migrations/0002_voucher_codes.sql", "migrations/0003_gift_card_codes.sql"],
   linkable,

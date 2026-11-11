@@ -40,6 +40,7 @@ import type {
   UpdateVariantRequest,
   UpdateVoucherRequest,
 } from "./requests";
+import type { ShippingAddressInput } from "./store";
 import type { Envelope, PaginatedResponse } from "@mall/types";
 
 export interface ClientOptions {
@@ -134,7 +135,9 @@ export function createStoreClient(opts: ClientOptions) {
     getProduct: (handle: string) => get(`/api/v1/store/products/${handle}`),
     listCategories: () => get("/api/v1/store/categories"),
     createCart: (b: CreateCartRequest) => post("/api/v1/store/carts", b),
-    getCart: (id: string) => get(`/api/v1/store/carts/${id}`),
+    // country：税率按收货国家解析（ADR-018），合计随所选国家变
+    getCart: (id: string, country?: string) =>
+      get(`/api/v1/store/carts/${id}`, country ? { country } : undefined),
     addLineItem: (cartId: string, b: AddLineItemRequest) =>
       post(`/api/v1/store/carts/${cartId}/line-items`, b),
     updateLineItem: (cartId: string, lineId: string, b: UpdateLineItemRequest) =>
@@ -170,8 +173,13 @@ export function createStoreClient(opts: ClientOptions) {
      * 不是请求体。此前 SDK 形参接收了 idempotencyKey 却丢弃不用，
      * 后端只能退化成 `auto_${cartId}`（同一购物车永远同一个键）。
      */
-    completeCart: (cartId: string, idempotencyKey?: string) =>
-      request("POST", `/api/v1/store/carts/${cartId}/complete`, base, undefined, undefined, {
+    completeCart: (
+      cartId: string,
+      idempotencyKey?: string,
+      /** 收货地址：订单要存下来，税率也按其中的国家解析（ADR-018）。 */
+      body?: { shipping_address?: ShippingAddressInput },
+    ) =>
+      request("POST", `/api/v1/store/carts/${cartId}/complete`, base, body ?? {}, undefined, {
         ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
       }),
     getOrder: (id: string) => get(`/api/v1/store/orders/${id}`),
@@ -262,6 +270,17 @@ export function createAdminClient(opts: ClientOptions) {
     updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
       put(`/api/v1/admin/settings/payment-providers/${id}`, b),
     // —— 促销（阶段 6）——
+    getTaxConfig: () => get("/api/v1/admin/tax"),
+    updateTaxSettings: (body: {
+      enabled?: boolean;
+      tax_name?: string;
+      prices_include_tax?: boolean;
+    }) => put("/api/v1/admin/tax/settings", body),
+    setDefaultTaxRate: (body: { name: string; rate_bps: number }) =>
+      put("/api/v1/admin/tax/default-rate", body),
+    setCountryTaxRate: (code: string, body: { name: string; rate_bps: number }) =>
+      put(`/api/v1/admin/tax/country-rates/${code}`, body),
+    deleteCountryTaxRate: (code: string) => del(`/api/v1/admin/tax/country-rates/${code}`),
     getSystemInfo: () => get("/api/v1/admin/system/info"),
     setSystemUpdateSource: (update_source_url: string) =>
       put("/api/v1/admin/system/settings", { update_source_url }),

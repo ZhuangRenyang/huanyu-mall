@@ -1,5 +1,14 @@
 import { boolean, index, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
+/** 店铺级税务策略单例行（ADR-018）：收不收税 / 税名 / 价格含不含税。 */
+export const taxSettings = pgTable("tax_settings", {
+  id: text("id").primaryKey(),
+  enabled: boolean("enabled").notNull().default(false),
+  taxName: text("tax_name").notNull().default("税"),
+  pricesIncludeTax: boolean("prices_include_tax").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const taxRate = pgTable("tax_rate", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

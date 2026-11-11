@@ -1,12 +1,40 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { cartCompleteWorkflow } from "@mall/workflows";
 import type { AppDeps } from "../../deps.js";
 import { mapOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
 
+/**
+ * 收货地址：下单时必须带上（ADR-018 的税率按其中的国家解析）。
+ * 一期这里曾是 `shippingAddress: {}` 写死——订单根本没有收货地址，是实打实的缺陷。
+ */
+const completeBody = z
+  .object({
+    shipping_address: z
+      .object({
+        name: z.string().max(120).optional(),
+        phone: z.string().max(40).optional(),
+        country: z.string().max(60).optional(),
+        province: z.string().max(80).optional(),
+        city: z.string().max(80).optional(),
+        address_1: z.string().max(200).optional(),
+        address_2: z.string().max(200).optional(),
+        postal_code: z.string().max(20).optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  // nullish 而不是 optional：无 body 时 Fastify 传的是 null，
+  // 只写 optional 会让老客户端（不带 body 直接 complete）全部 400。
+  .nullish();
+
 /** POST /store/carts/{id}/complete — 走 cart-complete workflow + 幂等键（openapi 969）。 */
 export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
-  app.post("/api/v1/store/carts/:id/complete", async (req, reply) => {
+  app.post(
+    "/api/v1/store/carts/:id/complete",
+    { schema: { body: completeBody } },
+    async (req, reply) => {
     const { id } = req.params as { id: string };
     const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) ?? `auto_${id}`;
 
@@ -24,7 +52,11 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
       return;
     }
 
-    const cart = await deps.services.cart.retrieveCart(id);
+    const body = (req.body ?? {}) as z.infer<typeof completeBody>;
+    const shippingAddress = body?.shipping_address ?? {};
+    // 税率按收货国家解析（ADR-018）：购物车合计与订单税额用同一个国家，前后一致
+    const countryCode = (shippingAddress.country as string | undefined) ?? null;
+    const cart = await deps.services.cart.retrieveCart(id, { countryCode });
     // 仓选择只由后端 inventory 模块决定（ADR-013 §5 / 铁律 13）：路由不再取仓、不再下发 locationId。
 
     const input = {
@@ -33,8 +65,10 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
       currencyCode: cart.currency_code,
       channelId: cart.channel_id,
       regionId: cart.region_id,
-      shippingAddress: {},
+      shippingAddress,
       shippingMinor: cart.shipping_method?.amount_minor ?? 0n,
+      // 税：服务端按国家算好传入（铁律 13，客户端永不传价）
+      pricesIncludeTax: cart.tax_included_in_price,
       // 折扣由 cart.retrieveCart 服务端算好（行级 + 订单级），禁客户端传价（铁律 13）。
       discountMinor: cart.totals?.discount_minor ?? 0n,
       // 折扣留痕明细：传给 order 固化进 order_discount 表（资金安全硬约束 5）。
@@ -52,6 +86,8 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
         quantity: li.quantity,
         unitPriceMinor: li.unit_price_minor,
         snapshot: {},
+        taxRateBps: li.tax_rate_bps,
+        taxAmountMinor: li.tax_amount_minor,
       })),
     };
 
