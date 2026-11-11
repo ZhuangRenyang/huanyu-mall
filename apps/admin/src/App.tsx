@@ -4,6 +4,7 @@ import { Shell } from './components/shell';
 import { LoginPage } from './pages/login';
 import { ProductsPage } from './pages/products';
 import { OrdersPage } from './pages/orders';
+import { InventoryPage } from './pages/inventory';
 import { SettingsPage } from './pages/settings';
 import { PromotionsPage } from './pages/promotions';
 
@@ -16,6 +17,7 @@ export function App() {
           <Route index element={<Navigate to="/products" replace />} />
           <Route path="products" element={<ProductsPage />} />
           <Route path="orders" element={<OrdersPage />} />
+          <Route path="inventory" element={<InventoryPage />} />
           <Route path="promotions" element={<PromotionsPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>

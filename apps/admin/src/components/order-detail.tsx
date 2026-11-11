@@ -12,8 +12,9 @@ import {
   formatMoney,
   cn,
 } from '@mall/ui';
-import { TextField } from './field';
-import { refundOrder, shipOrder } from '@/lib/admin-api';
+import { TextField, SelectField } from './field';
+import { listOrderReservations, listStockLocations, refundOrder, shipOrder } from '@/lib/admin-api';
+import type { OrderReservationView, StockLocationView } from '@/lib/admin-api';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
 
@@ -75,6 +76,12 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const [carrier, setCarrier] = useState(order.carrier ?? '');
   const [tracking, setTracking] = useState(order.trackingNumber ?? '');
   const [shipError, setShipError] = useState<string | null>(null);
+  const [reservations, setReservations] = useState<OrderReservationView[]>([]);
+  const [locations, setLocations] = useState<StockLocationView[]>([]);
+  const [resLoading, setResLoading] = useState(false);
+  const [shipLocationId, setShipLocationId] = useState('');
+  /** 多仓时每行的分配件数（键 = 行下标，值 = 输入框原文）。 */
+  const [alloc, setAlloc] = useState<Record<string, string>>({});
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundInput, setRefundInput] = useState('');
   const [refundError, setRefundError] = useState<string | null>(null);
@@ -88,16 +95,86 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const ful = FUL_META[order.fulfillmentStatus];
   const idTail = order.id.slice(-4);
 
+  // —— 按仓发货（ADR-013 §3）：本单预留落在几个仓，决定表单形态 ——
+  const reservedLocationIds = [...new Set(reservations.map((r) => r.locationId))];
+  const multiLocation = reservedLocationIds.length > 1;
+  const reservedAtSelected = reservations
+    .filter((r) => r.locationId === shipLocationId)
+    .reduce((n, r) => n + r.quantity, 0);
+  const allocatedTotal = order.items.reduce((n, _it, i) => {
+    const qty = Number(alloc[String(i)] ?? '');
+    return n + (Number.isInteger(qty) && qty > 0 ? qty : 0);
+  }, 0);
+  const locationName = (id: string) => locations.find((l) => l.id === id)?.name ?? id;
+
+  const openShip = async () => {
+    setShowShip(true);
+    setShipError(null);
+    setAlloc({});
+    setResLoading(true);
+    // 预留接口不可用时退回单仓简单表单（提交时由后端裁决），不阻断发货入口。
+    const [res, locs] = await Promise.all([
+      listOrderReservations(order.id).catch(() => [] as OrderReservationView[]),
+      listStockLocations().catch(() => [] as StockLocationView[]),
+    ]);
+    setReservations(res);
+    setLocations(locs);
+    setShipLocationId([...new Set(res.map((r) => r.locationId))][0] ?? '');
+    setResLoading(false);
+  };
+
   const doShip = async () => {
+    setShipError(null);
     if (!carrier.trim() || !tracking.trim()) {
       setShipError('请填写承运商与运单号');
       return;
     }
-    await shipOrder(order.id, carrier.trim(), tracking.trim());
-    setShowShip(false);
-    setShipError(null);
-    flash('已发货');
-    onUpdated();
+    try {
+      if (multiLocation) {
+        if (!shipLocationId) {
+          setShipError('请选择发货仓');
+          return;
+        }
+        const invalid = order.items.some((_it, i) => {
+          const raw = (alloc[String(i)] ?? '').trim();
+          if (!raw) return false;
+          const qty = Number(raw);
+          return !Number.isInteger(qty) || qty < 0;
+        });
+        if (invalid) {
+          setShipError('每行数量必须是非负整数');
+          return;
+        }
+        const items = order.items
+          .map((li, i) => ({ order_line_item_id: li.id ?? '', quantity: Number(alloc[String(i)] ?? '0') || 0 }))
+          .filter((it) => it.quantity > 0);
+        const allocated = items.reduce((n, it) => n + it.quantity, 0);
+        // 只校验总和（ADR-013 §3：发货数量必须等于该仓预留数量），够不够由后端裁决。
+        if (allocated !== reservedAtSelected) {
+          setShipError(`本仓需发 ${reservedAtSelected} 件，当前分配 ${allocated} 件`);
+          return;
+        }
+        await shipOrder(order.id, carrier.trim(), tracking.trim(), {
+          stockLocationId: shipLocationId,
+          items,
+        });
+      } else {
+        await shipOrder(
+          order.id,
+          carrier.trim(),
+          tracking.trim(),
+          reservedLocationIds.length === 1 ? { stockLocationId: reservedLocationIds[0] } : undefined,
+        );
+      }
+      setShowShip(false);
+      setAlloc({});
+      setReservations([]);
+      setShipError(null);
+      flash('已发货');
+      onUpdated();
+    } catch (err) {
+      setShipError(err instanceof Error ? err.message : '发货失败，请稍后重试');
+    }
   };
 
   const doRefund = async () => {
@@ -171,7 +248,7 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
 
       <div className="flex flex-wrap gap-2 border-t border-border pt-4">
         {order.fulfillmentStatus === 'unfulfilled' && (
-          <Button size="sm" onClick={() => setShowShip((s) => !s)}>
+          <Button size="sm" onClick={() => void openShip()}>
             <Truck className="size-4" strokeWidth={2} aria-hidden="true" />
             发货
           </Button>
@@ -185,16 +262,68 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
       </div>
 
       {showShip && (
-        <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+        <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-3">
+          {resLoading && <p className="text-xs text-muted-foreground">正在查询本单的仓库预留…</p>}
+
           <TextField id="ship-carrier" label="承运商" required value={carrier} onChange={(e) => setCarrier(e.target.value)} placeholder="如 顺丰国际" />
           <TextField id="ship-tracking" label="运单号" required value={tracking} onChange={(e) => setTracking(e.target.value)} className="font-mono" />
+
+          {multiLocation && (
+            <>
+              <SelectField
+                id="ship-location"
+                label="发货仓"
+                required
+                value={shipLocationId}
+                onChange={(e) => {
+                  setShipLocationId(e.target.value);
+                  // 换仓等于换一组预留，之前的分配必须清空，避免拿旧数字骗过总和校验。
+                  setAlloc({});
+                  setShipError(null);
+                }}
+                options={reservedLocationIds.map((id) => ({ value: id, label: locationName(id) }))}
+              />
+              <p className="text-xs leading-5 text-muted-foreground">
+                本仓预留合计 <span className="tabular font-medium text-foreground">{reservedAtSelected}</span> 件，请分配到各商品行。
+                一张发货单只发一个仓，另一个仓请再发一次。
+              </p>
+              <div className="space-y-2">
+                {order.items.map((it, i) => (
+                  <TextField
+                    key={i}
+                    id={`ship-alloc-${i}`}
+                    label={`${it.title}${it.variantTitle ? ` · ${it.variantTitle}` : ''}（整单 ${it.quantity} 件）`}
+                    inputMode="numeric"
+                    value={alloc[String(i)] ?? ''}
+                    onChange={(e) => setAlloc((prev) => ({ ...prev, [String(i)]: e.target.value }))}
+                    placeholder="0"
+                    className="w-24"
+                  />
+                ))}
+              </div>
+              <p
+                className={cn(
+                  'text-xs',
+                  allocatedTotal === reservedAtSelected ? 'text-muted-foreground' : 'text-destructive',
+                )}
+                role="status"
+              >
+                已分配 <span className="tabular">{allocatedTotal}</span> / {reservedAtSelected} 件
+              </p>
+            </>
+          )}
+
+          {!resLoading && reservations.length === 0 && (
+            <p className="text-xs text-muted-foreground">未查询到预留明细，按整单发货（单仓兼容）。</p>
+          )}
+
           {shipError && (
             <p className="text-xs text-destructive" role="alert">
               {shipError}
             </p>
           )}
           <div className="flex gap-2">
-            <Button size="sm" onClick={doShip}>
+            <Button size="sm" onClick={() => void doShip()} disabled={resLoading}>
               确认发货
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setShowShip(false)}>

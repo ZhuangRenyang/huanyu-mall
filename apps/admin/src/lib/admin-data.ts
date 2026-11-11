@@ -28,6 +28,8 @@ export type OrderPayment = 'paid' | 'pending' | 'refunded';
 export type OrderFulfillment = 'unfulfilled' | 'shipped' | 'delivered';
 
 export interface AdminOrderLine {
+  /** 后端行项 id：按仓发货时必须回传给 CreateFulfillment（mock 数据没有）。 */
+  id?: string;
   title: string;
   variantTitle?: string;
   quantity: number;
@@ -215,5 +217,24 @@ export const SEED_ORDERS: AdminOrder[] = [
     shippingAddress: '浙江省杭州市西湖区 文三路 100 号',
     carrier: 'DHL',
     trackingNumber: 'DH9876543210',
+  },
+  {
+    /* 跨仓演示单：两个商品行 → mock 预留分别落在主仓与备用仓，用于演示「按仓发货」。 */
+    id: 'ord_2405',
+    customerName: '周予安',
+    customerEmail: 'zhou@example.com',
+    createdAt: '2026-11-06 15:30',
+    paymentStatus: 'paid',
+    fulfillmentStatus: 'unfulfilled',
+    currency: 'CNY',
+    subtotalMinor: 69800,
+    shippingMinor: 0,
+    taxMinor: 0,
+    totalMinor: 69800,
+    items: [
+      { title: '无线静音鼠标', variantTitle: 'MS-BLK', quantity: 1, unitPriceMinor: 19900 },
+      { title: '87 键机械键盘', variantTitle: 'KB-RED', quantity: 1, unitPriceMinor: 49900 },
+    ],
+    shippingAddress: '江苏省南京市鼓楼区 中山北路 100 号',
   },
 ];

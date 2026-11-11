@@ -172,11 +172,31 @@ function updateOrder(id: string, mutate: (o: AdminOrder) => void): void {
   }
 }
 
-export function shipOrder(id: string, carrier: string, trackingNumber: string): void {
+/**
+ * mock 发货：跨仓订单要所有仓都发过才算「已发货」（真实后端由发货单状态决定）。
+ * 这里没有发货单表，用本地记录已发货的仓近似，避免演示时发完第一个仓就再也点不到发货。
+ */
+const SHIPPED_LOCS_KEY = 'admin:order-shipped-locations';
+
+export function shipOrder(
+  id: string,
+  carrier: string,
+  trackingNumber: string,
+  opts?: { stockLocationId?: string; locationCount?: number },
+): void {
+  let allShipped = true;
+  const stockLocationId = opts?.stockLocationId;
+  if (stockLocationId) {
+    const map = read<Record<string, string[]>>(SHIPPED_LOCS_KEY, {});
+    const done = new Set([...(map[id] ?? []), stockLocationId]);
+    map[id] = [...done];
+    write(SHIPPED_LOCS_KEY, map);
+    allShipped = done.size >= (opts?.locationCount ?? 1);
+  }
   updateOrder(id, (o) => {
-    o.fulfillmentStatus = 'shipped';
     o.carrier = carrier;
     o.trackingNumber = trackingNumber;
+    if (allShipped) o.fulfillmentStatus = 'shipped';
   });
 }
 
