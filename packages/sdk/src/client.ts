@@ -262,6 +262,19 @@ export function createAdminClient(opts: ClientOptions) {
     updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
       put(`/api/v1/admin/settings/payment-providers/${id}`, b),
     // —— 促销（阶段 6）——
+    getSystemInfo: () => get("/api/v1/admin/system/info"),
+    setSystemUpdateSource: (update_source_url: string) =>
+      put("/api/v1/admin/system/settings", { update_source_url }),
+    checkSystemUpdate: () => post("/api/v1/admin/system/check-update", {}),
+    requestSystemUpgrade: (body: {
+      version: string;
+      tarball_url: string;
+      sha256: string;
+      confirm: true;
+    }) => post("/api/v1/admin/system/upgrade", body),
+    requestSystemBackup: (body: { label?: string }) => post("/api/v1/admin/system/backup", body),
+    listSystemJobs: () => get("/api/v1/admin/system/jobs"),
+    getSystemJob: (id: string) => get(`/api/v1/admin/system/jobs/${id}`),
     getNotificationSettings: () => get("/api/v1/admin/notifications/settings"),
     updateNotificationSettings: (body: Record<string, unknown>) =>
       put("/api/v1/admin/notifications/settings", body),

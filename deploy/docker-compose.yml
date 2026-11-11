@@ -91,6 +91,12 @@ services:
       # （同源部署经 nginx 反代，本来就不需要 CORS；跨域前端才需要显式列出）
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       NODE_ENV: production
+      # 版本身份：后台「系统」页显示的就是它（install.sh 每次安装时写入 .env）
+      APP_VERSION: ${APP_VERSION:-0.0.0}
+      APP_COMMIT: ${APP_COMMIT:-unknown}
+      APP_BUILT_AT: ${APP_BUILT_AT:-unknown}
+      # 宿主升级代理的调用凭证（代理与 API 各自从 .env 读同一份）
+      UPDATER_TOKEN: ${UPDATER_TOKEN:-}
     command: ["node", "apps/api/dist/index.js"]
     volumes:
       - ${MALL_DIR:-/opt/mall}/data/uploads:/repo/data/uploads

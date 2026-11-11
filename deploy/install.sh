@@ -283,6 +283,71 @@ step10_health() {
   log "初始密码: ${ADMIN_PASSWORD}（可在后台自行修改，不强制改密）"
 }
 
+
+# [11] 安装宿主升级代理（ADR-017）。
+# 每次安装都刷新：代理脚本被升级本身替换过，必须保证宿主上跑的是最新一份。
+# 不走 run_step 门禁——它便宜、幂等，而且漏装会让「一键升级」按钮变成摆设。
+step11_updater() {
+  local env_file="$MALL_DIR/config/.env"
+  local agent_src="$COMPOSE_DIR/updater/mall-updater.sh"
+  local agent_dst="$MALL_DIR/config/mall-updater.sh"
+  local unit_dst="/etc/systemd/system/mall-updater.service"
+
+  # .env 是「生成一次就不再写」的，这里补新键而不覆盖旧值
+  ensure_env_key() {
+    local key="$1" value="$2"
+    grep -q "^${key}=" "$env_file" 2>/dev/null || printf '%s=%s\n' "$key" "$value" >>"$env_file"
+  }
+
+  local version commit built_at
+  version="$(head -1 "$COMPOSE_DIR/../VERSION" 2>/dev/null || echo 0.0.0 | tr -d '[:space:]')"
+  commit="$( (cd "$COMPOSE_DIR/.." && git rev-parse --short HEAD 2>/dev/null) || echo unknown)"
+  built_at="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+  ensure_env_key APP_VERSION "$version"
+  ensure_env_key APP_COMMIT "$commit"
+  # 构建时间只在首次写入：它描述的是「这份程序什么时候装上的」，重跑安装不该刷新
+  ensure_env_key APP_BUILT_AT "$built_at"
+  ensure_env_key SRC_DIR "$(cd "$COMPOSE_DIR/.." && pwd)"
+  if ! grep -q "^UPDATER_TOKEN=" "$env_file" 2>/dev/null; then
+    ensure_env_key UPDATER_TOKEN "$(openssl rand -hex 24)"
+    log "已生成 UPDATER_TOKEN"
+  fi
+
+  if [[ ! -f "$agent_src" ]]; then
+    log "警告：找不到 $agent_src，跳过升级代理安装"
+    return 0
+  fi
+  # 先写临时文件再 mv：代理可能正在运行，直接 cp 会把读到一半的脚本截断
+  cp "$agent_src" "$agent_dst.tmp"
+  chmod 0700 "$agent_dst.tmp"
+  mv -f "$agent_dst.tmp" "$agent_dst"
+
+  if command -v systemctl >/dev/null 2>&1; then
+    cat > "$unit_dst" <<UNIT
+[Unit]
+Description=Mall upgrade agent (one-click upgrade executor)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash $agent_dst
+Restart=always
+RestartSec=5
+Environment=MALL_DIR=$MALL_DIR
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable --now mall-updater >/dev/null 2>&1 \
+      && log "升级代理已安装并启动（systemd: mall-updater）" \
+      || log "警告：systemd 启动 mall-updater 失败，可手工执行 bash $agent_dst"
+  else
+    log "警告：本机没有 systemd，升级代理未托管；可手工执行 bash $agent_dst"
+  fi
+}
+
 main() {
   parse_args "$@"
   if (( RESET )); then
@@ -316,6 +381,7 @@ main() {
     step8_seed
     step9_apps force
     step10_health
+    step11_updater
     record_source_fp
     log "完成（源码已更新并重建）"
     return 0
@@ -325,7 +391,8 @@ main() {
   run_step 8 step8_seed "首次种子"
   run_step 9 step9_apps "拉起应用"
   run_step 10 step10_health "健康检查"
-  log "完成（10 步全绿）"
+  step11_updater
+  log "完成（11 步全绿）"
 }
 
 main "$@"

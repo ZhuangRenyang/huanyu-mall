@@ -42,7 +42,9 @@ import type { IThemeModuleService } from "@mall/theme";
 import type { INotificationModuleService } from "@mall/notification";
 import type { ApiConfig } from "./config.js";
 import { PgAuditRepository } from "./repositories/audit.repository.js";
+import { PgSystemUpdateRepository } from "./repositories/system-update.repository.js";
 import { AuditService } from "./services/audit.service.js";
+import { SystemUpdateService } from "./services/system-update.service.js";
 
 export interface AppServices {
   regionChannel: IRegionChannelModuleService;
@@ -60,6 +62,7 @@ export interface AppServices {
   fulfillment: IFulfillmentModuleService;
   theme: IThemeModuleService;
   notification: INotificationModuleService;
+  systemUpdate: SystemUpdateService;
 }
 
 export interface WorkflowRunner {
@@ -152,6 +155,7 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     fulfillment: container.resolve<IFulfillmentModuleService>("fulfillment"),
     theme: container.resolve<IThemeModuleService>("theme"),
     notification: container.resolve<INotificationModuleService>("notification"),
+    systemUpdate: new SystemUpdateService(new PgSystemUpdateRepository(pool), config),
   };
 
   // workflow 端口适配器：camelCase 端口契约 ↔ module service（id/snake_case DTO，架构铁律 5）

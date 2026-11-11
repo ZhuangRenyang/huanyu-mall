@@ -112,3 +112,21 @@ export type {
   NotificationStatus,
   NotificationTemplate,
 } from './admin-notifications';
+
+export {
+  getSystemInfo,
+  setUpdateSource,
+  checkUpdate,
+  requestUpgrade,
+  requestBackup,
+  listSystemJobs,
+  getSystemJob,
+} from './admin-system';
+export type {
+  SystemInfoView,
+  SystemJobView,
+  SystemJobAction,
+  SystemJobStatus,
+  CheckUpdateView,
+  UpdateManifestView,
+} from './admin-system';
