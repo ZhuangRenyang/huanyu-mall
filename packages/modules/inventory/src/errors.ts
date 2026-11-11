@@ -68,3 +68,15 @@ export function transferInsufficientStock(
     message: `调拨失败：${itemId}@${fromLocationId} 可用量不足以调出 ${quantity}`,
   });
 }
+
+/** 手工调减不能低于已预留量（否则会把已承诺给订单的货扣掉）。 */
+export function adjustmentBelowReserved(
+  levelId: string,
+  delta: number,
+  reserved: number,
+): DomainError {
+  return new DomainError({
+    code: 30002,
+    message: `库存调整失败：${levelId} 调减后低于已预留 ${reserved}（delta=${delta}）`,
+  });
+}

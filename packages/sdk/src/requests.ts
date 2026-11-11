@@ -150,8 +150,10 @@ export interface CreateShipmentRequest {
 }
 
 /** 更新库存量（在库量）。 */
+/** 手工调整库存：相对增量（正=入库，负=出库），后端校验不得低于已预留。 */
 export interface UpdateInventoryLevelRequest {
-  stocked_quantity: number;
+  delta: number;
+  reason?: string;
 }
 
 // —— 多仓（ADR-013）：仓库 / 按仓库存行 / 调拨 ——

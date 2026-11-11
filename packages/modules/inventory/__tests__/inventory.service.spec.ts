@@ -96,11 +96,14 @@ class InMemoryInventoryRepository implements InventoryRepository {
     level.reserved_quantity = Math.max(0, level.reserved_quantity - quantity);
     level.available_quantity = level.stocked_quantity - level.reserved_quantity;
   }
-  async adjustLevelQuantity(levelId: string, delta: number): Promise<void> {
+  async adjustLevelQuantity(levelId: string, delta: number): Promise<boolean> {
     const level = [...this.levels.values()].find((l) => l.id === levelId);
-    if (!level) return;
+    if (!level) return false;
+    // 与 SQL 条件一致：调减不得低于已预留
+    if (level.stocked_quantity + delta < level.reserved_quantity) return false;
     level.stocked_quantity += delta;
     level.available_quantity = level.stocked_quantity - level.reserved_quantity;
+    return true;
   }
   /** 模拟 DB 条件 UPDATE + upsert（单事务由 withTransaction 保证回滚）。 */
   async moveStock(input: {
@@ -579,5 +582,26 @@ describe("InventoryService 仓间调拨（ADR-013 §4：单事务 + 条件扣减
     expect(res.count).toBe(1);
     expect(res.items[0]?.sku).toBe("SKU-XFER");
     expect(res.items[0]?.stock_location_id).toBe(locB.id);
+  });
+});
+
+describe("InventoryService.adjust（手工调减不得吃掉预留，ADR-013 §4）", () => {
+  it("调减低于已预留 → 拒绝且库存不动；正好减到预留量 → 允许", async () => {
+    const repo = new InMemoryInventoryRepository();
+    const service = new InventoryService(repo);
+    const item = await repo.createInventoryItem({ sku: "SKU-ADJ" });
+    const loc = await repo.createStockLocation({ name: "A 仓", priority: 1 });
+    await repo.createLevel({ inventoryItemId: item.id, stockLocationId: loc.id, stockedQuantity: 5 });
+    await repo.linkVariant(item.id, "var_adj");
+    await service.reserve({ variantId: "var_adj", locationId: loc.id, quantity: 3, lineItemId: "li_adj" });
+
+    const level = repo.levels.get(`${item.id}:${loc.id}`)!;
+    await expect(
+      service.adjustLevelByLevelId(level.id, { delta: -3, reason: "测试" }),
+    ).rejects.toBeInstanceOf(DomainError);
+    expect([level.stocked_quantity, level.reserved_quantity, level.available_quantity]).toEqual([5, 3, 2]);
+
+    const ok = await service.adjustLevelByLevelId(level.id, { delta: -2, reason: "测试" });
+    expect([ok.stocked_quantity, ok.reserved_quantity, ok.available_quantity]).toEqual([3, 3, 0]);
   });
 });

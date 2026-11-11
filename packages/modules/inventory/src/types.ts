@@ -109,7 +109,7 @@ export interface InventoryRepository {
   /** 原子出库：stocked -= qty、reserved -= qty（下限 0），available = stocked - reserved。 */
   commitLevelQuantity(levelId: string, quantity: number): Promise<void>;
   /** 原子调整在库量：stocked += delta，available = stocked - reserved。 */
-  adjustLevelQuantity(levelId: string, delta: number): Promise<void>;
+  adjustLevelQuantity(levelId: string, delta: number): Promise<boolean>;
   /**
    * 仓间搬货（ADR-013 §4）：源仓条件扣减（不能动已承诺给订单的货），
    * 目标仓 upsert。必须在调用方事务内执行，返回源仓是否扣减成功。

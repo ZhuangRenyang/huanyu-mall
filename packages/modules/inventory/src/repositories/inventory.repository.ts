@@ -240,15 +240,23 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     );
   }
 
-  /** 原子调整在库量（相对增量），available 由 stocked - reserved 现算。 */
-  async adjustLevelQuantity(levelId: string, delta: number): Promise<void> {
-    await this.db.execute(
+  /**
+   * 原子调整在库量（相对增量），available 由 stocked - reserved 现算。
+   * 条件 `stocked + delta >= reserved`：调减不得吃掉已承诺给订单的货。
+   * 返回 false 表示会低于预留量（调用方拒绝）。
+   */
+  async adjustLevelQuantity(levelId: string, delta: number): Promise<boolean> {
+    const res = await this.db.execute(
       sql`UPDATE inventory_level
              SET stocked_quantity = stocked_quantity + ${delta},
                  available_quantity = (stocked_quantity + ${delta}) - reserved_quantity,
                  updated_at = now()
-           WHERE id = ${levelId} AND deleted_at IS NULL`,
+           WHERE id = ${levelId}
+             AND deleted_at IS NULL
+             AND stocked_quantity + ${delta} >= reserved_quantity
+         RETURNING id`,
     );
+    return res.rows.length > 0;
   }
 
   /**

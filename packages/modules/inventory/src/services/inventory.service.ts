@@ -1,4 +1,5 @@
 import {
+  adjustmentBelowReserved,
   insufficientStock,
   invalidQuantity,
   inventoryItemNotFound,
@@ -255,7 +256,9 @@ export class InventoryService implements IInventoryModuleService {
     if (!Number.isInteger(input.delta)) throw invalidQuantity(input.inventoryItemId, input.delta);
     const level = await this.repo.findLevel(input.inventoryItemId, input.locationId);
     if (!level) throw levelNotFound(input.inventoryItemId, input.locationId);
-    await this.repo.adjustLevelQuantity(level.id, input.delta);
+    if (!(await this.repo.adjustLevelQuantity(level.id, input.delta))) {
+      throw adjustmentBelowReserved(level.id, input.delta, level.reserved_quantity);
+    }
     return (await this.repo.findLevel(input.inventoryItemId, input.locationId))!;
   }
 
@@ -266,7 +269,9 @@ export class InventoryService implements IInventoryModuleService {
     if (!Number.isInteger(input.delta)) throw invalidQuantity(levelId, input.delta);
     const level = await this.repo.findLevelById(levelId);
     if (!level) throw levelNotFound(levelId, "");
-    await this.repo.adjustLevelQuantity(level.id, input.delta);
+    if (!(await this.repo.adjustLevelQuantity(level.id, input.delta))) {
+      throw adjustmentBelowReserved(level.id, input.delta, level.reserved_quantity);
+    }
     return (await this.repo.findLevelById(levelId))!;
   }
 
