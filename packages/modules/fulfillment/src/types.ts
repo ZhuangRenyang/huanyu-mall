@@ -30,6 +30,8 @@ export interface FulfillmentDTO {
   stock_location_id: string | null;
   status: FulfillmentStatus;
   reservation_ids: string[];
+  /** 本单发了哪些订单行、各几件（状态推进与后台展示用）。 */
+  items: FulfillmentItemInput[];
   tracking_links: Array<{ carrier: string; number: string }> | null;
 }
 

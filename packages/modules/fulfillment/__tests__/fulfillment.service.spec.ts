@@ -198,6 +198,37 @@ describe("FulfillmentService（M08，运费三档 + 发货 commit 预留）", ()
     expect(inventory.committed).toEqual(["rsv_1", "rsv_2"]);
     expect(repo.fulfillments.get(fulfillment.id)?.status).toBe("shipped");
   });
+
+  it("发货后发出 shipment.created，并带上订单行项（订单状态推进用）", async () => {
+    const repo = new InMemoryFulfillmentRepository();
+    const inventory = new FakeInventoryPort();
+    const events: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const service = new FulfillmentService({
+      repo,
+      inventory,
+      events: async (event) => {
+        events.push(event);
+      },
+    });
+    inventory.reservations.set("ord_1", [reservation("rsv_1", "loc_1")]);
+
+    const fulfillment = await service.createFulfillment({
+      orderId: "ord_1",
+      items: [{ orderLineItemId: "oli_1", quantity: 1 }],
+      reservationIds: ["rsv_1"],
+    });
+    expect(fulfillment.items).toEqual([{ orderLineItemId: "oli_1", quantity: 1 }]);
+
+    await service.addShipment(fulfillment.id, {
+      carrierName: "顺丰",
+      trackingNumber: "SF1",
+      shippedAt: new Date("2026-01-01T00:00:00Z"),
+    });
+
+    expect(events).toEqual([
+      { name: "shipment.created", data: { orderId: "ord_1", fulfillmentId: fulfillment.id } },
+    ]);
+  });
 });
 
 describe("FulfillmentService.createFulfillment（ADR-013 §3：一张发货单只发一个仓）", () => {

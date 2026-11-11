@@ -4,6 +4,7 @@ export type OrderStatus =
   | "pending"
   | "awaiting_payment"
   | "paid"
+  | "partially_fulfilled"
   | "fulfilled"
   | "delivered"
   | "completed"

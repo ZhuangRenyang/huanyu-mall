@@ -22,9 +22,15 @@ export default Module("fulfillment", {
       commitReservation: (id) => inventory.commitReservation(id),
       listReservationsByOrder: (orderId) => inventory.listReservationsByOrder(orderId),
     };
+    const events = ctx.has("fulfillment-events")
+      ? ctx.resolve<(event: { name: string; data: Record<string, unknown> }) => Promise<void>>(
+          "fulfillment-events",
+        )
+      : undefined;
     return new FulfillmentService({
       repo: new DrizzleFulfillmentRepository(createDbFor(ctx.resolve<Pool>("pool"), schema)),
       inventory: inventoryPort,
+      events,
     });
   },
   migrations: ["migrations/0001_init.sql", "migrations/0002_location.sql"],

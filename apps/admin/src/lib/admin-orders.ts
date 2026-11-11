@@ -65,7 +65,13 @@ function mapOrder(o: ApiOrder): AdminOrder {
         ? 'paid'
         : 'pending';
   const fulfillment: AdminOrder['fulfillmentStatus'] =
-    o.status === 'completed' ? 'delivered' : o.status === 'fulfilled' ? 'shipped' : 'unfulfilled';
+    o.status === 'completed'
+      ? 'delivered'
+      : o.status === 'fulfilled'
+        ? 'shipped'
+        : o.status === 'partially_fulfilled'
+          ? 'partial'
+          : 'unfulfilled';
   const items: AdminOrderLine[] = (o.line_items ?? []).map((li) => ({
     id: li.id,
     title: li.title,

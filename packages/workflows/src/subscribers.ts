@@ -9,6 +9,30 @@ export interface OrderTransitionPort {
   ): Promise<unknown>;
 }
 
+/** 订单侧：读订单行与当前状态、推进状态（subscriber 最小接口）。 */
+export interface OrderShipmentPort {
+  retrieveOrder(orderId: string): Promise<{
+    id: string;
+    status: string;
+    items: Array<{ id: string; quantity: number }>;
+  }>;
+  transition(
+    orderId: string,
+    to: string,
+    meta: { actor: string; reason?: string },
+  ): Promise<unknown>;
+}
+
+/** 履约侧：按订单读发货单（含行项），用于计算已发数量。 */
+export interface FulfillmentListPort {
+  listByOrder(orderId: string): Promise<
+    Array<{
+      status: string;
+      items: Array<{ orderLineItemId: string; quantity: number }>;
+    }>
+  >;
+}
+
 export interface SubscriberResolve {
   (name: string): unknown;
 }
@@ -29,6 +53,51 @@ export function registerSubscribers(
     if (!orderId) return;
     // 记录即可，供二期 Notification 模块接入
     void resolve;
+  });
+
+  /**
+   * 发货 → 订单状态推进（ADR-013 / ADR-015）。
+   * 已发数量按订单行汇总：发完 → fulfilled；发了一部分 → partially_fulfilled。
+   * 建了发货单但还没填运单的不算已发（status 仍为 fulfilled，不是 shipped）。
+   */
+  registry.register("shipment.created", async (event: DomainEvent) => {
+    const { orderId } = event.data as { orderId?: string };
+    if (!orderId) return;
+    const orderSvc = resolve("order") as OrderShipmentPort;
+    const fulfillmentSvc = resolve("fulfillment") as FulfillmentListPort;
+
+    const [order, fulfillments] = await Promise.all([
+      orderSvc.retrieveOrder(orderId),
+      fulfillmentSvc.listByOrder(orderId),
+    ]);
+    // 只处理已付款 / 部分发货的订单；已取消、已退款等不动。
+    if (order.status !== "paid" && order.status !== "partially_fulfilled") return;
+
+    const shippedByLine = new Map<string, number>();
+    for (const f of fulfillments) {
+      if (f.status !== "shipped" && f.status !== "delivered") continue;
+      for (const item of f.items) {
+        shippedByLine.set(
+          item.orderLineItemId,
+          (shippedByLine.get(item.orderLineItemId) ?? 0) + item.quantity,
+        );
+      }
+    }
+    if (shippedByLine.size === 0) return;
+
+    const total = order.items.reduce((n, li) => n + li.quantity, 0);
+    const done = order.items.reduce(
+      (n, li) => n + Math.min(li.quantity, shippedByLine.get(li.id) ?? 0),
+      0,
+    );
+    if (done <= 0) return;
+
+    const to = done >= total ? "fulfilled" : "partially_fulfilled";
+    if (order.status === to) return;
+    await orderSvc.transition(orderId, to, {
+      actor: "fulfillment",
+      reason: "shipment created",
+    });
   });
 
   registry.register("payment.captured", async (event: DomainEvent) => {

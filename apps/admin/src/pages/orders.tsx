@@ -17,10 +17,11 @@ import { listOrders } from '@/lib/admin-api';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
 
-type Filter = 'all' | 'unfulfilled' | 'shipped' | 'refunded';
+type Filter = 'all' | 'unfulfilled' | 'partial' | 'shipped' | 'refunded';
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'all', label: '全部' },
   { value: 'unfulfilled', label: '待发货' },
+  { value: 'partial', label: '部分发货' },
   { value: 'shipped', label: '已发货' },
   { value: 'refunded', label: '已退款' },
 ];
@@ -41,6 +42,7 @@ export function OrdersPage() {
 
   const filtered = orders.filter((o) => {
     if (filter === 'unfulfilled' && o.fulfillmentStatus !== 'unfulfilled') return false;
+    if (filter === 'partial' && o.fulfillmentStatus !== 'partial') return false;
     if (filter === 'shipped' && o.fulfillmentStatus !== 'shipped') return false;
     if (filter === 'refunded' && o.paymentStatus !== 'refunded') return false;
     const q = query.trim().toLowerCase();
@@ -159,7 +161,8 @@ export function OrdersPage() {
       </Sheet>
 
       <p className="text-xs text-muted-foreground">
-        共 {filtered.length} 笔 · 待发货 {orders.filter((o) => o.fulfillmentStatus === 'unfulfilled').length} 笔
+        共 {filtered.length} 笔 · 待发货 {orders.filter((o) => o.fulfillmentStatus === 'unfulfilled').length} 笔 ·
+        部分发货 {orders.filter((o) => o.fulfillmentStatus === 'partial').length} 笔
       </p>
     </div>
   );

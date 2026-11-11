@@ -1,11 +1,16 @@
 import { DomainError } from "@mall/core";
 import type { OrderStatus } from "../types.js";
 
-/** 订单状态机（表驱动纯函数）。一期：pending → awaiting_payment → paid → fulfilled → delivered；全额退款到 refunded。 */
+/**
+ * 订单状态机（表驱动纯函数）。
+ * 一期：pending → awaiting_payment → paid → partially_fulfilled → fulfilled → delivered；全额退款到 refunded。
+ * partially_fulfilled：拆单订单发了一部分（至少一个仓已发、但未发完）。
+ */
 const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   pending: ["awaiting_payment", "canceled"],
   awaiting_payment: ["paid", "canceled"],
-  paid: ["fulfilled", "refunded"],
+  paid: ["partially_fulfilled", "fulfilled", "refunded"],
+  partially_fulfilled: ["fulfilled", "refunded"],
   fulfilled: ["delivered", "refunded"],
   delivered: ["completed", "refunded"],
   completed: ["refunded"],

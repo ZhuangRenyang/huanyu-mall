@@ -294,6 +294,9 @@ call GET "/admin/orders/$ORDER_ID/fulfillments" "" "$AUTH"
 expect_num "发货单数" "$(jqr '.data.count')" "1"
 expect_num "发货单带运单" "$(printf '%s' "$BODY" | jq '[.data.items[]? | select((.tracking_links // []) | length > 0)] | length')" "1"
 
+call GET "/admin/orders/$ORDER_ID" "" "$AUTH"
+expect_num "单仓发完后订单状态" "$(jqr '.data.status')" "fulfilled"
+
 # ------------------------------------------------------------------ #
 sec "7. 拆分兜底：没有单仓够、但合计够 → 从两仓凑（2+1）"
 LEVEL_BACKUP_ID="$(level_field "$BACKUP_LOC" id)"
@@ -338,12 +341,19 @@ while read -r loc qty; do
       "$AUTH"
     expect_2xx "仓 $loc 填运单发货"
     SHIPPED=$((SHIPPED + 1))
+    if ((SHIPPED < 2)); then
+      call GET "/admin/orders/$SPLIT_ORDER_ID" "" "$AUTH"
+      expect_num "发完第一个仓后订单状态" "$(jqr '.data.status')" "partially_fulfilled"
+    fi
   fi
 done < <(printf '%s' "$BODY" >/dev/null; call GET "/admin/orders/$SPLIT_ORDER_ID/fulfillment-plan" "" "$AUTH"; printf '%s' "$BODY" | jq -r '.data.plans[] | "\(.stock_location_id) \(.total_quantity)"' | tr -d '\r')
 
 expect_num "拆分订单发货单数" "$SHIPPED" "2"
 call GET "/admin/orders/$SPLIT_ORDER_ID/fulfillments" "" "$AUTH"
 expect_num "拆分订单已发仓数" "$(printf '%s' "$BODY" | jq '[.data.items[]?.stock_location_id] | unique | length')" "2"
+
+call GET "/admin/orders/$SPLIT_ORDER_ID" "" "$AUTH"
+expect_num "两仓都发完后订单状态" "$(jqr '.data.status')" "fulfilled"
 
 sec "7.2 合计仍不足 → 必须拒单"
 set_available "$MAIN_LOC" "$LEVEL_MAIN_ID" 2 >/dev/null

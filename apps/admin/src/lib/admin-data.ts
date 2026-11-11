@@ -25,7 +25,7 @@ export interface ProductDraft {
 }
 
 export type OrderPayment = 'paid' | 'pending' | 'refunded';
-export type OrderFulfillment = 'unfulfilled' | 'shipped' | 'delivered';
+export type OrderFulfillment = 'unfulfilled' | 'partial' | 'shipped' | 'delivered';
 
 export interface AdminOrderLine {
   /** 后端行项 id：按仓发货时必须回传给 CreateFulfillment（mock 数据没有）。 */

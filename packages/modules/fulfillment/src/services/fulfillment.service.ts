@@ -24,6 +24,8 @@ import type {
 export interface FulfillmentServiceDeps {
   repo: FulfillmentRepository;
   inventory: InventoryPort;
+  /** 领域事件端口（可选：单测不注入时跳过发事件）。 */
+  events?: (event: { name: string; data: Record<string, unknown> }) => Promise<void>;
 }
 
 /** M08 对外门面。承运商 API 不接（手填）；发货时经端口把库存预留 commit 为出库。 */
@@ -98,7 +100,7 @@ export class FulfillmentService implements IFulfillmentModuleService {
       reservationIds,
     });
     await this.deps.repo.insertFulfillmentItems(id, input.items);
-    return fulfillment;
+    return { ...fulfillment, items: input.items };
   }
 
   async listByOrder(orderId: string): Promise<FulfillmentDTO[]> {
@@ -128,6 +130,14 @@ export class FulfillmentService implements IFulfillmentModuleService {
     await this.deps.repo.updateFulfillmentShipped(fulfillmentId, [
       { carrier: input.carrierName, number: input.trackingNumber },
     ]);
+
+    // 「已发货」是异步事实：发事件让订单侧按已发数量推进状态（模块间不直连）。
+    if (this.deps.events) {
+      await this.deps.events({
+        name: "shipment.created",
+        data: { orderId: fulfillment.order_id, fulfillmentId },
+      });
+    }
     return shipment;
   }
 }

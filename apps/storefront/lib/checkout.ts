@@ -461,6 +461,7 @@ export function toOrderRecord(order: Order): OrderRecord {
   const status: OrderStatus =
     order.payment_status === 'captured' ||
     order.status === 'paid' ||
+    order.status === 'partially_fulfilled' ||
     order.status === 'fulfilled' ||
     order.status === 'completed'
       ? 'paid'

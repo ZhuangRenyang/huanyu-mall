@@ -8,6 +8,7 @@ export const PAY_META: Record<OrderPayment, { label: string; variant: 'success' 
 
 export const FUL_META: Record<OrderFulfillment, { label: string; variant: 'warning' | 'info' | 'success' }> = {
   unfulfilled: { label: '待发货', variant: 'warning' },
+  partial: { label: '部分发货', variant: 'warning' },
   shipped: { label: '已发货', variant: 'info' },
   delivered: { label: '已完成', variant: 'success' },
 };

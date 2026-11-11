@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -96,7 +96,27 @@ export class DrizzleFulfillmentRepository implements FulfillmentRepository {
       .from(schema.fulfillment)
       .where(and(eq(schema.fulfillment.id, id), isNull(schema.fulfillment.deletedAt)))
       .limit(1);
-    return rows[0] ? toFulfillmentDTO(rows[0]) : null;
+    if (!rows[0]) return null;
+    const itemsBy = await this.itemsByFulfillmentIds([id]);
+    return { ...toFulfillmentDTO(rows[0]), items: itemsBy.get(id) ?? [] };
+  }
+
+  /** 一次查出多张发货单的行项，避免 N+1。 */
+  private async itemsByFulfillmentIds(
+    ids: string[],
+  ): Promise<Map<string, FulfillmentItemInput[]>> {
+    const map = new Map<string, FulfillmentItemInput[]>();
+    if (ids.length === 0) return map;
+    const rows = await this.db
+      .select()
+      .from(schema.fulfillmentItem)
+      .where(inArray(schema.fulfillmentItem.fulfillmentId, ids));
+    for (const row of rows) {
+      const list = map.get(row.fulfillmentId) ?? [];
+      list.push({ orderLineItemId: row.orderLineItemId, quantity: row.quantity });
+      map.set(row.fulfillmentId, list);
+    }
+    return map;
   }
 
   async listByOrder(orderId: string): Promise<FulfillmentDTO[]> {
@@ -107,7 +127,8 @@ export class DrizzleFulfillmentRepository implements FulfillmentRepository {
         and(eq(schema.fulfillment.orderId, orderId), isNull(schema.fulfillment.deletedAt)),
       )
       .orderBy(schema.fulfillment.createdAt);
-    return rows.map(toFulfillmentDTO);
+    const itemsBy = await this.itemsByFulfillmentIds(rows.map((r) => r.id));
+    return rows.map((r) => ({ ...toFulfillmentDTO(r), items: itemsBy.get(r.id) ?? [] }));
   }
 
   async insertFulfillmentItems(fulfillmentId: string, items: FulfillmentItemInput[]): Promise<void> {
@@ -178,6 +199,7 @@ function toFulfillmentDTO(r: typeof schema.fulfillment.$inferSelect): Fulfillmen
     stock_location_id: r.stockLocationId ?? null,
     status: r.status as FulfillmentStatus,
     reservation_ids: meta.reservationIds ?? [],
+    items: [],
     tracking_links: (r.trackingLinks as Array<{ carrier: string; number: string }> | null) ?? null,
   };
 }

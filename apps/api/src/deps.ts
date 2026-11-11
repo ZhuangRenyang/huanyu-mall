@@ -117,6 +117,19 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     },
   );
 
+  // 履约发事件（发货 → 订单状态推进）；与 payment-events 同一套总线。
+  container.register(
+    "fulfillment-events",
+    () => async (event: { name: string; data: Record<string, unknown> }) => {
+      await eventBus.publish({
+        id: prefixedUlid("evt"),
+        name: event.name,
+        data: event.data,
+        occurredAt: new Date().toISOString(),
+      });
+    },
+  );
+
   const services: AppServices = {
     regionChannel: container.resolve<IRegionChannelModuleService>("region-channel"),
     product: container.resolve<IProductModuleService>("product"),

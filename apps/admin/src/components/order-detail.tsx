@@ -49,7 +49,13 @@ function Timeline({ order }: { order: AdminOrder }) {
   const steps = [
     { label: '已下单', done: true },
     { label: '已付款', done: order.paymentStatus === 'paid' || order.paymentStatus === 'refunded' },
-    { label: '已发货', done: order.fulfillmentStatus === 'shipped' || order.fulfillmentStatus === 'delivered' },
+    {
+      label: '已发货',
+      done:
+        order.fulfillmentStatus === 'partial' ||
+        order.fulfillmentStatus === 'shipped' ||
+        order.fulfillmentStatus === 'delivered',
+    },
     { label: '已签收', done: order.fulfillmentStatus === 'delivered' },
   ];
   const lastDone = steps.reduce((acc, s, i) => (s.done ? i : acc), -1);
@@ -101,7 +107,7 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const idTail = order.id.slice(-4);
 
   // 后端按预留算出「每个仓发哪些行、各几件」；前端不再选仓、不再分行。
-  const canShip = order.fulfillmentStatus === 'unfulfilled' && (!planLoaded || plans.length > 0);
+  const canShip = order.paymentStatus === 'paid' && (!planLoaded || plans.length > 0);
   const locationName = (id: string) => locations.find((l) => l.id === id)?.name ?? id;
 
   const loadShipContext = async () => {
