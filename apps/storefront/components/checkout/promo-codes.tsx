@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Tag, TicketPercent, X } from 'lucide-react';
 import { Button, Input, cn } from '@mall/ui';
+import { fetchPromotionFeatures, type PromotionFeatures } from '@/lib/promo';
 
 /**
  * 优惠码 / 礼品卡输码组件（结账页）。
@@ -34,6 +35,18 @@ export function PromoCodes({
 }: PromoCodesProps) {
   const [voucherInput, setVoucherInput] = useState('');
   const [giftCardInput, setGiftCardInput] = useState('');
+  // 功能开关以后端为准：关闭的功能不显示输码入口（默认全关）。
+  const [features, setFeatures] = useState<PromotionFeatures | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetchPromotionFeatures()
+      .then((f) => alive && setFeatures(f))
+      .catch(() => alive && setFeatures({ promotion: false, voucher: false, gift_card: false }));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const submitVoucher = () => {
     const code = voucherInput.trim();
@@ -48,11 +61,15 @@ export function PromoCodes({
     setGiftCardInput('');
   };
 
+  // 未加载完或两个功能都关闭 → 整块不渲染，避免顾客输了码才发现不能用。
+  if (!features || (!features.voucher && !features.gift_card)) return null;
+
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-4">
-      <h2 className="text-sm font-semibold">优惠码</h2>
+      <h2 className="text-sm font-semibold">{features.voucher ? '优惠码' : '礼品卡'}</h2>
 
       <div className="space-y-2">
+        {features.voucher && (
         <div className="flex gap-2">
           <Input
             aria-label="优惠券码"
@@ -71,6 +88,8 @@ export function PromoCodes({
             应用
           </Button>
         </div>
+        )}
+        {features.gift_card && (
         <div className="flex gap-2">
           <Input
             aria-label="礼品卡码"
@@ -89,6 +108,7 @@ export function PromoCodes({
             应用
           </Button>
         </div>
+        )}
       </div>
 
       {error && (
@@ -99,12 +119,14 @@ export function PromoCodes({
 
       {(voucherCodes.length > 0 || giftCardCodes.length > 0) && (
         <div className="flex flex-wrap gap-1.5">
-          {voucherCodes.map((code) => (
-            <Chip key={`v-${code}`} icon={TicketPercent} label={code} onRemove={() => onRemoveVoucher(code)} disabled={busy} />
-          ))}
-          {giftCardCodes.map((code) => (
-            <Chip key={`g-${code}`} icon={Tag} label={code} onRemove={() => onRemoveGiftCard(code)} disabled={busy} />
-          ))}
+          {features.voucher &&
+            voucherCodes.map((code) => (
+              <Chip key={`v-${code}`} icon={TicketPercent} label={code} onRemove={() => onRemoveVoucher(code)} disabled={busy} />
+            ))}
+          {features.gift_card &&
+            giftCardCodes.map((code) => (
+              <Chip key={`g-${code}`} icon={Tag} label={code} onRemove={() => onRemoveGiftCard(code)} disabled={busy} />
+            ))}
         </div>
       )}
     </div>

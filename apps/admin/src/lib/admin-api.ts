@@ -92,10 +92,5 @@ export type {
 export { changePassword } from './admin-password';
 export type { ChangePasswordErrorKind, ChangePasswordResult } from './admin-password';
 
-export {
-  ACTIVITY_KIND_LABEL,
-  listActivities,
-  setActivityActive,
-  disableAllActivities,
-} from './admin-activities';
-export type { ActivityKind, ActivityView } from './admin-activities';
+export { getMarketingFeatures, setMarketingFeature } from './admin-promotions';
+export type { MarketingFeature, MarketingFeatureFlags } from './admin-promotions';

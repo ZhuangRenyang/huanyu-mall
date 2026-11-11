@@ -8,7 +8,6 @@ import { InventoryPage } from './pages/inventory';
 import { SettingsPage } from './pages/settings';
 import {
   MarketingGiftCardsPage,
-  MarketingOverviewPage,
   MarketingPromotionsPage,
   MarketingVouchersPage,
 } from './pages/marketing';
@@ -24,14 +23,13 @@ export function App() {
           <Route path="orders" element={<OrdersPage />} />
           <Route path="inventory" element={<InventoryPage />} />
           <Route path="marketing">
-            <Route index element={<Navigate to="overview" replace />} />
-            <Route path="overview" element={<MarketingOverviewPage />} />
+            <Route index element={<Navigate to="promotions" replace />} />
             <Route path="promotions" element={<MarketingPromotionsPage />} />
             <Route path="vouchers" element={<MarketingVouchersPage />} />
             <Route path="gift-cards" element={<MarketingGiftCardsPage />} />
           </Route>
           {/* 旧地址兼容：收藏过 /promotions 的书签仍可用 */}
-          <Route path="promotions" element={<Navigate to="/marketing/overview" replace />} />
+          <Route path="promotions" element={<Navigate to="/marketing/promotions" replace />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Route>

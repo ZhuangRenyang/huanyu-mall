@@ -179,6 +179,14 @@ export interface ComputeDiscountsResult {
 }
 
 // —— Repository（drizzle 实现 + InMemory 测试桩）——
+/** 营销功能级开关（页面级总开关）：关闭后该功能整体不参与计算。 */
+export type MarketingFeature = "promotion" | "voucher" | "gift_card";
+
+export interface MarketingFeatureDTO {
+  feature: MarketingFeature;
+  enabled: boolean;
+}
+
 export interface PromotionRepository {
   // promotion
   insertPromotion(input: CreatePromotionInput & { id: string }): Promise<PromotionDTO>;
@@ -187,6 +195,9 @@ export interface PromotionRepository {
   updatePromotion(id: string, patch: UpdatePromotionInput): Promise<PromotionDTO | null>;
   softDeletePromotion(id: string): Promise<void>;
   /** 目录促销算折扣：active + catalogue + 有效期内的 promotion 连同其 rules（一次查询，禁 N+1）。 */
+  /** 功能开关（默认全部关闭，由后台逐页打开）。 */
+  listFeatureFlags(): Promise<MarketingFeatureDTO[]>;
+  setFeatureEnabled(feature: MarketingFeature, enabled: boolean): Promise<void>;
   listActiveCataloguePromotionsWithRules(
     now: Date,
   ): Promise<Array<{ promotion: PromotionDTO; rules: PromotionRuleDTO[] }>>;
@@ -314,5 +325,8 @@ export interface IPromotionModuleService {
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;
 
   // 折扣计算（阶段 2-5 落地，阶段 1 占位抛 notImplemented）
+  /** 三个功能开关的当前值；未落库的按关闭处理（默认关闭）。 */
+  getFeatureFlags(): Promise<Record<MarketingFeature, boolean>>;
+  setFeatureEnabled(feature: MarketingFeature, enabled: boolean): Promise<void>;
   computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult>;
 }

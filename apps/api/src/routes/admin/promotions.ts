@@ -238,6 +238,38 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
   const auth = makeAuthHelpers(deps);
   const guard = [auth.adminAuth, auth.requirePermission("settings")];
 
+  // —— 营销功能级开关（默认全关；每个功能在自己的菜单页打开）——
+  app.get("/api/v1/admin/promotions/features", { preHandler: guard }, async (_req, reply) => {
+    reply.ok(await deps.services.promotion.getFeatureFlags());
+  });
+
+  app.put(
+    "/api/v1/admin/promotions/features/:feature",
+    {
+      preHandler: guard,
+      schema: { body: z.object({ enabled: z.boolean() }) },
+    },
+    async (req, reply) => {
+      const { feature } = req.params as { feature: string };
+      const parsed = z.enum(["promotion", "voucher", "gift_card"]).safeParse(feature);
+      if (!parsed.success) throw errors.validation("未知的营销功能", { feature });
+      const b = req.body as { enabled: boolean };
+      const before = await deps.services.promotion.getFeatureFlags();
+      await deps.services.promotion.setFeatureEnabled(parsed.data, b.enabled);
+      const after = await deps.services.promotion.getFeatureFlags();
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "promotion.feature.update",
+          entityType: "promotion_feature",
+          entityId: parsed.data,
+          before,
+          after,
+        }),
+      );
+      reply.ok(after);
+    },
+  );
+
   // —— 目录/订单促销（promotion 表）CRUD + 启停 + 规则（二期补齐，RBAC + 审计）——
 
   app.get(

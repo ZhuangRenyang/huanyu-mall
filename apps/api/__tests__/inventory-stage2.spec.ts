@@ -249,3 +249,48 @@ describe("多仓后台接口（ADR-013 阶段 2：仓库 / 按仓库存 / 调拨
     });
   });
 });
+
+describe("营销功能开关（默认全关，ADR-014）", () => {
+  it("后台读/写开关 + 审计；店面只读；未知功能 400", async () => {
+    const { buildApp } = await import("../src/app.js");
+    const { createFakeClock, createFakeRateLimit, makeDeps } = await import("./helpers/fake-deps.js");
+    const deps = makeDeps();
+    const fake = createFakeRateLimit(createFakeClock());
+    const app = await buildApp(deps, { rateLimitStoreFactory: fake.factory });
+    const adminJson = { authorization: "Bearer admin", "content-type": "application/json" };
+    try {
+      // 默认全关
+      const initial = await app.inject({ method: "GET", url: "/api/v1/admin/promotions/features", headers: adminJson });
+      expect(initial.statusCode).toBe(200);
+      expect(initial.json().data).toEqual({ promotion: false, voucher: false, gift_card: false });
+
+      // 打开促销
+      const on = await app.inject({
+        method: "PUT",
+        url: "/api/v1/admin/promotions/features/promotion",
+        headers: adminJson,
+        payload: { enabled: true },
+      });
+      expect(on.statusCode).toBe(200);
+      expect(on.json().data.promotion).toBe(true);
+      expect(deps.auditRepo.rows.some((r) => r.action === "promotion.feature.update")).toBe(true);
+
+      // 店面只读，值与后台一致
+      const store = await app.inject({ method: "GET", url: "/api/v1/store/promotions/features" });
+      expect(store.statusCode).toBe(200);
+      expect(store.json().data.promotion).toBe(true);
+      expect(store.json().data.voucher).toBe(false);
+
+      // 未知功能名 400
+      const bad = await app.inject({
+        method: "PUT",
+        url: "/api/v1/admin/promotions/features/seckill",
+        headers: adminJson,
+        payload: { enabled: true },
+      });
+      expect(bad.statusCode).toBe(400);
+    } finally {
+      await app.close();
+    }
+  });
+});

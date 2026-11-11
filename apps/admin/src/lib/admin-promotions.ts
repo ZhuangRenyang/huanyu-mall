@@ -704,3 +704,39 @@ export async function deletePromotionRule(ruleId: string): Promise<void> {
     if (!(err instanceof ApiError && err.code === 204)) throw err;
   }
 }
+
+// ------------------------------------------------------------------ *
+// 营销功能级开关（默认全关，各页面独立打开）
+// ------------------------------------------------------------------ *
+
+export type MarketingFeature = 'promotion' | 'voucher' | 'gift_card';
+
+export interface MarketingFeatureFlags {
+  promotion: boolean;
+  voucher: boolean;
+  gift_card: boolean;
+}
+
+const FEATURE_KEY = 'admin:marketing-features';
+
+const DEFAULT_FEATURES: MarketingFeatureFlags = {
+  promotion: false,
+  voucher: false,
+  gift_card: false,
+};
+
+export async function getMarketingFeatures(): Promise<MarketingFeatureFlags> {
+  if (getAdminApiMode() !== 'live') {
+    return { ...DEFAULT_FEATURES, ...read<Partial<MarketingFeatureFlags>>(FEATURE_KEY, {}) };
+  }
+  return (await adminClient().getMarketingFeatures()) as MarketingFeatureFlags;
+}
+
+export async function setMarketingFeature(feature: MarketingFeature, enabled: boolean): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const current = { ...DEFAULT_FEATURES, ...read<Partial<MarketingFeatureFlags>>(FEATURE_KEY, {}) };
+    write(FEATURE_KEY, { ...current, [feature]: enabled });
+    return;
+  }
+  await adminClient().setMarketingFeature(feature, enabled);
+}

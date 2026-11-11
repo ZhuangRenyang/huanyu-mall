@@ -103,3 +103,19 @@ export function buildDiscountLines(promo: CartPromoView): DiscountLine[] {
   }
   return [];
 }
+
+/** 营销功能开关（后端为准；默认全关）。 */
+export interface PromotionFeatures {
+  promotion: boolean;
+  voucher: boolean;
+  gift_card: boolean;
+}
+
+export async function fetchPromotionFeatures(): Promise<PromotionFeatures> {
+  const res = (await getStoreClient().getPromotionFeatures()) as Partial<PromotionFeatures>;
+  return {
+    promotion: res.promotion ?? false,
+    voucher: res.voucher ?? false,
+    gift_card: res.gift_card ?? false,
+  };
+}

@@ -2,7 +2,6 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   ClipboardList,
   Gift,
-  LayoutList,
   LogOut,
   Package,
   Settings,
@@ -41,7 +40,6 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: '营销',
     items: [
-      { to: '/marketing/overview', label: '活动总览', icon: LayoutList },
       { to: '/marketing/promotions', label: '促销', icon: Tag },
       { to: '/marketing/vouchers', label: '优惠券', icon: TicketPercent },
       { to: '/marketing/gift-cards', label: '礼品卡', icon: Gift },

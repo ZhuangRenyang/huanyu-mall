@@ -12,6 +12,8 @@ import type {
   GiftCardEventDTO,
   GiftCardEventType,
   ListQuery,
+  MarketingFeature,
+  MarketingFeatureDTO,
   PromotionDTO,
   PromotionPredicate,
   PromotionRepository,
@@ -27,6 +29,24 @@ type Db = NodePgDatabase<typeof schema>;
 
 export class DrizzlePromotionRepository implements PromotionRepository {
   constructor(private readonly db: Db) {}
+
+  // —— 功能开关（默认关闭）——
+
+  async listFeatureFlags(): Promise<MarketingFeatureDTO[]> {
+    const rows = await this.db.select().from(schema.promotionFeature);
+    return rows.map((r) => ({ feature: r.feature as MarketingFeature, enabled: r.enabled }));
+  }
+
+  async setFeatureEnabled(feature: MarketingFeature, enabled: boolean): Promise<void> {
+    const now = new Date();
+    await this.db
+      .insert(schema.promotionFeature)
+      .values({ feature, enabled, updatedAt: now })
+      .onConflictDoUpdate({
+        target: schema.promotionFeature.feature,
+        set: { enabled, updatedAt: now },
+      });
+  }
 
   // —— promotion ——
   async insertPromotion(input: CreatePromotionInput & { id: string }): Promise<PromotionDTO> {

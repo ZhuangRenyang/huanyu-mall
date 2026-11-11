@@ -92,6 +92,13 @@ export interface StockLocation {
   priority: number;
 }
 
+/** 营销功能级开关（默认全关，后台各页面独立打开）。 */
+export interface MarketingFeatureFlags {
+  promotion: boolean;
+  voucher: boolean;
+  gift_card: boolean;
+}
+
 /** 发货单（后台）：一张只对应一个仓（ADR-013 §3）。 */
 export interface AdminFulfillment {
   id: string;

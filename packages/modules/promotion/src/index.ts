@@ -14,6 +14,7 @@ export { evalPredicate, type PredicateContext } from "./services/predicate.js";
 export default Module("promotion", {
   service: (ctx) =>
     new PromotionService(new DrizzlePromotionRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql",
+    "migrations/0002_features.sql"],
   linkable,
 });

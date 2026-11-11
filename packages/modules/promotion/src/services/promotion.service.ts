@@ -20,6 +20,7 @@ import type {
   GiftCardEventDTO,
   IPromotionModuleService,
   ListQuery,
+  MarketingFeature,
   PromotionDTO,
   PromotionRepository,
   PromotionRuleDTO,
@@ -277,9 +278,30 @@ export class PromotionService implements IPromotionModuleService {
   }
 
   // —— 折扣计算（阶段 2：目录促销 catalogue 行级折扣；阶段 3：订单促销 order 订单级折扣；voucher/gift card 阶段 4-5 落地）——
+  // —— 功能开关（默认全部关闭；后台各页面独立打开）——
+
+  async getFeatureFlags(): Promise<Record<MarketingFeature, boolean>> {
+    const rows = await this.repo.listFeatureFlags();
+    const flags: Record<MarketingFeature, boolean> = {
+      promotion: false,
+      voucher: false,
+      gift_card: false,
+    };
+    for (const row of rows) flags[row.feature] = row.enabled;
+    return flags;
+  }
+
+  async setFeatureEnabled(feature: MarketingFeature, enabled: boolean): Promise<void> {
+    await this.repo.setFeatureEnabled(feature, enabled);
+  }
+
   async computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
     const now = new Date();
-    const active = await this.repo.listActiveCataloguePromotionsWithRules(now);
+    // 功能级总开关：关闭的功能整体不参与计算（默认全关，ADR-014）。
+    const flags = await this.getFeatureFlags();
+    const active = flags.promotion
+      ? await this.repo.listActiveCataloguePromotionsWithRules(now)
+      : [];
 
     const lineAdjustments: ComputeDiscountsResult["lineAdjustments"] = [];
 
@@ -318,7 +340,9 @@ export class PromotionService implements IPromotionModuleService {
     }
 
     // —— 订单促销（阶段 3）：订单级上下文求值，命中取折扣金额最大的一条（与目录促销一致）。——
-    const orderPromotions = await this.repo.listActiveOrderPromotionsWithRules(now);
+    const orderPromotions = flags.promotion
+      ? await this.repo.listActiveOrderPromotionsWithRules(now)
+      : [];
     let bestOrder: { amountMinor: bigint; promotionId: string; code: string | null } | null = null;
     for (const { promotion, rules } of orderPromotions) {
       for (const rule of rules) {
@@ -353,7 +377,7 @@ export class PromotionService implements IPromotionModuleService {
     // —— Voucher（阶段 4）：输码的订单级折扣，多码命中取折扣金额最大的一条（ADR-012 §3）。——
     let voucherDiscountMinor = 0n;
     const voucherDiscounts: ComputeDiscountsResult["voucherDiscounts"] = [];
-    if (ctx.voucherCodes.length > 0) {
+    if (flags.voucher && ctx.voucherCodes.length > 0) {
       let bestVoucher: { promotionId: string; code: string; amountMinor: bigint } | null = null;
       for (const code of ctx.voucherCodes) {
         const found = await this.repo.findVoucherCodeWithVoucherByCode(code);
@@ -390,7 +414,7 @@ export class PromotionService implements IPromotionModuleService {
 
     let giftCardAppliedMinor = 0n;
     const giftCardDiscounts: ComputeDiscountsResult["giftCardDiscounts"] = [];
-    for (const code of ctx.giftCardCodes) {
+    for (const code of flags.gift_card ? ctx.giftCardCodes : []) {
       if (remainingMinor <= 0n) break;
       const card = await this.repo.findGiftCardByCode(code);
       if (!card) continue; // 卡码不存在 → 静默跳过（预览语义，不抛错）

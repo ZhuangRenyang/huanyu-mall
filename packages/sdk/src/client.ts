@@ -149,6 +149,7 @@ export function createStoreClient(opts: ClientOptions) {
     setVoucherCodes: (cartId: string, b: SetVoucherCodesRequest) =>
       put(`/api/v1/store/carts/${cartId}/voucher-codes`, b),
     /** 输礼品卡码/清码：覆盖式设置（只传卡码凭证，抵扣金额由后端算，铁律 13）。 */
+    getPromotionFeatures: () => get("/api/v1/store/promotions/features"),
     setGiftCardCodes: (cartId: string, b: SetGiftCardCodesRequest) =>
       put(`/api/v1/store/carts/${cartId}/gift-card-codes`, b),
     listPaymentProviders: (cartId: string) =>
@@ -259,6 +260,9 @@ export function createAdminClient(opts: ClientOptions) {
     updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
       put(`/api/v1/admin/settings/payment-providers/${id}`, b),
     // —— 促销（阶段 6）——
+    getMarketingFeatures: () => get("/api/v1/admin/promotions/features"),
+    setMarketingFeature: (feature: "promotion" | "voucher" | "gift_card", enabled: boolean) =>
+      put(`/api/v1/admin/promotions/features/${feature}`, { enabled }),
     listPromotions: (q?: Query) => get("/api/v1/admin/promotions", q),
     createPromotion: (b: CreatePromotionRequest) => post("/api/v1/admin/promotions", b),
     getPromotion: (id: string) => get(`/api/v1/admin/promotions/${id}`),

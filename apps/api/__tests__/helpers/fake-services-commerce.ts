@@ -29,7 +29,16 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   ];
   const transfers = new Map<string, Record<string, unknown>>();
   let transferCounter = 0;
+  const featureFlags: Record<string, boolean> = {
+    promotion: false,
+    voucher: false,
+    gift_card: false,
+  };
   const promotion = {
+    getFeatureFlags: async () => ({ ...featureFlags }),
+    setFeatureEnabled: async (feature: string, enabled: boolean) => {
+      featureFlags[feature] = enabled;
+    },
     listVouchers: async ({ limit, offset }: { limit: number; offset: number }) => {
       const items = [...vouchers.values()].slice(offset, offset + limit);
       return { items, count: vouchers.size };

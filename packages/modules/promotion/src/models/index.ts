@@ -41,6 +41,13 @@ export const promotion = pgTable(
   (t) => [uniqueIndex("uq_promotion_code").on(t.code).where(sql`${t.code} IS NOT NULL`)],
 );
 
+/** 营销功能级开关（promotion / voucher / gift_card），默认全部关闭。 */
+export const promotionFeature = pgTable("promotion_feature", {
+  feature: text("feature").primaryKey(),
+  enabled: boolean("enabled").notNull().default(false),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const promotionRule = pgTable(
   "promotion_rule",
   {

@@ -11,6 +11,8 @@ import type {
   GiftCardEventDTO,
   GiftCardEventType,
   ListQuery,
+  MarketingFeature,
+  MarketingFeatureDTO,
   PromotionDTO,
   PromotionRepository,
   PromotionRuleDTO,
@@ -28,6 +30,20 @@ class InMemoryPromotionRepository implements PromotionRepository {
   voucherCodes = new Map<string, VoucherCodeDTO>();
   giftCards = new Map<string, GiftCardDTO>();
   giftCardEvents = new Map<string, GiftCardEventDTO[]>();
+  /** 测试默认三个功能全开；关闭语义单测里显式改。 */
+  featureFlags = new Map<MarketingFeature, boolean>([
+    ["promotion", true],
+    ["voucher", true],
+    ["gift_card", true],
+  ]);
+
+  async listFeatureFlags(): Promise<MarketingFeatureDTO[]> {
+    return [...this.featureFlags].map(([feature, enabled]) => ({ feature, enabled }));
+  }
+
+  async setFeatureEnabled(feature: MarketingFeature, enabled: boolean): Promise<void> {
+    this.featureFlags.set(feature, enabled);
+  }
 
   async insertPromotion(input: CreatePromotionInput & { id: string }): Promise<PromotionDTO> {
     const dto: PromotionDTO = {
@@ -425,6 +441,43 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
     expect(res.orderDiscountMinor).toBe(0n);
     expect(res.voucherDiscountMinor).toBe(0n);
     expect(res.giftCardAppliedMinor).toBe(0n);
+  });
+
+  it("功能开关：关闭后即使促销 active 也不命中；未落库时默认关闭", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const promo = await service.createPromotion({ name: "满 100 减 10", type: "order" });
+    await service.updatePromotion(promo.id, { status: "active" });
+    await service.addPromotionRule({
+      promotionId: promo.id,
+      predicate: { subtotalGte: 10000 },
+      rewardType: "fixed",
+      rewardValue: 1000n,
+      allocation: null,
+    });
+    const ctx = {
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 3, unitPriceMinor: 9900n }],
+      subtotalMinor: 29700n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+    };
+
+    expect((await service.computeDiscounts(ctx)).orderDiscountMinor).toBe(1000n);
+
+    await service.setFeatureEnabled("promotion", false);
+    const off = await service.computeDiscounts(ctx);
+    expect(off.orderDiscountMinor).toBe(0n);
+    expect(off.orderDiscounts).toHaveLength(0);
+
+    // 表里没有记录时按关闭处理（默认全关）
+    repo.featureFlags.clear();
+    expect(await service.getFeatureFlags()).toEqual({
+      promotion: false,
+      voucher: false,
+      gift_card: false,
+    });
   });
 
   it("computeDiscounts：percentage 折扣 = round(单价×数量×bps/10000)", async () => {
