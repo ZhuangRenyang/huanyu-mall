@@ -21,10 +21,12 @@ export {
   refundOrder,
   listOrderReservations,
   listOrderFulfillments,
+  getFulfillmentPlan,
 } from './admin-orders';
 export type {
   OrderReservationView,
   OrderFulfillmentView,
+  FulfillmentPlanView,
   ShipOrderOptions,
 } from './admin-orders';
 

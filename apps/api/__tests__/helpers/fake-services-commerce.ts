@@ -468,6 +468,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         {
           id: "rsv_1",
           inventory_item_id: "invitem_1",
+          variant_id: "var_1",
           stock_location_id: "loc_1",
           line_item_id: `${orderId}:var_1:loc_1`,
           order_id: orderId,

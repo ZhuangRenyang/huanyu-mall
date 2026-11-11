@@ -316,18 +316,22 @@ expect_num "预留条数（拆分 → 2 条）" "$(jqr '.data.count')" "2"
 expect_num "涉及仓数" "$(printf '%s' "$BODY" | jq '[.data.items[]?.stock_location_id] | unique | length')" "2"
 expect_num "预留总量" "$(printf '%s' "$BODY" | jq '[.data.items[]?.quantity] | add // 0')" "3"
 
-sec "7.1 拆分订单按仓分别发货"
-call GET "/admin/orders/$SPLIT_ORDER_ID" "" "$AUTH"
-SPLIT_LINE_ID="$(jqr '.data.line_items[0].id')"
-expect_num "拆分订单行数（脚本要求 1 行）" "$(printf '%s' "$BODY" | jq '.data.line_items | length')" "1"
+sec "7.1 发货计划自动化：每仓发什么由后端算，操作员只填运单号"
+call GET "/admin/orders/$SPLIT_ORDER_ID/fulfillment-plan" "" "$AUTH"
+expect_2xx "取发货计划" || exit 1
+expect_num "计划里的仓数" "$(jqr '.data.count')" "2"
+expect_num "计划总量" "$(printf '%s' "$BODY" | jq '[.data.plans[]?.total_quantity] | add // 0')" "3"
+expect_num "未匹配数量（应为 0）" "$(jqr '.data.unmatched_quantity')" "0"
 
 SHIPPED=0
 while read -r loc qty; do
   [[ -z "${loc:-}" ]] && continue
+  call GET "/admin/orders/$SPLIT_ORDER_ID/fulfillment-plan" "" "$AUTH"
+  ITEMS_JSON="$(printf '%s' "$BODY" | jq -c --arg loc "$loc" '.data.plans[] | select(.stock_location_id==$loc) | .items')"
   call POST "/admin/orders/$SPLIT_ORDER_ID/fulfillments" \
-    "{\"items\":[{\"order_line_item_id\":\"$SPLIT_LINE_ID\",\"quantity\":$qty}],\"stock_location_id\":\"$loc\"}" \
+    "{\"items\":$ITEMS_JSON,\"stock_location_id\":\"$loc\"}" \
     "$AUTH"
-  if expect_2xx "从仓 $loc 建发货单（$qty 件）"; then
+  if expect_2xx "从仓 $loc 建发货单（计划 $qty 件）"; then
     f_id="$(jqr '.data.id')"
     call POST "/admin/fulfillments/$f_id/shipments" \
       "{\"carrier_name\":\"顺丰速运\",\"tracking_number\":\"SF-SPLIT-$(date +%s)-$SHIPPED\"}" \
@@ -335,7 +339,7 @@ while read -r loc qty; do
     expect_2xx "仓 $loc 填运单发货"
     SHIPPED=$((SHIPPED + 1))
   fi
-done < <(printf '%s' "$BODY" >/dev/null; call GET "/admin/orders/$SPLIT_ORDER_ID/reservations" "" "$AUTH"; printf '%s' "$BODY" | jq -r '.data.items[] | "\(.stock_location_id) \(.quantity)"' | tr -d '\r')
+done < <(printf '%s' "$BODY" >/dev/null; call GET "/admin/orders/$SPLIT_ORDER_ID/fulfillment-plan" "" "$AUTH"; printf '%s' "$BODY" | jq -r '.data.plans[] | "\(.stock_location_id) \(.total_quantity)"' | tr -d '\r')
 
 expect_num "拆分订单发货单数" "$SHIPPED" "2"
 call GET "/admin/orders/$SPLIT_ORDER_ID/fulfillments" "" "$AUTH"

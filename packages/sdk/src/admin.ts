@@ -99,6 +99,13 @@ export interface MarketingFeatureFlags {
   gift_card: boolean;
 }
 
+/** 发货计划：某个仓要发的订单行与数量（后端按预留算好）。 */
+export interface FulfillmentPlan {
+  stock_location_id: string;
+  total_quantity: number;
+  items: Array<{ order_line_item_id: string; quantity: number }>;
+}
+
 /** 发货单（后台）：一张只对应一个仓（ADR-013 §3）。 */
 export interface AdminFulfillment {
   id: string;

@@ -73,7 +73,7 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     return (res.rows as Array<Record<string, unknown>>).map((r) => String(r.id));
   }
 
-  /** 按订单查未释放的预留明细（幂等回放：已有预留直接返回，不重复扣减）。 */
+  /** 按订单查未释放的预留明细（幂等回放 + 发货计划：附带 variant_id 以映射订单行）。 */
   async findReservationsByOrder(orderId: string): Promise<ReservationDTO[]> {
     const rows = await this.db
       .select()
@@ -84,7 +84,27 @@ export class DrizzleInventoryRepository implements InventoryRepository {
           eq(schema.reservationItem.status, "reserved"),
         ),
       );
-    return rows.map(toReservationDTO);
+    if (rows.length === 0) return [];
+    const itemIds = [...new Set(rows.map((r) => r.inventoryItemId))];
+    const variantByItem = await this.variantIdsByItemIds(itemIds);
+    return rows.map((r) => toReservationDTO(r, variantByItem.get(r.inventoryItemId) ?? null));
+  }
+
+  /** inventory_item_id → variant_id（同一物料挂多个变体时取字典序最小，保证确定性）。 */
+  private async variantIdsByItemIds(itemIds: string[]): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (itemIds.length === 0) return map;
+    const inClause = sql.join(itemIds.map((id) => sql`${id}`), sql`, `);
+    const res = await this.db.execute(
+      sql`SELECT inventory_item_id, variant_id FROM inventory_item_variant
+          WHERE inventory_item_id IN (${inClause}) AND deleted_at IS NULL
+          ORDER BY variant_id ASC`,
+    );
+    for (const row of res.rows as Array<Record<string, unknown>>) {
+      const itemId = String(row.inventory_item_id);
+      if (!map.has(itemId)) map.set(itemId, String(row.variant_id));
+    }
+    return map;
   }
 
   /** 列出可用仓库（按 priority 降序；一期单仓时取第一个即默认仓）。 */
@@ -528,10 +548,14 @@ function toLevelDTO(r: typeof schema.inventoryLevel.$inferSelect): InventoryLeve
   };
 }
 
-function toReservationDTO(r: typeof schema.reservationItem.$inferSelect): ReservationDTO {
+function toReservationDTO(
+  r: typeof schema.reservationItem.$inferSelect,
+  variantId: string | null = null,
+): ReservationDTO {
   return {
     id: r.id,
     inventory_item_id: r.inventoryItemId,
+    variant_id: variantId,
     stock_location_id: r.stockLocationId,
     line_item_id: r.lineItemId,
     order_id: r.orderId ?? null,

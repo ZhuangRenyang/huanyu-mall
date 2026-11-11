@@ -294,3 +294,30 @@ describe("营销功能开关（默认全关，ADR-014）", () => {
     }
   });
 });
+
+describe("发货计划（跨仓拆单自动化）", () => {
+  it("按预留映射订单行：给出每仓要发的行与数量，不再让前端分行", async () => {
+    const { buildApp } = await import("../src/app.js");
+    const { createFakeClock, createFakeRateLimit, makeDeps } = await import("./helpers/fake-deps.js");
+    const deps = makeDeps();
+    const fake = createFakeRateLimit(createFakeClock());
+    const app = await buildApp(deps, { rateLimitStoreFactory: fake.factory });
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/orders/ord_1/fulfillment-plan",
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.count).toBe(1);
+      expect(res.json().data.plans[0]).toEqual({
+        stock_location_id: "loc_1",
+        total_quantity: 1,
+        items: [{ order_line_item_id: "oli_1", quantity: 1 }],
+      });
+      expect(res.json().data.unmatched_quantity).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+});

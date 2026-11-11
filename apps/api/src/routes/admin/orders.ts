@@ -45,6 +45,56 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     reply.ok(mapAdminOrder(await deps.services.order.retrieveOrder(id)));
   });
 
+  /**
+   * 发货计划：按预留自动算出「每个仓发哪些订单行、各几件」。
+   *
+   * 拆分订单不再让操作员选仓、分行填数量——系统算好，人只填运单号。
+   * 预留若映射不到订单行（数据异常），计入 unmatched_quantity 供排查，不静默丢。
+   */
+  app.get("/api/v1/admin/orders/:id/fulfillment-plan", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const [order, reservations] = await Promise.all([
+      deps.services.order.retrieveOrder(id),
+      deps.services.inventory.listReservationsByOrder(id),
+    ]);
+
+    const lineByVariant = new Map(order.items.map((li) => [li.variant_id, li]));
+    const plans = new Map<
+      string,
+      { stockLocationId: string; items: Map<string, number>; total: number }
+    >();
+    let unmatched = 0;
+
+    for (const r of reservations) {
+      const line = r.variant_id ? lineByVariant.get(r.variant_id) : undefined;
+      if (!line) {
+        unmatched += r.quantity;
+        continue;
+      }
+      const plan = plans.get(r.stock_location_id) ?? {
+        stockLocationId: r.stock_location_id,
+        items: new Map<string, number>(),
+        total: 0,
+      };
+      plan.items.set(line.id, (plan.items.get(line.id) ?? 0) + r.quantity);
+      plan.total += r.quantity;
+      plans.set(r.stock_location_id, plan);
+    }
+
+    const items = [...plans.values()]
+      .sort((a, b) => a.stockLocationId.localeCompare(b.stockLocationId))
+      .map((p) => ({
+        stock_location_id: p.stockLocationId,
+        total_quantity: p.total,
+        items: [...p.items].map(([order_line_item_id, quantity]) => ({
+          order_line_item_id,
+          quantity,
+        })),
+      }));
+
+    reply.ok({ plans: items, count: items.length, unmatched_quantity: unmatched });
+  });
+
   // 已发货的仓与运单：跨仓订单靠它看「还差哪个仓没发」（ADR-013 §3）。
   app.get("/api/v1/admin/orders/:id/fulfillments", { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };

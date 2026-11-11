@@ -62,6 +62,8 @@ export interface ShippingPriceContext {
 export interface ReservationDTO {
   id: string;
   inventory_item_id: string;
+  /** 反查出的变体（用于把预留映射到订单行）。 */
+  variant_id: string | null;
   stock_location_id: string;
   line_item_id: string;
   order_id: string | null;

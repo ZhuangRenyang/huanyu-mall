@@ -167,6 +167,45 @@ export async function shipOrder(
   await client.createShipment(fulfillment.id, { carrier_name: carrier, tracking_number: trackingNumber });
 }
 
+/** 发货计划：某个仓要发的订单行与数量（后端按预留算好，前端不再分行）。 */
+export interface FulfillmentPlanView {
+  locationId: string;
+  totalQuantity: number;
+  items: Array<{ lineId: string; quantity: number }>;
+}
+
+export async function getFulfillmentPlan(orderId: string): Promise<FulfillmentPlanView[]> {
+  if (getAdminApiMode() !== 'live') {
+    const order = mockListOrders().find((o) => o.id === orderId);
+    if (!order) return [];
+    const byLoc = new Map<string, Array<{ lineId: string; quantity: number }>>();
+    mockReservations(orderId).forEach((r, i) => {
+      const line = order.items[i];
+      if (!line) return;
+      const list = byLoc.get(r.locationId) ?? [];
+      list.push({ lineId: line.id ?? `line_${i}`, quantity: line.quantity });
+      byLoc.set(r.locationId, list);
+    });
+    return [...byLoc].map(([locationId, items]) => ({
+      locationId,
+      items,
+      totalQuantity: items.reduce((n, i) => n + i.quantity, 0),
+    }));
+  }
+  const res = (await adminClient().getOrderFulfillmentPlan(orderId)) as {
+    plans?: Array<{
+      stock_location_id: string;
+      total_quantity: number;
+      items: Array<{ order_line_item_id: string; quantity: number }>;
+    }>;
+  };
+  return (res.plans ?? []).map((p) => ({
+    locationId: p.stock_location_id,
+    totalQuantity: p.total_quantity,
+    items: p.items.map((i) => ({ lineId: i.order_line_item_id, quantity: i.quantity })),
+  }));
+}
+
 /** 已发货的仓与运单（跨仓订单用它看「还差哪个仓没发」）。 */
 export interface OrderFulfillmentView {
   id: string;

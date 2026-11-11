@@ -12,15 +12,15 @@ import {
   formatMoney,
   cn,
 } from '@mall/ui';
-import { TextField, SelectField } from './field';
+import { TextField } from './field';
 import {
+  getFulfillmentPlan,
   listOrderFulfillments,
-  listOrderReservations,
   listStockLocations,
   refundOrder,
   shipOrder,
 } from '@/lib/admin-api';
-import type { OrderFulfillmentView, OrderReservationView, StockLocationView } from '@/lib/admin-api';
+import type { FulfillmentPlanView, OrderFulfillmentView, StockLocationView } from '@/lib/admin-api';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
 
@@ -79,16 +79,14 @@ function Timeline({ order }: { order: AdminOrder }) {
 /** 订单详情（Sheet 内）：状态/时间线 + 商品/金额 + 客户/地址/支付 + 发货/退款。 */
 export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated: () => void }) {
   const [showShip, setShowShip] = useState(false);
-  const [carrier, setCarrier] = useState(order.carrier ?? '');
-  const [tracking, setTracking] = useState(order.trackingNumber ?? '');
-  const [shipError, setShipError] = useState<string | null>(null);
-  const [reservations, setReservations] = useState<OrderReservationView[]>([]);
+  const [plans, setPlans] = useState<FulfillmentPlanView[]>([]);
   const [fulfillments, setFulfillments] = useState<OrderFulfillmentView[]>([]);
   const [locations, setLocations] = useState<StockLocationView[]>([]);
-  const [resLoading, setResLoading] = useState(false);
-  const [shipLocationId, setShipLocationId] = useState('');
-  /** 多仓时每行的分配件数（键 = 行下标，值 = 输入框原文）。 */
-  const [alloc, setAlloc] = useState<Record<string, string>>({});
+  /** 每个仓独立的承运商 / 运单号（一仓一单，运单号不能共用）。 */
+  const [forms, setForms] = useState<Record<string, { carrier: string; tracking: string }>>({});
+  const [pending, setPending] = useState<string | null>(null);
+  const [planLoaded, setPlanLoaded] = useState(false);
+  const [shipError, setShipError] = useState<string | null>(null);
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundInput, setRefundInput] = useState('');
   const [refundError, setRefundError] = useState<string | null>(null);
@@ -102,111 +100,72 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const ful = FUL_META[order.fulfillmentStatus];
   const idTail = order.id.slice(-4);
 
-  // —— 按仓发货（ADR-013 §3）：本单预留落在几个仓、已发过哪些仓，决定表单形态 ——
-  const reservedLocationIds = [...new Set(reservations.map((r) => r.locationId))];
-  const shippedLocationIds = new Set(
-    fulfillments.map((f) => f.locationId).filter((id): id is string => Boolean(id)),
-  );
-  const pendingLocationIds = reservedLocationIds.filter((id) => !shippedLocationIds.has(id));
-  const multiLocation = pendingLocationIds.length > 1;
-  // 预留读不到时退回订单状态判断，避免发货入口凭空消失。
-  const canShip =
-    reservedLocationIds.length > 0
-      ? pendingLocationIds.length > 0
-      : order.fulfillmentStatus === 'unfulfilled';
-  const reservedAtSelected = reservations
-    .filter((r) => r.locationId === shipLocationId)
-    .reduce((n, r) => n + r.quantity, 0);
-  const allocatedTotal = order.items.reduce((n, _it, i) => {
-    const qty = Number(alloc[String(i)] ?? '');
-    return n + (Number.isInteger(qty) && qty > 0 ? qty : 0);
-  }, 0);
+  // 后端按预留算出「每个仓发哪些行、各几件」；前端不再选仓、不再分行。
+  const canShip = order.fulfillmentStatus === 'unfulfilled' && (!planLoaded || plans.length > 0);
   const locationName = (id: string) => locations.find((l) => l.id === id)?.name ?? id;
 
   const loadShipContext = async () => {
-    // 任一接口不可用时退回旧行为（单仓简单表单 / 由后端裁决），不阻断发货入口。
-    const [res, locs, fulfs] = await Promise.all([
-      listOrderReservations(order.id).catch(() => [] as OrderReservationView[]),
-      listStockLocations().catch(() => [] as StockLocationView[]),
+    // 任一接口不可用时退回「无待发货」，不阻断页面其它操作。
+    const [p, f, l] = await Promise.all([
+      getFulfillmentPlan(order.id).catch(() => [] as FulfillmentPlanView[]),
       listOrderFulfillments(order.id).catch(() => [] as OrderFulfillmentView[]),
+      listStockLocations().catch(() => [] as StockLocationView[]),
     ]);
-    setReservations(res);
-    setLocations(locs);
-    setFulfillments(fulfs);
-    const shipped = new Set(fulfs.map((f) => f.locationId).filter(Boolean));
-    const firstPending = [...new Set(res.map((r) => r.locationId))].find((id) => !shipped.has(id));
-    setShipLocationId(firstPending ?? '');
-    return fulfs;
+    setPlans(p);
+    setFulfillments(f);
+    setLocations(l);
+    setPlanLoaded(true);
   };
 
   useEffect(() => {
-    setResLoading(true);
-    void loadShipContext().finally(() => setResLoading(false));
+    void loadShipContext();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在订单切换时重载
   }, [order.id]);
 
-  const openShip = async () => {
+  const openShip = () => {
     setShowShip(true);
     setShipError(null);
-    setAlloc({});
-    setResLoading(true);
-    await loadShipContext();
-    setResLoading(false);
+    void loadShipContext();
   };
 
-  const doShip = async () => {
-    setShipError(null);
-    if (!carrier.trim() || !tracking.trim()) {
-      setShipError('请填写承运商与运单号');
+  const formFor = (locationId: string) => forms[locationId] ?? { carrier: '', tracking: '' };
+  const setForm = (locationId: string, patch: Partial<{ carrier: string; tracking: string }>) => {
+    setForms((prev) => ({
+      ...prev,
+      [locationId]: { ...(prev[locationId] ?? { carrier: '', tracking: '' }), ...patch },
+    }));
+  };
+
+  const shipPlan = async (plan: FulfillmentPlanView) => {
+    const form = formFor(plan.locationId);
+    if (!form.carrier.trim() || !form.tracking.trim()) {
+      setShipError(`请填写「${locationName(plan.locationId)}」的承运商与运单号`);
       return;
     }
+    setPending(plan.locationId);
+    setShipError(null);
     try {
-      if (multiLocation) {
-        if (!shipLocationId) {
-          setShipError('请选择发货仓');
-          return;
-        }
-        const invalid = order.items.some((_it, i) => {
-          const raw = (alloc[String(i)] ?? '').trim();
-          if (!raw) return false;
-          const qty = Number(raw);
-          return !Number.isInteger(qty) || qty < 0;
-        });
-        if (invalid) {
-          setShipError('每行数量必须是非负整数');
-          return;
-        }
-        const items = order.items
-          .map((li, i) => ({ order_line_item_id: li.id ?? '', quantity: Number(alloc[String(i)] ?? '0') || 0 }))
-          .filter((it) => it.quantity > 0);
-        const allocated = items.reduce((n, it) => n + it.quantity, 0);
-        // 只校验总和（ADR-013 §3：发货数量必须等于该仓预留数量），够不够由后端裁决。
-        if (allocated !== reservedAtSelected) {
-          setShipError(`本仓需发 ${reservedAtSelected} 件，当前分配 ${allocated} 件`);
-          return;
-        }
-        await shipOrder(order.id, carrier.trim(), tracking.trim(), {
-          stockLocationId: shipLocationId,
-          items,
-        });
-      } else {
-        await shipOrder(
-          order.id,
-          carrier.trim(),
-          tracking.trim(),
-          pendingLocationIds.length === 1 ? { stockLocationId: pendingLocationIds[0] } : undefined,
-        );
-      }
-      setShowShip(false);
-      setAlloc({});
-      setShipError(null);
+      await shipOrder(order.id, form.carrier.trim(), form.tracking.trim(), {
+        stockLocationId: plan.locationId,
+        items: plan.items.map((i) => ({ order_line_item_id: i.lineId, quantity: i.quantity })),
+      });
       await loadShipContext();
-      flash('已发货');
+      flash(`已从${locationName(plan.locationId)}发货`);
       onUpdated();
     } catch (err) {
       setShipError(err instanceof Error ? err.message : '发货失败，请稍后重试');
+    } finally {
+      setPending(null);
     }
   };
+
+  const planLines = (plan: FulfillmentPlanView) =>
+    plan.items
+      .map((i) => {
+        const line = order.items.find((it) => it.id === i.lineId);
+        return `${line?.title ?? i.lineId} × ${i.quantity}`;
+      })
+      .join('、');
 
   const doRefund = async () => {
     if (refundInput.trim() !== idTail) {
@@ -296,11 +255,15 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
       )}
 
       <div className="flex flex-wrap gap-2 border-t border-border pt-4">
-        {order.fulfillmentStatus === 'unfulfilled' && (
+        {canShip ? (
           <Button size="sm" onClick={() => void openShip()}>
             <Truck className="size-4" strokeWidth={2} aria-hidden="true" />
             发货
           </Button>
+        ) : (
+          <span className="self-center text-xs text-muted-foreground" role="status">
+            已全部发货
+          </span>
         )}
         {order.paymentStatus === 'paid' && (
           <Button size="sm" variant="destructive" onClick={() => setRefundOpen(true)}>
@@ -312,73 +275,54 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
 
       {showShip && (
         <div className="space-y-3 rounded-lg border border-border bg-muted/40 p-3">
-          {resLoading && <p className="text-xs text-muted-foreground">正在查询本单的仓库预留…</p>}
-
-          <TextField id="ship-carrier" label="承运商" required value={carrier} onChange={(e) => setCarrier(e.target.value)} placeholder="如 顺丰国际" />
-          <TextField id="ship-tracking" label="运单号" required value={tracking} onChange={(e) => setTracking(e.target.value)} className="font-mono" />
-
-          {multiLocation && (
-            <>
-              <SelectField
-                id="ship-location"
-                label="发货仓"
-                required
-                value={shipLocationId}
-                onChange={(e) => {
-                  setShipLocationId(e.target.value);
-                  // 换仓等于换一组预留，之前的分配必须清空，避免拿旧数字骗过总和校验。
-                  setAlloc({});
-                  setShipError(null);
-                }}
-                options={pendingLocationIds.map((id) => ({ value: id, label: locationName(id) }))}
-              />
-              <p className="text-xs leading-5 text-muted-foreground">
-                本仓预留合计 <span className="tabular font-medium text-foreground">{reservedAtSelected}</span> 件，请分配到各商品行。
-                一张发货单只发一个仓，另一个仓请再发一次。
-              </p>
-              <div className="space-y-2">
-                {order.items.map((it, i) => (
+          <p className="text-xs leading-5 text-muted-foreground">
+            按仓自动拆分，一仓一单；填好每个仓的运单号即可分别发货。
+          </p>
+          {plans.length === 0 && (
+            <p className="text-sm text-muted-foreground">没有待发货的仓（可能已全部发完）。</p>
+          )}
+          {plans.map((plan) => {
+            const form = formFor(plan.locationId);
+            return (
+              <div key={plan.locationId} className="rounded-md border border-border bg-card p-3">
+                <p className="text-sm font-medium text-foreground">
+                  {locationName(plan.locationId)} · {plan.totalQuantity} 件
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{planLines(plan)}</p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   <TextField
-                    key={i}
-                    id={`ship-alloc-${i}`}
-                    label={`${it.title}${it.variantTitle ? ` · ${it.variantTitle}` : ''}（整单 ${it.quantity} 件）`}
-                    inputMode="numeric"
-                    value={alloc[String(i)] ?? ''}
-                    onChange={(e) => setAlloc((prev) => ({ ...prev, [String(i)]: e.target.value }))}
-                    placeholder="0"
-                    className="w-24"
+                    id={`ship-carrier-${plan.locationId}`}
+                    label="承运商"
+                    required
+                    value={form.carrier}
+                    onChange={(e) => setForm(plan.locationId, { carrier: e.target.value })}
+                    placeholder="如 顺丰国际"
                   />
-                ))}
+                  <TextField
+                    id={`ship-tracking-${plan.locationId}`}
+                    label="运单号"
+                    required
+                    value={form.tracking}
+                    onChange={(e) => setForm(plan.locationId, { tracking: e.target.value })}
+                    className="font-mono"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="mt-2"
+                  disabled={pending === plan.locationId}
+                  onClick={() => void shipPlan(plan)}
+                >
+                  {pending === plan.locationId ? '发货中…' : `从${locationName(plan.locationId)}发货`}
+                </Button>
               </div>
-              <p
-                className={cn(
-                  'text-xs',
-                  allocatedTotal === reservedAtSelected ? 'text-muted-foreground' : 'text-destructive',
-                )}
-                role="status"
-              >
-                已分配 <span className="tabular">{allocatedTotal}</span> / {reservedAtSelected} 件
-              </p>
-            </>
-          )}
-
-          {!resLoading && reservations.length === 0 && (
-            <p className="text-xs text-muted-foreground">未查询到预留明细，按整单发货（单仓兼容）。</p>
-          )}
-
+            );
+          })}
           {shipError && (
             <p className="text-xs text-destructive" role="alert">
               {shipError}
             </p>
           )}
-          <div className="flex gap-2">
-            <Button size="sm" onClick={() => void doShip()} disabled={resLoading}>
-              确认发货
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setShowShip(false)}>
-              取消
-            </Button>
-          </div>
         </div>
       )}
 
