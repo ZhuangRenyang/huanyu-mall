@@ -39,14 +39,19 @@ export function setupResponse(app: FastifyInstance): void {
       return;
     }
 
-    if (isDomainError(err)) {
-      const status = httpStatusFor(err.code);
+    // workflow 会把业务错误包成 WorkflowFailedError（cause 才是 DomainError）。
+    // 不拆包的话，「库存不足」「券已用完」这类正常业务失败都会变成 500，
+    // 前端拿不到可提示的错误码，日志里也只剩一层壳。
+    const cause = (err as { cause?: unknown }).cause;
+    const domainErr = isDomainError(err) ? err : isDomainError(cause) ? cause : null;
+    if (domainErr) {
+      const status = httpStatusFor(domainErr.code);
       const body: Envelope = {
-        code: err.code,
+        code: domainErr.code,
         data: null,
-        message: err.message,
+        message: domainErr.message,
         requestId,
-        ...(err.details !== undefined ? { details: err.details as FieldError[] } : {}),
+        ...(domainErr.details !== undefined ? { details: domainErr.details as FieldError[] } : {}),
       };
       return reply.code(status).send(body);
     }

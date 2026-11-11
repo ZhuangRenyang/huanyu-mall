@@ -26,6 +26,9 @@ BASE="${BASE:-http://localhost/api/v1}"
 ADMIN="${ADMIN:-admin}"
 ADMIN_PW="${ADMIN_PW:-123456}"
 VAR_ID="${VAR_ID:-}"
+PRODUCT_HANDLE="${PRODUCT_HANDLE:-wireless-mouse}"
+# 下单限流窗口等待（默认 0；刚跑过其它下单验收时设 61）
+RATE_WAIT="${RATE_WAIT:-0}"
 
 PASS=0
 FAIL=0
@@ -41,6 +44,10 @@ CARD_CODE=""
 CART_ID=""
 ORDER_ID=""
 CLEANED=0
+FEATURES_SAVED=0
+F_PROMO="false"
+F_VOUCHER="false"
+F_GIFT="false"
 
 ok()   { printf '  [通过] %s\n' "$*"; PASS=$((PASS + 1)); }
 bad()  { printf '  [失败] %s\n' "$*"; FAIL=$((FAIL + 1)); }
@@ -96,6 +103,12 @@ expect_jq_true() {
 cleanup() {
   [[ "$CLEANED" -eq 1 ]] && return 0
   CLEANED=1
+  # 恢复营销功能开关原值（默认全关，不能因为跑过验收就把功能留在开启状态）
+  if [[ "$FEATURES_SAVED" -eq 1 ]]; then
+    call PUT "/admin/promotions/features/promotion" "{\"enabled\":$F_PROMO}" auth >/dev/null 2>&1
+    call PUT "/admin/promotions/features/voucher" "{\"enabled\":$F_VOUCHER}" auth >/dev/null 2>&1
+    call PUT "/admin/promotions/features/gift_card" "{\"enabled\":$F_GIFT}" auth >/dev/null 2>&1
+  fi
   # 停用（不是删除）：保留记录可审计，同时立即不再命中，防止污染真实订单。
   if [[ -n "$PROMO_ID" ]]; then
     call POST "/admin/promotions/$PROMO_ID/deactivate" "" auth >/dev/null 2>&1
@@ -137,6 +150,40 @@ else
   exit 1
 fi
 AUTH=1
+
+# 营销功能默认全关（ADR-014）：跑促销验收前临时全开，退出时恢复原值。
+call GET "/admin/promotions/features" "" "$AUTH"
+if [[ "$CODE" =~ ^2[0-9][0-9]$ ]]; then
+  F_PROMO="$(jqr '.data.promotion')"
+  F_VOUCHER="$(jqr '.data.voucher')"
+  F_GIFT="$(jqr '.data.gift_card')"
+  FEATURES_SAVED=1
+  for f in promotion voucher gift_card; do
+    call PUT "/admin/promotions/features/$f" '{"enabled":true}' "$AUTH" >/dev/null
+  done
+  ok "已临时开启促销/优惠券/礼品卡（脚本退出时恢复原值）"
+else
+  skip "读不到功能开关，按已开启继续（老版本后端）"
+fi
+
+# 库存兜底：前面的验收可能把这款商品买空；补到至少 4 件，脚本可重复执行。
+call GET "/admin/products?limit=100" "" "$AUTH"
+PID="$(printf '%s' "$BODY" | jq -r --arg h "$PRODUCT_HANDLE" '.data.items[]? | select(.handle==$h) | .id' 2>/dev/null | tr -d '\r' | head -1)"
+if [[ -n "$PID" && "$PID" != "null" ]]; then
+  call GET "/admin/products/$PID" "" "$AUTH"
+  SKU="$(jqr '.data.variants[0].sku')"
+  call GET "/admin/inventory-levels?limit=100" "" "$AUTH"
+  ROW="$(printf '%s' "$BODY" | jq -c --arg sku "$SKU" '.data.items[]? | select(.sku==$sku)' 2>/dev/null | tr -d '\r' | head -1)"
+  if [[ -n "$ROW" ]]; then
+    LVL_ID="$(printf '%s' "$ROW" | jq -r '.id')"
+    AVAIL="$(printf '%s' "$ROW" | jq -r '.available_quantity')"
+    if [[ "$AVAIL" =~ ^[0-9]+$ ]] && ((AVAIL < 4)); then
+      DELTA=$((4 - AVAIL))
+      call PUT "/admin/inventory-levels/$LVL_ID" "{\"delta\":$DELTA,\"reason\":\"e2e 备货\"}" "$AUTH" >/dev/null
+      ok "库存补货 $DELTA 件（可重复执行）"
+    fi
+  fi
+fi
 
 # 清掉上次异常退出遗留的 e2e 促销（名字前缀 e2e-），避免同维度取最大时干扰断言。
 call GET "/admin/promotions?limit=100&offset=0" "" "$AUTH"
@@ -244,7 +291,7 @@ expect_jq_true "折扣明细含券码 $VOUCHER_CODE（type=voucher）" \
 # 6. 后台建礼品卡 → 店面输卡码
 # ------------------------------------------------------------------ #
 sec "6. 后台建礼品卡（余额 ¥50，币种跟随购物车）→ 店面输卡码"
-call POST "/admin/promotions/gift-cards" "{\"currency\":\"$CURRENCY\",\"initial_balance\":5000}"
+call POST "/admin/promotions/gift-cards" "{\"currency\":\"$CURRENCY\",\"initial_balance\":5000}" "$AUTH"
 expect_2xx "创建礼品卡" || exit 1
 CARD_ID="$(jqr '.data.id')"
 CARD_CODE="$(jqr '.data.code')"
@@ -282,6 +329,11 @@ fi
 # ------------------------------------------------------------------ #
 # 8. 下单
 # ------------------------------------------------------------------ #
+if ((RATE_WAIT > 0)); then
+  printf '\n  等待 %s 秒让下单限流窗口重置…\n' "$RATE_WAIT"
+  sleep "$RATE_WAIT"
+fi
+
 sec "8. 下单（幂等键）"
 OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: promo-e2e-$(date +%s)" -d '{}' 2>&1)"

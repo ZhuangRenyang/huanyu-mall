@@ -94,6 +94,37 @@ expect_reject() {
   fi
 }
 
+# 真实支付：订单必须先付款，发货才会推进状态（ADR-015 只处理 paid / partial）。
+# 用 e2e-regression 同一条链路：支付商 → 会话 → 授权 → 扣款，再轮询订单变 paid。
+pay_order() {
+  local cart_id="$1" order_id="$2" provider sid pid status
+  call GET "/store/payment-providers"
+  provider="$(jqr '(.data.items // .data // [])[0].id')"
+  if [[ -z "$provider" || "$provider" == "null" ]]; then
+    bad "没有可用的支付方式，无法完成支付"
+    return 1
+  fi
+  call POST "/store/payment-sessions" "{\"cart_id\":\"$cart_id\",\"provider_id\":\"$provider\"}"
+  expect_2xx "创建支付会话" || return 1
+  sid="$(jqr '.data.id')"
+  call POST "/store/payment-sessions/$sid/authorize" "{}"
+  expect_2xx "支付授权" || return 1
+  pid="$(jqr '.data.id')"
+  call POST "/store/payments/$pid/capture" "{\"idempotency_key\":\"e2e-cap-$(date +%s%N)\"}"
+  expect_2xx "支付扣款" || return 1
+  for _ in $(seq 1 30); do
+    call GET "/admin/orders/$order_id" "" "$AUTH"
+    status="$(jqr '.data.status')"
+    if [[ "$status" == "paid" || "$status" == "partially_fulfilled" ]]; then
+      ok "订单已支付（$status）"
+      return 0
+    fi
+    sleep 0.3
+  done
+  bad "订单未在预期时间内变为已支付（当前 $status）"
+  return 1
+}
+
 # 读某仓某物料的 level 字段：level_field <location_id> <field>
 level_field() {
   local loc="$1" field="$2"
@@ -257,6 +288,7 @@ BODY="${OUT%$'\n'*}"
 expect_2xx "结账下单" || exit 1
 ORDER_ID="$(jqr '.data.id')"
 ok "订单 $ORDER_ID"
+pay_order "$CART_ID" "$ORDER_ID" || exit 1
 
 call GET "/admin/orders/$ORDER_ID/reservations" "" "$AUTH"
 expect_2xx "查订单预留" || exit 1
@@ -312,6 +344,7 @@ CODE="${OUT##*$'\n'}"
 BODY="${OUT%$'\n'*}"
 expect_2xx "拆分兜底下单" || exit 1
 SPLIT_ORDER_ID="$(jqr '.data.id')"
+pay_order "$CART2_ID" "$SPLIT_ORDER_ID" || exit 1
 
 call GET "/admin/orders/$SPLIT_ORDER_ID/reservations" "" "$AUTH"
 expect_2xx "查拆分订单预留" || exit 1
