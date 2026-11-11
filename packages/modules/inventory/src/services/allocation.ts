@@ -1,13 +1,17 @@
 /**
- * 多仓分配算法（ADR-013 §1）：纯函数，不碰数据库、不抛领域错误。
+ * 多仓分配算法（ADR-013 §1，2026-11-11 用户决策：**优先单仓，不够才拆**）。
+ * 纯函数，不碰数据库、不抛领域错误。
  *
- * 规则：
- * 1. 仓按 priority **降序**（大者优先，与既有 `listLocations()` 的 ORDER BY priority DESC 一致）
- *    逐个扣减可用量；同优先级按调用方给的 `order`（仓库创建顺序）升序，老仓优先——
- *    保证默认仓不会被后来新建的同优先级仓抢走；
- * 2. 单行项可跨多仓 → 每条 allocation 一个 location；
- * 3. 任一 SKU 所有仓合计可用量不足 → 整单失败（ok:false），不留部分分配；
- * 4. 同一 variant 在 items 中出现多次时先按 variant 汇总需求量。
+ * 规则（两段式）：
+ * 1. **先找能整单满足的仓**：按 priority 降序（大者优先，与 listLocations 一致）
+ *    挑第一个能一次性满足所有 SKU 需求的仓；同优先级按 order 升序（老仓优先）。
+ *    命中时一单只产生 1 条预留、1 张发货单——这是绝大多数订单的路径。
+ * 2. **找不到才拆单**：退化为按优先级贪心扣减，可从多个仓凑；
+ *    此时一单会产生多条预留、多张发货单。
+ * 3. 合计仍不足 → 整单失败；`available` 返回各仓合计（因为允许拆，合计才是有意义的上限）。
+ *
+ * 为什么不是纯单仓：两仓各一半、凑起来够的订单会被直接拒掉，白白丢单。
+ * 为什么不是纯拆单：日常订单动不动就拆成两个包裹，发货、运费、客服都变复杂。
  */
 
 export interface AllocationItem {
@@ -35,50 +39,79 @@ export type AllocationPlan =
   | { ok: true; allocations: PlannedAllocation[] }
   | { ok: false; variantId: string; requested: number; available: number };
 
+interface LocationBucket {
+  stockLocationId: string;
+  priority: number;
+  order: number;
+  availableByItem: Map<string, number>;
+}
+
 export function planAllocation(
   levels: LevelSnapshot[],
   items: AllocationItem[],
   itemIdByVariant: Map<string, string>,
 ): AllocationPlan {
-  // 同一 variant 多行 → 汇总需求，避免第一行把库存吃光后第二行误判不足
+  // 同一 variant 多行 → 汇总需求
   const needByVariant = new Map<string, number>();
   for (const item of items) {
     needByVariant.set(item.variantId, (needByVariant.get(item.variantId) ?? 0) + item.quantity);
   }
+  if (needByVariant.size === 0) return { ok: true, allocations: [] };
 
-  const levelsByItem = new Map<string, LevelSnapshot[]>();
+  // 按仓聚合可用量
+  const buckets = new Map<string, LocationBucket>();
   for (const level of levels) {
-    const list = levelsByItem.get(level.inventoryItemId) ?? [];
-    list.push(level);
-    levelsByItem.set(level.inventoryItemId, list);
+    const bucket = buckets.get(level.stockLocationId) ?? {
+      stockLocationId: level.stockLocationId,
+      priority: level.priority,
+      order: level.order ?? 0,
+      availableByItem: new Map<string, number>(),
+    };
+    bucket.availableByItem.set(level.inventoryItemId, level.availableQuantity);
+    buckets.set(level.stockLocationId, bucket);
   }
-  // priority 降序（大者优先）；同优先级按 order 升序（老仓优先），最后按 locationId 兜底确定性
-  for (const list of levelsByItem.values()) {
-    list.sort(
-      (a, b) =>
-        b.priority - a.priority ||
-        (a.order ?? 0) - (b.order ?? 0) ||
-        a.stockLocationId.localeCompare(b.stockLocationId),
-    );
+  const ordered = [...buckets.values()].sort(
+    (a, b) =>
+      b.priority - a.priority ||
+      a.order - b.order ||
+      a.stockLocationId.localeCompare(b.stockLocationId),
+  );
+
+  const availableFor = (loc: LocationBucket, variantId: string): number => {
+    const itemId = itemIdByVariant.get(variantId);
+    return itemId ? (loc.availableByItem.get(itemId) ?? 0) : 0;
+  };
+
+  // —— 第一段：优先单仓整单满足 ——
+  for (const loc of ordered) {
+    const fits = [...needByVariant].every(([variantId, needed]) => availableFor(loc, variantId) >= needed);
+    if (!fits) continue;
+    return {
+      ok: true,
+      allocations: [...needByVariant].map(([variantId, quantity]) => ({
+        variantId,
+        stockLocationId: loc.stockLocationId,
+        quantity,
+      })),
+    };
   }
 
+  // —— 第二段：没有单仓够，退化为跨仓拆分（按优先级贪心） ——
   const allocations: PlannedAllocation[] = [];
   for (const [variantId, requested] of needByVariant) {
-    const itemId = itemIdByVariant.get(variantId);
-    const candidates = itemId ? (levelsByItem.get(itemId) ?? []) : [];
     let remaining = requested;
-    for (const level of candidates) {
-      if (remaining <= 0) break;
-      if (level.availableQuantity <= 0) continue;
-      const take = Math.min(remaining, level.availableQuantity);
-      allocations.push({ variantId, stockLocationId: level.stockLocationId, quantity: take });
+    let total = 0;
+    for (const loc of ordered) {
+      const available = availableFor(loc, variantId);
+      total += available;
+      if (remaining <= 0 || available <= 0) continue;
+      const take = Math.min(remaining, available);
+      allocations.push({ variantId, stockLocationId: loc.stockLocationId, quantity: take });
       remaining -= take;
     }
     if (remaining > 0) {
-      const available = candidates.reduce((sum, l) => sum + Math.max(0, l.availableQuantity), 0);
-      return { ok: false, variantId, requested, available };
+      return { ok: false, variantId, requested, available: total };
     }
   }
-
   return { ok: true, allocations };
 }

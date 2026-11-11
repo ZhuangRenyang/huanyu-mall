@@ -367,35 +367,50 @@ describe("InventoryService.allocateAndReserve（ADR-013 多仓分配）", () => 
     expect(result.reservationIds).toHaveLength(1);
   });
 
-  it("跨两仓按 priority 拆分：两条预留、两仓各自扣减", async () => {
-    const { service, repo, item, locA, locB } = await setupTwoWarehouses(3, 4);
+  it("主仓不足但备用仓能整单满足 → 整单从备用仓预留（不拆单）", async () => {
+    const { service, repo, item, locA, locB } = await setupTwoWarehouses(2, 5);
     const result = await service.allocateAndReserve({
       orderId: "ord_2",
-      items: [{ variantId: "var_1", quantity: 6 }],
+      items: [{ variantId: "var_1", quantity: 3 }],
     });
 
     expect(result.allocations).toEqual([
-      { variantId: "var_1", stockLocationId: locA.id, quantity: 3 },
       { variantId: "var_1", stockLocationId: locB.id, quantity: 3 },
     ]);
-    expect(result.reservationIds).toHaveLength(2);
+    expect(result.reservationIds).toHaveLength(1);
 
     const levelA = repo.levels.get(`${item.id}:${locA.id}`)!;
     const levelB = repo.levels.get(`${item.id}:${locB.id}`)!;
-    expect([levelA.reserved_quantity, levelA.available_quantity]).toEqual([3, 0]);
-    expect([levelB.reserved_quantity, levelB.available_quantity]).toEqual([3, 1]);
+    expect([levelA.reserved_quantity, levelA.available_quantity]).toEqual([0, 2]);
+    expect([levelB.reserved_quantity, levelB.available_quantity]).toEqual([3, 2]);
   });
 
-  it("合计不足 → 抛 insufficientStock，且不产生任何预留、库存不动", async () => {
+  it("没有单仓能整单满足但合计够 → 退回跨仓拆分：两条预留、两仓各自扣减", async () => {
     const { service, repo, item, locA, locB } = await setupTwoWarehouses(2, 3);
+    const result = await service.allocateAndReserve({
+      orderId: "ord_3",
+      items: [{ variantId: "var_1", quantity: 4 }],
+    });
+
+    expect(result.allocations).toEqual([
+      { variantId: "var_1", stockLocationId: locA.id, quantity: 2 },
+      { variantId: "var_1", stockLocationId: locB.id, quantity: 2 },
+    ]);
+    expect(result.reservationIds).toHaveLength(2);
+    expect(repo.levels.get(`${item.id}:${locA.id}`)!.available_quantity).toBe(0);
+    expect(repo.levels.get(`${item.id}:${locB.id}`)!.available_quantity).toBe(1);
+  });
+
+  it("两仓合计仍不足 → 拒绝，零预留、库存不动", async () => {
+    const { service, repo, item, locA, locB } = await setupTwoWarehouses(2, 2);
 
     await expect(
-      service.allocateAndReserve({ orderId: "ord_3", items: [{ variantId: "var_1", quantity: 6 }] }),
+      service.allocateAndReserve({ orderId: "ord_3b", items: [{ variantId: "var_1", quantity: 5 }] }),
     ).rejects.toBeInstanceOf(DomainError);
 
     expect(repo.reservations.size).toBe(0);
     expect(repo.levels.get(`${item.id}:${locA.id}`)!.available_quantity).toBe(2);
-    expect(repo.levels.get(`${item.id}:${locB.id}`)!.available_quantity).toBe(3);
+    expect(repo.levels.get(`${item.id}:${locB.id}`)!.available_quantity).toBe(2);
   });
 
   it("幂等：同 orderId 重放返回同一批 reservationIds，不重复扣减", async () => {

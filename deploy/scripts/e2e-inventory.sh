@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# e2e-inventory.sh — 二期多仓深化真机端到端验收（ADR-013）
+# e2e-inventory.sh — 二期多仓真机端到端验收（ADR-013，单仓满足策略）
 #
 # 覆盖：
-#   建第二个仓 → 把库存拆到两仓 → 跨仓下单（一单两仓预留）
-#   → 不指定仓发货被拒绝 → 按仓分别发货 → 两仓各自出库
-#   → 调拨（正常搬迁 / 可用量不足被拒）
+#   建第二个仓 → 主仓只留 1 件 → 下单 2 件（主仓不够）
+#   → 整单从备用仓预留（**不拆单**）→ 自动单仓发货
+#   → 两仓各只剩 1 件时下单 2 件必须被拒（没有单仓能整单满足）
+#   → 调拨护栏（可用量不足被拒）
 #   → 并发抢库存（10 单各要 3 件、库存 10，只能成功 3 单）
 #
 # 设计要点：
-#   1. 断言用「库存差值」而不是写死数量：跑之前先读 level，跑完对比。
-#   2. 并发是核心：直接证明不会超卖（成功后 reserved 恰好等于被抢走的量）。
-#   3. 退出时取消未完成的调拨单；测试仓保留（后端无删除仓库接口），
-#      但把剩余库存调回主仓、优先级置 0，不影响后续真实订单。
-#   4. 需要 curl + jq；本脚本会真实下单，只在验收环境跑。
+#   1. 断言用「库存差值」而不是写死数量：脚本可重复执行。
+#   2. 单仓满足：任何时刻一单最多一条预留、一张发货单。
+#   3. 退出时取消未完成调拨、把测试仓库存调回主仓、优先级置 0
+#      （仓库无删除接口，故保留空仓）。
+#   4. 需要 curl + jq；会真实下单，只在验收环境跑。
 #
 # 用法：
 #   bash deploy/scripts/e2e-inventory.sh
-#   BASE=... ADMIN=... ADMIN_PW=... bash deploy/scripts/e2e-inventory.sh
+#   BASE=... ADMIN=... ADMIN_PW=... PRODUCT_HANDLE=... bash deploy/scripts/e2e-inventory.sh
 set -uo pipefail
 
 BASE="${BASE:-http://localhost/api/v1}"
@@ -40,6 +41,7 @@ BACKUP_LOC=""
 BACKUP_NAME=""
 ITEM_ID=""
 LEVEL_MAIN_ID=""
+LEVEL_BACKUP_ID=""
 PENDING_TRANSFER=""
 CLEANED=0
 
@@ -100,14 +102,26 @@ level_field() {
     '.data.items[]? | select(.inventory_item_id==$item) | .[$f]' 2>/dev/null | tr -d '\r' | head -1
 }
 
+# 把某仓可用量调到指定值（按当前预留反推 delta）：set_available <loc> <level_id> <target>
+set_available() {
+  local loc="$1" level_id="$2" target="$3"
+  local stocked reserved delta
+  stocked="$(level_field "$loc" stocked_quantity)"
+  reserved="$(level_field "$loc" reserved_quantity)"
+  delta=$(( (reserved + target) - stocked ))
+  if ((delta != 0)); then
+    call PUT "/admin/inventory-levels/$level_id" "{\"delta\":$delta,\"reason\":\"e2e 备货\"}" "$AUTH" >/dev/null
+  fi
+  level_field "$loc" available_quantity
+}
+
 cleanup() {
   [[ "$CLEANED" -eq 1 ]] && return 0
   CLEANED=1
-  # 取消未完成的调拨单（避免留下 pending 噪音）
   if [[ -n "$PENDING_TRANSFER" ]]; then
     call POST "/admin/inventory-transfers/$PENDING_TRANSFER/cancel" "" auth >/dev/null 2>&1
   fi
-  # 把测试仓剩余库存调回主仓（不留悬空库存）；仓本身无删除接口，保留并置优先级 0
+  # 把测试仓剩余库存调回主仓，不留悬空库存；仓库无删除接口，保留并置优先级 0
   if [[ -n "$BACKUP_LOC" && -n "$MAIN_LOC" && -n "$ITEM_ID" ]]; then
     local left
     left="$(level_field "$BACKUP_LOC" stocked_quantity)"
@@ -121,7 +135,7 @@ cleanup() {
     fi
     call PATCH "/admin/stock-locations/$BACKUP_LOC" '{"priority":0}' "$AUTH" >/dev/null 2>&1
   fi
-  rm -rf "$TMPDIR_RUN"
+  rm -rf "$TMPDIR_RUN" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -144,7 +158,7 @@ AUTH=1
 # ------------------------------------------------------------------ #
 sec "2. 取可售变体与现有仓库/库存"
 call GET "/admin/products?limit=100" "" "$AUTH"
-PRODUCT_ID="$(printf '%s' "$BODY" | jq -r --arg h "$PRODUCT_HANDLE" '.data.items[]? | select(.handle==$h) | .id' 2>/dev/null | head -1)"
+PRODUCT_ID="$(printf '%s' "$BODY" | jq -r --arg h "$PRODUCT_HANDLE" '.data.items[]? | select(.handle==$h) | .id' 2>/dev/null | tr -d '\r' | head -1)"
 if [[ -z "$PRODUCT_ID" || "$PRODUCT_ID" == "null" ]]; then
   bad "找不到 handle=$PRODUCT_HANDLE 的商品（可用 PRODUCT_HANDLE= 覆盖）"
   exit 1
@@ -156,39 +170,34 @@ ITEM_SKU="$(jqr '.data.variants[0].sku')"
 ok "变体 $VAR_ID（sku=$ITEM_SKU）"
 
 call GET "/admin/stock-locations" "" "$AUTH"
-MAIN_LOC="$(printf '%s' "$BODY" | jq -r '.data.items | sort_by(-.priority) | .[0].id' 2>/dev/null)"
-MAIN_PRIORITY="$(printf '%s' "$BODY" | jq -r '.data.items | sort_by(-.priority) | .[0].priority' 2>/dev/null)"
+MAIN_LOC="$(printf '%s' "$BODY" | jq -r '.data.items | sort_by(-.priority) | .[0].id' 2>/dev/null | tr -d '\r')"
+MAIN_PRIORITY="$(printf '%s' "$BODY" | jq -r '.data.items | sort_by(-.priority) | .[0].priority' 2>/dev/null | tr -d '\r')"
 [[ -n "$MAIN_LOC" && "$MAIN_LOC" != "null" ]] || { bad "没有可用仓库"; exit 1; }
 ok "主仓 $MAIN_LOC（priority=$MAIN_PRIORITY）"
 
 call GET "/admin/inventory-levels?location_id=$MAIN_LOC&limit=100" "" "$AUTH"
-ROW="$(printf '%s' "$BODY" | jq -c --arg sku "$ITEM_SKU" '.data.items[]? | select(.sku==$sku)' 2>/dev/null | head -1)"
+ROW="$(printf '%s' "$BODY" | jq -c --arg sku "$ITEM_SKU" '.data.items[]? | select(.sku==$sku)' 2>/dev/null | tr -d '\r' | head -1)"
 if [[ -z "$ROW" ]]; then
   bad "主仓没有 sku=$ITEM_SKU 的库存行（确认 seed 已导入）"
   exit 1
 fi
 ITEM_ID="$(printf '%s' "$ROW" | jq -r '.inventory_item_id')"
 LEVEL_MAIN_ID="$(printf '%s' "$ROW" | jq -r '.id')"
-MAIN_STOCKED_BEFORE="$(printf '%s' "$ROW" | jq -r '.stocked_quantity')"
 MAIN_AVAIL_BEFORE="$(printf '%s' "$ROW" | jq -r '.available_quantity')"
-ok "物料 $ITEM_ID，主仓在库 $MAIN_STOCKED_BEFORE / 可用 $MAIN_AVAIL_BEFORE"
+ok "物料 $ITEM_ID，主仓可用 $MAIN_AVAIL_BEFORE"
+
 if ! is_int "$MAIN_AVAIL_BEFORE"; then
   bad "可用量读取失败：$MAIN_AVAIL_BEFORE"
   exit 1
 fi
-if ((MAIN_AVAIL_BEFORE < 2)); then
-  # 可重复执行：把主仓补到「已预留 + 2」，只加 2 件，不动预留
-  RESERVED_NOW="$(level_field "$MAIN_LOC" reserved_quantity)"
-  NEED_DELTA=$(( (RESERVED_NOW + 2) - MAIN_STOCKED_BEFORE ))
-  call PUT "/admin/inventory-levels/$LEVEL_MAIN_ID" "{\"delta\":$NEED_DELTA,\"reason\":\"e2e 补货到 2 件\"}" "$AUTH"
-  expect_2xx "主仓补货 $NEED_DELTA 件（可重复执行）" || exit 1
-  MAIN_AVAIL_BEFORE="$(level_field "$MAIN_LOC" available_quantity)"
-  MAIN_STOCKED_BEFORE="$(level_field "$MAIN_LOC" stocked_quantity)"
-  expect_num "补货后主仓可用" "$MAIN_AVAIL_BEFORE" "2"
+# 至少留 3 件：转 2 件到备用仓后，主仓 1 件、备用仓 2 件，才能验证「整单从备用仓发」
+if ((MAIN_AVAIL_BEFORE < 3)); then
+  MAIN_AVAIL_BEFORE="$(set_available "$MAIN_LOC" "$LEVEL_MAIN_ID" 3)"
+  expect_num "补货后主仓可用" "$MAIN_AVAIL_BEFORE" "3"
 fi
 
 # ------------------------------------------------------------------ #
-sec "3. 建第二个仓，把库存拆过去（主仓只留 1 件）"
+sec "3. 建第二个仓，把库存搬过去（主仓只留 1 件）"
 BACKUP_NAME="e2e-备用仓-$(date +%H%M%S)"
 call POST "/admin/stock-locations" "{\"name\":\"$BACKUP_NAME\",\"priority\":$MAIN_PRIORITY}" "$AUTH"
 expect_2xx "创建测试仓" || exit 1
@@ -206,8 +215,6 @@ expect_2xx "完成调拨" || exit 1
 expect_num "调拨单状态" "$(jqr '.data.status')" "completed"
 
 MAIN_AVAIL_AFTER_XFER="$(level_field "$MAIN_LOC" available_quantity)"
-MAIN_STOCKED_XFER="$(level_field "$MAIN_LOC" stocked_quantity)"
-BACKUP_STOCKED_XFER="$(level_field "$BACKUP_LOC" stocked_quantity)"
 BACKUP_AVAIL="$(level_field "$BACKUP_LOC" available_quantity)"
 expect_num "主仓剩余可用" "$MAIN_AVAIL_AFTER_XFER" "1"
 expect_num "测试仓可用" "$BACKUP_AVAIL" "$MOVE_QTY"
@@ -225,7 +232,7 @@ expect_2xx "取消该调拨"
 PENDING_TRANSFER=""
 
 # ------------------------------------------------------------------ #
-sec "5. 跨仓下单：2 件，主仓只有 1 件"
+sec "5. 单仓满足：主仓 1 件不够，整单 2 件应从备用仓发（不拆单）"
 call POST "/store/carts" "{\"email\":\"inv-e2e@example.com\"}"
 expect_2xx "创建购物车" || exit 1
 CART_ID="$(jqr '.data.id')"
@@ -241,6 +248,8 @@ else
   skip "无运费方案，按 0 运费继续"
 fi
 
+MAIN_RESERVED_PRE_ORDER="$(level_field "$MAIN_LOC" reserved_quantity)"
+
 OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART_ID/complete" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: inv-e2e-$(date +%s)" -d '{}' 2>&1)"
 CODE="${OUT##*$'\n'}"
@@ -249,95 +258,130 @@ expect_2xx "结账下单" || exit 1
 ORDER_ID="$(jqr '.data.id')"
 ok "订单 $ORDER_ID"
 
-sec "6. 一单两仓：预留必须落在两个仓"
 call GET "/admin/orders/$ORDER_ID/reservations" "" "$AUTH"
 expect_2xx "查订单预留" || exit 1
-RES_COUNT="$(jqr '.data.count')"
-RES_SUM="$(printf '%s' "$BODY" | jq '[.data.items[]?.quantity] | add // 0')"
-LOC_COUNT="$(printf '%s' "$BODY" | jq '[.data.items[]?.stock_location_id] | unique | length')"
-expect_num "预留条数" "$RES_COUNT" "2"
-expect_num "跨仓数" "$LOC_COUNT" "2"
-expect_num "预留总量" "$RES_SUM" "2"
+expect_num "预留条数（单仓 → 1 条）" "$(jqr '.data.count')" "1"
+expect_num "预留所在仓（应是备用仓）" "$(jqr '.data.items[0].stock_location_id')" "$BACKUP_LOC"
+expect_num "预留数量" "$(jqr '.data.items[0].quantity')" "2"
+expect_num "主仓预留（未被动用）" "$(level_field "$MAIN_LOC" reserved_quantity)" "$MAIN_RESERVED_PRE_ORDER"
 
-sec "7. 不指定仓发货 → 必须拒绝（一张发货单只发一个仓）"
+# ------------------------------------------------------------------ #
+sec "6. 自动单仓发货：不指定仓库也能发（后端只有一个候选仓）"
 call GET "/admin/orders/$ORDER_ID" "" "$AUTH"
 LINE_ID="$(jqr '.data.line_items[0].id')"
 LINE_QTY="$(jqr '.data.line_items[0].quantity')"
-LINE_COUNT="$(printf '%s' "$BODY" | jq '.data.line_items | length')"
-if [[ "$LINE_COUNT" != "1" ]]; then
-  bad "本脚本假定订单只有 1 个商品行（实际 $LINE_COUNT），请换 PRODUCT_HANDLE 或手工验证"
-  exit 1
-fi
-call POST "/admin/orders/$ORDER_ID/fulfillments" "{\"items\":[{\"order_line_item_id\":\"$LINE_ID\",\"quantity\":$LINE_QTY}]}" "$AUTH"
-expect_reject "不指定仓库、跨仓发货被拒绝"
+expect_num "订单行数量" "$LINE_QTY" "2"
 
-MAIN_RESERVED_BEFORE_SHIP="$(level_field "$MAIN_LOC" reserved_quantity)"
+BACKUP_STOCK_BEFORE_SHIP="$(level_field "$BACKUP_LOC" stocked_quantity)"
+MAIN_STOCK_PRE_SHIP="$(level_field "$MAIN_LOC" stocked_quantity)"
+call POST "/admin/orders/$ORDER_ID/fulfillments" \
+  "{\"items\":[{\"order_line_item_id\":\"$LINE_ID\",\"quantity\":$LINE_QTY}]}" \
+  "$AUTH"
+expect_2xx "创建发货单（不传 stock_location_id）" || exit 1
+FULF_ID="$(jqr '.data.id')"
+expect_num "发货单所属仓" "$(jqr '.data.stock_location_id')" "$BACKUP_LOC"
 
-sec "8. 按仓分别发货（每仓一张发货单 + 运单号）"
-printf '%s' "$BODY" >/dev/null
-mapfile -t RES_LOCS < <(call GET "/admin/orders/$ORDER_ID/reservations" "" "$AUTH"; printf '%s' "$BODY" | jq -r '.data.items[] | "\(.stock_location_id) \(.quantity)"')
-FULFILLED=0
-for row in "${RES_LOCS[@]}"; do
-  row="${row%$'\r'}"
-  [[ -z "$row" ]] && continue
-  loc="${row%% *}"
-  qty="${row##* }"
-  call POST "/admin/orders/$ORDER_ID/fulfillments" \
-    "{\"items\":[{\"order_line_item_id\":\"$LINE_ID\",\"quantity\":$qty}],\"stock_location_id\":\"$loc\"}" \
-    "$AUTH"
-  if expect_2xx "从仓 $loc 建发货单（$qty 件）"; then
-    fulf_id="$(jqr '.data.id')"
-    call POST "/admin/fulfillments/$fulf_id/shipments" \
-      "{\"carrier_name\":\"顺丰速运\",\"tracking_number\":\"SF-INV-$(date +%s)-$FULFILLED\"}" \
-      "$AUTH"
-    expect_2xx "仓 $loc 填运单发货"
-    FULFILLED=$((FULFILLED + 1))
-  fi
-done
-expect_num "发货单张数" "$FULFILLED" "2"
+call POST "/admin/fulfillments/$FULF_ID/shipments" \
+  "{\"carrier_name\":\"顺丰速运\",\"tracking_number\":\"SF-INV-$(date +%s)\"}" \
+  "$AUTH"
+expect_2xx "填运单发货" || exit 1
+
+expect_num "备用仓在库（发货后 -2）" "$(level_field "$BACKUP_LOC" stocked_quantity)" "$((BACKUP_STOCK_BEFORE_SHIP - 2))"
+expect_num "备用仓预留（发货后清零）" "$(level_field "$BACKUP_LOC" reserved_quantity)" "0"
+expect_num "主仓在库（完全没动）" "$(level_field "$MAIN_LOC" stocked_quantity)" "$MAIN_STOCK_PRE_SHIP"
 
 call GET "/admin/orders/$ORDER_ID/fulfillments" "" "$AUTH"
-expect_2xx "查已发仓" || exit 1
-expect_num "发货单数" "$(jqr '.data.count')" "2"
-expect_num "已发仓数" "$(printf '%s' "$BODY" | jq '[.data.items[]?.stock_location_id] | unique | length')" "2"
-expect_num "带运单的发货单" "$(printf '%s' "$BODY" | jq '[.data.items[]? | select((.tracking_links // []) | length > 0)] | length')" "2"
-
-sec "9. 出库核对：两仓各减 1，预留清零"
-expect_num "主仓在库（发货前 -1）" "$(level_field "$MAIN_LOC" stocked_quantity)" "$((MAIN_STOCKED_XFER - 1))"
-expect_num "测试仓在库（发货前 -1）" "$(level_field "$BACKUP_LOC" stocked_quantity)" "$((BACKUP_STOCKED_XFER - 1))"
-expect_num "主仓预留（发货后 -1）" \
-  "$(level_field "$MAIN_LOC" reserved_quantity)" "$((MAIN_RESERVED_BEFORE_SHIP - 1))"
+expect_num "发货单数" "$(jqr '.data.count')" "1"
+expect_num "发货单带运单" "$(printf '%s' "$BODY" | jq '[.data.items[]? | select((.tracking_links // []) | length > 0)] | length')" "1"
 
 # ------------------------------------------------------------------ #
-sec "10. 并发抢库存：库存 10，$CONCURRENCY 单各要 $CONC_QTY 件"
-# 先把测试仓清零（预留为 0，允许调减），再把主仓补到 10，确保全部库存集中在一个仓。
-BACKUP_STOCK="$(level_field "$BACKUP_LOC" stocked_quantity)"
-if is_int "${BACKUP_STOCK:-}" && ((BACKUP_STOCK > 0)); then
-  call PUT "/admin/inventory-levels/$(level_field "$BACKUP_LOC" id)" "{\"delta\":-$BACKUP_STOCK,\"reason\":\"e2e 清零\"}" "$AUTH" >/dev/null
+sec "7. 拆分兜底：没有单仓够、但合计够 → 从两仓凑（2+1）"
+LEVEL_BACKUP_ID="$(level_field "$BACKUP_LOC" id)"
+set_available "$MAIN_LOC" "$LEVEL_MAIN_ID" 2 >/dev/null
+set_available "$BACKUP_LOC" "$LEVEL_BACKUP_ID" 2 >/dev/null
+
+call POST "/store/carts" "{\"email\":\"inv-split@example.com\"}"
+CART2_ID="$(jqr '.data.id')"
+call POST "/store/carts/$CART2_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":3}" >/dev/null
+OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART2_ID/complete" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: inv-split-$(date +%s)" -d '{}' 2>&1)"
+CODE="${OUT##*$'\n'}"
+BODY="${OUT%$'\n'*}"
+expect_2xx "拆分兜底下单" || exit 1
+SPLIT_ORDER_ID="$(jqr '.data.id')"
+
+call GET "/admin/orders/$SPLIT_ORDER_ID/reservations" "" "$AUTH"
+expect_2xx "查拆分订单预留" || exit 1
+expect_num "预留条数（拆分 → 2 条）" "$(jqr '.data.count')" "2"
+expect_num "涉及仓数" "$(printf '%s' "$BODY" | jq '[.data.items[]?.stock_location_id] | unique | length')" "2"
+expect_num "预留总量" "$(printf '%s' "$BODY" | jq '[.data.items[]?.quantity] | add // 0')" "3"
+
+sec "7.1 拆分订单按仓分别发货"
+call GET "/admin/orders/$SPLIT_ORDER_ID" "" "$AUTH"
+SPLIT_LINE_ID="$(jqr '.data.line_items[0].id')"
+expect_num "拆分订单行数（脚本要求 1 行）" "$(printf '%s' "$BODY" | jq '.data.line_items | length')" "1"
+
+SHIPPED=0
+while read -r loc qty; do
+  [[ -z "${loc:-}" ]] && continue
+  call POST "/admin/orders/$SPLIT_ORDER_ID/fulfillments" \
+    "{\"items\":[{\"order_line_item_id\":\"$SPLIT_LINE_ID\",\"quantity\":$qty}],\"stock_location_id\":\"$loc\"}" \
+    "$AUTH"
+  if expect_2xx "从仓 $loc 建发货单（$qty 件）"; then
+    f_id="$(jqr '.data.id')"
+    call POST "/admin/fulfillments/$f_id/shipments" \
+      "{\"carrier_name\":\"顺丰速运\",\"tracking_number\":\"SF-SPLIT-$(date +%s)-$SHIPPED\"}" \
+      "$AUTH"
+    expect_2xx "仓 $loc 填运单发货"
+    SHIPPED=$((SHIPPED + 1))
+  fi
+done < <(printf '%s' "$BODY" >/dev/null; call GET "/admin/orders/$SPLIT_ORDER_ID/reservations" "" "$AUTH"; printf '%s' "$BODY" | jq -r '.data.items[] | "\(.stock_location_id) \(.quantity)"' | tr -d '\r')
+
+expect_num "拆分订单发货单数" "$SHIPPED" "2"
+call GET "/admin/orders/$SPLIT_ORDER_ID/fulfillments" "" "$AUTH"
+expect_num "拆分订单已发仓数" "$(printf '%s' "$BODY" | jq '[.data.items[]?.stock_location_id] | unique | length')" "2"
+
+sec "7.2 合计仍不足 → 必须拒单"
+set_available "$MAIN_LOC" "$LEVEL_MAIN_ID" 2 >/dev/null
+set_available "$BACKUP_LOC" "$LEVEL_BACKUP_ID" 2 >/dev/null
+MAIN_AVAIL_PRE_REJECT="$(level_field "$MAIN_LOC" available_quantity)"
+BACKUP_AVAIL_PRE_REJECT="$(level_field "$BACKUP_LOC" available_quantity)"
+
+call POST "/store/carts" "{\"email\":\"inv-reject@example.com\"}"
+CART3_ID="$(jqr '.data.id')"
+call POST "/store/carts/$CART3_ID/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":5}" >/dev/null
+OUT="$(curl -s -S -w $'\n%{http_code}' -X POST "$BASE/store/carts/$CART3_ID/complete" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: inv-reject-$(date +%s)" -d '{}' 2>&1)"
+CODE="${OUT##*$'\n'}"
+BODY="${OUT%$'\n'*}"
+expect_reject "两仓合计不足 → 拒单"
+expect_num "主仓可用（未被动用）" "$(level_field "$MAIN_LOC" available_quantity)" "$MAIN_AVAIL_PRE_REJECT"
+expect_num "备用仓可用（未被动用）" "$(level_field "$BACKUP_LOC" available_quantity)" "$BACKUP_AVAIL_PRE_REJECT"
+
+# ------------------------------------------------------------------ #
+if ((RATE_WAIT > 0)); then
+  printf '\n  等待 %s 秒让下单限流窗口重置（默认 10 次/分钟）…\n' "$RATE_WAIT"
+  sleep "$RATE_WAIT"
 fi
-MAIN_STOCK_NOW="$(level_field "$MAIN_LOC" stocked_quantity)"
+
+sec "8. 并发抢库存：库存 10，$CONCURRENCY 单各要 $CONC_QTY 件"
+# 全部库存集中到主仓（备用仓清零），避免分配走到备用仓
+LEVEL_BACKUP_STOCK="$(level_field "$BACKUP_LOC" stocked_quantity)"
+if is_int "${LEVEL_BACKUP_STOCK:-}" && ((LEVEL_BACKUP_STOCK > 0)); then
+  call PUT "/admin/inventory-levels/$LEVEL_BACKUP_ID" "{\"delta\":-$LEVEL_BACKUP_STOCK,\"reason\":\"e2e 清零\"}" "$AUTH" >/dev/null
+fi
+MAIN_AVAIL_SET="$(set_available "$MAIN_LOC" "$LEVEL_MAIN_ID" 10)"
+expect_num "主仓可用" "$MAIN_AVAIL_SET" "10"
 MAIN_RESERVED_BEFORE="$(level_field "$MAIN_LOC" reserved_quantity)"
-# 目标可用量固定为 10（可重复执行：按当前预留反推在库量）
-DELTA_TO_10=$(( (MAIN_RESERVED_BEFORE + 10) - MAIN_STOCK_NOW ))
-call PUT "/admin/inventory-levels/$LEVEL_MAIN_ID" "{\"delta\":$DELTA_TO_10,\"reason\":\"e2e 并发测试备货\"}" "$AUTH"
-expect_2xx "主仓可用量调到 10" || exit 1
-expect_num "主仓可用" "$(level_field "$MAIN_LOC" available_quantity)" "10"
 
 CART_IDS=()
 for i in $(seq 1 "$CONCURRENCY"); do
   call POST "/store/carts" "{\"email\":\"conc$i@example.com\"}"
   cid="$(jqr '.data.id')"
-  call POST "/store/carts/$cid/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":$CONC_QTY}"
+  call POST "/store/carts/$cid/line-items" "{\"variant_id\":\"$VAR_ID\",\"quantity\":$CONC_QTY}" >/dev/null
   CART_IDS+=("$cid")
 done
 ok "已准备 $CONCURRENCY 个购物车（各 $CONC_QTY 件）"
-
-# 下单接口默认限流 10 次/分钟（RATE_LIMIT_CHECKOUT_MAX）。前面已下过 1 单，
-# 不等窗口会让并发批次里本该成功的请求被 429 挡掉，造成假失败。
-if ((RATE_WAIT > 0)); then
-  printf '  等待 %s 秒让下单限流窗口重置（默认 10 次/分钟）…\n' "$RATE_WAIT"
-  sleep "$RATE_WAIT"
-fi
 
 for i in "${!CART_IDS[@]}"; do
   cid="${CART_IDS[$i]}"
@@ -358,7 +402,8 @@ expect_num "并发成功单数" "$SUCCESS" "$EXPECT_SUCCESS"
 expect_num "主仓预留增量（成功单 × 件数）" \
   "$(( $(level_field "$MAIN_LOC" reserved_quantity) - MAIN_RESERVED_BEFORE ))" \
   "$((EXPECT_SUCCESS * CONC_QTY))"
-expect_num "主仓可用（10 - 预留）" "$(level_field "$MAIN_LOC" available_quantity)" "$((10 - EXPECT_SUCCESS * CONC_QTY))"
+expect_num "主仓可用（10 - 预留增量）" \
+  "$(level_field "$MAIN_LOC" available_quantity)" "$((10 - EXPECT_SUCCESS * CONC_QTY))"
 
 # ------------------------------------------------------------------ #
 sec "汇总"
