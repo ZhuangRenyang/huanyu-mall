@@ -151,8 +151,6 @@ ensure_updater_env() {
 # [4] 生成配置与密钥（已存在则跳过，不覆盖）
 step4_secrets() {
   local secrets="$MALL_DIR/config/secrets.json"
-  # 先把版本身份/代理凭证补进 .env：这一步必须早于容器创建（见 ensure_updater_env 注释）
-  ensure_updater_env
   if [[ -f "$secrets" ]]; then
     log "secrets.json 已存在，跳过生成"
   else
@@ -417,6 +415,10 @@ UNIT
 
 main() {
   parse_args "$@"
+  # 版本身份与代理凭证必须在**创建容器之前**无条件写入 .env。
+  # 不能挂在某个 step 里：step4 会被 install-state 门禁跳过（日志里就是
+  # 「skip step 4 (已完成)」），结果写入推迟到 step9 之后，容器读到的还是旧版本号。
+  ensure_updater_env
   if (( RESET )); then
     log "RESET：清空安装状态并备份配置"
     if [[ -f "$STATE_FILE" ]]; then
