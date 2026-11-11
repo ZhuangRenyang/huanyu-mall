@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DomainError } from "@mall/core";
 import { FulfillmentService } from "../src/services/fulfillment.service.js";
 import type {
   FulfillmentDTO,
@@ -7,6 +8,7 @@ import type {
   FulfillmentStatus,
   InventoryPort,
   PriceRuleDTO,
+  ReservationDTO,
   ShipmentDTO,
   ShippingOptionDTO,
 } from "../src/types.js";
@@ -33,12 +35,14 @@ class InMemoryFulfillmentRepository implements FulfillmentRepository {
   async insertFulfillment(input: {
     id: string;
     orderId: string;
+    stockLocationId?: string | null;
     status: FulfillmentStatus;
     reservationIds: string[];
   }): Promise<FulfillmentDTO> {
     const dto: FulfillmentDTO = {
       id: input.id,
       order_id: input.orderId,
+      stock_location_id: input.stockLocationId ?? null,
       status: input.status,
       reservation_ids: input.reservationIds,
       tracking_links: null,
@@ -83,9 +87,33 @@ class InMemoryFulfillmentRepository implements FulfillmentRepository {
 
 class FakeInventoryPort implements InventoryPort {
   readonly committed: string[] = [];
+  readonly reservations = new Map<string, ReservationDTO[]>();
+
   async commitReservation(reservationId: string): Promise<void> {
     this.committed.push(reservationId);
   }
+  async listReservationsByOrder(orderId: string): Promise<ReservationDTO[]> {
+    return this.reservations.get(orderId) ?? [];
+  }
+}
+
+/** 造一条预留（默认 loc_1、reserved、数量 1）。 */
+function reservation(
+  id: string,
+  stockLocationId: string,
+  quantity = 1,
+  orderId = "ord_1",
+): ReservationDTO {
+  return {
+    id,
+    inventory_item_id: "invitem_1",
+    stock_location_id: stockLocationId,
+    line_item_id: `${orderId}:var_1:${stockLocationId}`,
+    order_id: orderId,
+    quantity,
+    status: "reserved",
+    workflow_run_id: null,
+  };
 }
 
 function option(over: Partial<ShippingOptionDTO> & { id: string; type: ShippingOptionDTO["type"] }): ShippingOptionDTO {
@@ -152,9 +180,11 @@ describe("FulfillmentService（M08，运费三档 + 发货 commit 预留）", ()
 
   it("发货后 inventory 预留被 commit（端口断言）", async () => {
     const { repo, inventory, service } = setup();
+    inventory.reservations.set("ord_1", [reservation("rsv_1", "loc_1"), reservation("rsv_2", "loc_1")]);
+
     const fulfillment = await service.createFulfillment({
       orderId: "ord_1",
-      items: [{ orderLineItemId: "oli_1", quantity: 1 }],
+      items: [{ orderLineItemId: "oli_1", quantity: 2 }],
       reservationIds: ["rsv_1", "rsv_2"],
     });
     expect(fulfillment.reservation_ids).toEqual(["rsv_1", "rsv_2"]);
@@ -167,5 +197,101 @@ describe("FulfillmentService（M08，运费三档 + 发货 commit 预留）", ()
     expect(shipment.tracking_number).toBe("SF123456");
     expect(inventory.committed).toEqual(["rsv_1", "rsv_2"]);
     expect(repo.fulfillments.get(fulfillment.id)?.status).toBe("shipped");
+  });
+});
+
+describe("FulfillmentService.createFulfillment（ADR-013 §3：一张发货单只发一个仓）", () => {
+  it("单仓不传 location：自动用该仓，落库写入 stock_location_id", async () => {
+    const { repo, inventory, service } = setup();
+    inventory.reservations.set("ord_1", [reservation("rsv_1", "loc_1", 3)]);
+
+    const fulfillment = await service.createFulfillment({
+      orderId: "ord_1",
+      items: [{ orderLineItemId: "oli_1", quantity: 3 }],
+    });
+
+    expect(fulfillment.stock_location_id).toBe("loc_1");
+    expect(fulfillment.reservation_ids).toEqual(["rsv_1"]);
+    expect(repo.items).toEqual([{ orderLineItemId: "oli_1", quantity: 3 }]);
+  });
+
+  it("跨两仓不传 location → stockLocationRequired，details 带可选仓列表", async () => {
+    const { inventory, service } = setup();
+    inventory.reservations.set("ord_1", [
+      reservation("rsv_a", "loc_a", 2),
+      reservation("rsv_b", "loc_b", 1),
+    ]);
+
+    const err = await service
+      .createFulfillment({
+        orderId: "ord_1",
+        items: [{ orderLineItemId: "oli_1", quantity: 3 }],
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DomainError);
+    expect((err as DomainError).message).toContain("stock_location_id");
+    expect((err as DomainError).details).toEqual(["loc_a", "loc_b"]);
+  });
+
+  it("指定 location → 只关联该仓预留，且 stock_location_id 为该仓", async () => {
+    const { inventory, service } = setup();
+    inventory.reservations.set("ord_1", [
+      reservation("rsv_a", "loc_a", 2),
+      reservation("rsv_b", "loc_b", 1),
+    ]);
+
+    const fulfillment = await service.createFulfillment({
+      orderId: "ord_1",
+      stockLocationId: "loc_b",
+      items: [{ orderLineItemId: "oli_1", quantity: 1 }],
+    });
+
+    expect(fulfillment.stock_location_id).toBe("loc_b");
+    expect(fulfillment.reservation_ids).toEqual(["rsv_b"]);
+  });
+
+  it("数量与该仓预留不一致 → fulfillmentQuantityMismatch", async () => {
+    const { inventory, service } = setup();
+    inventory.reservations.set("ord_1", [reservation("rsv_1", "loc_1", 3)]);
+
+    const err = await service
+      .createFulfillment({
+        orderId: "ord_1",
+        items: [{ orderLineItemId: "oli_1", quantity: 1 }],
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DomainError);
+    expect((err as DomainError).message).toContain("预留 3");
+  });
+
+  it("reservationIds 不属于所选仓 → reservationNotInLocation", async () => {
+    const { inventory, service } = setup();
+    inventory.reservations.set("ord_1", [
+      reservation("rsv_a", "loc_a", 1),
+      reservation("rsv_b", "loc_b", 1),
+    ]);
+
+    const err = await service
+      .createFulfillment({
+        orderId: "ord_1",
+        stockLocationId: "loc_a",
+        items: [{ orderLineItemId: "oli_1", quantity: 1 }],
+        reservationIds: ["rsv_b"],
+      })
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(DomainError);
+    expect((err as DomainError).message).toContain("rsv_b");
+  });
+
+  it("订单无预留 → noReservations", async () => {
+    const { service } = setup();
+    const err = await service
+      .createFulfillment({ orderId: "ord_x", items: [{ orderLineItemId: "oli_1", quantity: 1 }] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DomainError);
+    expect((err as DomainError).message).toContain("没有可发货的预留");
   });
 });

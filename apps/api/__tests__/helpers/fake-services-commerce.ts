@@ -22,6 +22,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   const promotionRules = new Map<string, Record<string, unknown>>();
   let pCounter = 0;
   let prCounter = 0;
+  // —— 多仓（ADR-013 阶段 2）：仓库 / 调拨流水内存替身 ——
+  const stockLocations: Array<{ id: string; name: string; priority: number }> = [
+    { id: "loc_1", name: "默认仓", priority: 10 },
+    { id: "loc_2", name: "B 仓", priority: 0 },
+  ];
+  const transfers = new Map<string, Record<string, unknown>>();
+  let transferCounter = 0;
   const promotion = {
     listVouchers: async ({ limit, offset }: { limit: number; offset: number }) => {
       const items = [...vouchers.values()].slice(offset, offset + limit);
@@ -332,7 +339,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
             sub: "adm_2",
             scope: "admin",
             roles: ["staff"],
-            permissions: ["products", "orders"],
+            // 与真实 seedRoles 对齐：staff 持有 products/orders/customers/inventory/files，无 settings。
+            permissions: ["products", "orders", "customers", "inventory", "files"],
           };
         }
         throw errors.invalidCredentials("token 无效");
@@ -414,6 +422,83 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         reserved_quantity: 0,
         available_quantity: 10 + input.delta,
       }),
+      // —— 多仓（ADR-013 阶段 2）：仓库 / 按仓库存行 / 预留明细 / 调拨 ——
+      listStockLocations: async () => stockLocations.map((l) => ({ ...l })),
+      createStockLocation: async (input: { name: string; priority?: number }) => {
+        const loc = {
+          id: `loc_${stockLocations.length + 1}`,
+          name: input.name,
+          priority: input.priority ?? 0,
+        };
+        stockLocations.push(loc);
+        return loc;
+      },
+      updateStockLocation: async (id: string, patch: { name?: string; priority?: number }) => {
+        const loc = stockLocations.find((l) => l.id === id);
+        if (!loc) throw errors.notFound("stock location not found");
+        if (patch.name !== undefined) loc.name = patch.name;
+        if (patch.priority !== undefined) loc.priority = patch.priority;
+        return { ...loc };
+      },
+      listInventoryLevels: async (q?: { locationId?: string }) => ({
+        items: [
+          {
+            id: "invlvl_1",
+            inventory_item_id: "invitem_1",
+            sku: "SKU-1",
+            stock_location_id: q?.locationId ?? "loc_1",
+            stocked_quantity: 10,
+            reserved_quantity: 0,
+            available_quantity: 10,
+          },
+        ],
+        count: 1,
+      }),
+      listReservationIdsByOrder: async () => ["rsv_1"],
+      listReservationsByOrder: async (orderId: string) => [
+        {
+          id: "rsv_1",
+          inventory_item_id: "invitem_1",
+          stock_location_id: "loc_1",
+          line_item_id: `${orderId}:var_1:loc_1`,
+          order_id: orderId,
+          quantity: 1,
+          status: "reserved",
+          workflow_run_id: null,
+        },
+      ],
+      createInventoryTransfer: async (input: Record<string, unknown>) => {
+        const t = {
+          id: `xfer_${++transferCounter}`,
+          inventory_item_id: input.inventoryItemId,
+          from_location_id: input.fromLocationId,
+          to_location_id: input.toLocationId,
+          quantity: input.quantity,
+          status: "pending",
+          note: input.note ?? null,
+          created_by: input.createdBy ?? null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        transfers.set(t.id, t);
+        return t;
+      },
+      completeInventoryTransfer: async (id: string) => {
+        const t = transfers.get(id);
+        if (!t) throw errors.notFound("transfer not found");
+        t.status = "completed";
+        return t;
+      },
+      cancelInventoryTransfer: async (id: string) => {
+        const t = transfers.get(id);
+        if (!t) throw errors.notFound("transfer not found");
+        t.status = "cancelled";
+        return t;
+      },
+      listInventoryTransfers: async ({ limit, offset }: { limit: number; offset: number }) => {
+        const items = [...transfers.values()].slice(offset, offset + limit);
+        return { items, count: transfers.size };
+      },
     },
     cart: {
       retrieveCart: async () => ({
@@ -542,11 +627,12 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     },
     fulfillment: {
       listShippingOptions: async () => [],
-      createFulfillment: async () => ({
+      createFulfillment: async (input: { stockLocationId?: string }) => ({
         id: "fulf_1",
         order_id: "ord_1",
+        stock_location_id: input.stockLocationId ?? "loc_1",
         status: "fulfilled",
-        reservation_ids: [],
+        reservation_ids: ["rsv_1"],
         tracking_links: null,
       }),
       addShipment: async () => ({

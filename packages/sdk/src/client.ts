@@ -10,12 +10,15 @@ import type {
   CapturePaymentRequest,
   ChangePasswordRequest,
   CreateCartRequest,
+  CreateFulfillmentRequest,
   CreateGiftCardRequest,
+  CreateInventoryTransferRequest,
   CreatePaymentSessionRequest,
   CreateProductRequest,
   CreatePromotionRequest,
   CreateRefundRequest,
   CreateShipmentRequest,
+  CreateStockLocationRequest,
   CreateVariantRequest,
   CreateVoucherRequest,
   LoginRequest,
@@ -32,6 +35,7 @@ import type {
   UpdateProductRequest,
   UpdatePromotionRequest,
   UpdateSettingsRequest,
+  UpdateStockLocationRequest,
   UpdateThemeRequest,
   UpdateVariantRequest,
   UpdateVoucherRequest,
@@ -220,7 +224,7 @@ export function createAdminClient(opts: ClientOptions) {
     cancelOrder: (id: string) => post(`/api/v1/admin/orders/${id}/cancel`),
     refundOrder: (id: string, b: CreateRefundRequest) =>
       post(`/api/v1/admin/orders/${id}/refunds`, b),
-    createFulfillment: (orderId: string, b: { items: { order_line_item_id: string; quantity: number }[] }) =>
+    createFulfillment: (orderId: string, b: CreateFulfillmentRequest) =>
       post(`/api/v1/admin/orders/${orderId}/fulfillments`, b),
     createShipment: (fulfillmentId: string, b: CreateShipmentRequest) =>
       post(`/api/v1/admin/fulfillments/${fulfillmentId}/shipments`, b),
@@ -228,6 +232,23 @@ export function createAdminClient(opts: ClientOptions) {
     listInventoryItems: (q?: Query) => get("/api/v1/admin/inventory-items", q),
     updateInventoryLevel: (levelId: string, b: UpdateInventoryLevelRequest) =>
       put(`/api/v1/admin/inventory-levels/${levelId}`, b),
+    // —— 多仓（ADR-013）：仓库 / 按仓库存行 / 调拨 ——
+    listStockLocations: () => get("/api/v1/admin/stock-locations"),
+    createStockLocation: (b: CreateStockLocationRequest) =>
+      post("/api/v1/admin/stock-locations", b),
+    updateStockLocation: (id: string, b: UpdateStockLocationRequest) =>
+      patch(`/api/v1/admin/stock-locations/${id}`, b),
+    listInventoryLevels: (q?: Query) => get("/api/v1/admin/inventory-levels", q),
+    /** 订单预留明细（含仓）：后台按仓拆发货单前选仓用。 */
+    listOrderReservations: (orderId: string) =>
+      get(`/api/v1/admin/orders/${orderId}/reservations`),
+    listInventoryTransfers: (q?: Query) => get("/api/v1/admin/inventory-transfers", q),
+    createInventoryTransfer: (b: CreateInventoryTransferRequest) =>
+      post("/api/v1/admin/inventory-transfers", b),
+    completeInventoryTransfer: (id: string) =>
+      post(`/api/v1/admin/inventory-transfers/${id}/complete`),
+    cancelInventoryTransfer: (id: string) =>
+      post(`/api/v1/admin/inventory-transfers/${id}/cancel`),
     getSettings: () => get("/api/v1/admin/settings"),
     updateSettings: (b: UpdateSettingsRequest) => patch("/api/v1/admin/settings", b),
     getTheme: () => get("/api/v1/admin/settings/theme"),

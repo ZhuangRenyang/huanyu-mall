@@ -1,5 +1,13 @@
 import { prefixedUlid } from "@mall/core";
-import { fulfillmentNotFound, optionNotFound } from "../errors.js";
+import {
+  fulfillmentNotFound,
+  fulfillmentQuantityMismatch,
+  noReservationAtLocation,
+  noReservations,
+  optionNotFound,
+  reservationNotInLocation,
+  stockLocationRequired,
+} from "../errors.js";
 import { calculateShipping } from "./shipping-calculator.js";
 import type {
   FulfillmentDTO,
@@ -42,20 +50,50 @@ export class FulfillmentService implements IFulfillmentModuleService {
     return { amountMinor: calculateShipping(option, rules, ctx), currencyCode: option.currency_code };
   }
 
+  /**
+   * 建发货单（ADR-013 §3：一张发货单只发一个仓）。
+   * 1) 取订单 reserved 预留；2) 按仓去重；3) 指定仓 / 单仓自动 / 跨仓拒绝；
+   * 4) reservationIds 必须是所选仓子集；5) 数量必须等于该仓预留合计（一期不支持部分发货）。
+   */
   async createFulfillment(input: {
     orderId: string;
+    stockLocationId?: string;
     items: FulfillmentItemInput[];
     reservationIds?: string[];
   }): Promise<FulfillmentDTO> {
+    const reservations = await this.deps.inventory.listReservationsByOrder(input.orderId);
+    if (reservations.length === 0) throw noReservations(input.orderId);
+
+    const locations = [...new Set(reservations.map((r) => r.stock_location_id))];
+    let scoped = reservations;
+    if (input.stockLocationId) {
+      scoped = reservations.filter((r) => r.stock_location_id === input.stockLocationId);
+      if (scoped.length === 0) {
+        throw noReservationAtLocation(input.orderId, input.stockLocationId);
+      }
+    } else if (locations.length > 1) {
+      throw stockLocationRequired(input.orderId, locations);
+    }
+
+    let reservationIds = scoped.map((r) => r.id);
+    if (input.reservationIds && input.reservationIds.length > 0) {
+      const allowed = new Set(reservationIds);
+      for (const id of input.reservationIds) {
+        if (!allowed.has(id)) throw reservationNotInLocation(input.orderId, id);
+      }
+      reservationIds = input.reservationIds;
+    }
+
+    const expected = scoped.reduce((sum, r) => sum + r.quantity, 0);
+    const actual = input.items.reduce((sum, i) => sum + i.quantity, 0);
+    if (expected !== actual) throw fulfillmentQuantityMismatch(expected, actual);
+
+    const stockLocationId = input.stockLocationId ?? scoped[0]!.stock_location_id;
     const id = prefixedUlid("fulf");
-    // 未显式传预留时（未指定或空数组），按订单自动关联（发货要把预留转真实出库）
-    const reservationIds =
-      input.reservationIds && input.reservationIds.length > 0
-        ? input.reservationIds
-        : await this.deps.inventory.listReservationsByOrder(input.orderId);
     const fulfillment = await this.deps.repo.insertFulfillment({
       id,
       orderId: input.orderId,
+      stockLocationId,
       status: "fulfilled",
       reservationIds,
     });

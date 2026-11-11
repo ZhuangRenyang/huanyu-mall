@@ -73,6 +73,7 @@ export class DrizzleFulfillmentRepository implements FulfillmentRepository {
   async insertFulfillment(input: {
     id: string;
     orderId: string;
+    stockLocationId?: string | null;
     status: FulfillmentStatus;
     reservationIds: string[];
   }): Promise<FulfillmentDTO> {
@@ -81,6 +82,7 @@ export class DrizzleFulfillmentRepository implements FulfillmentRepository {
       .values({
         id: input.id,
         orderId: input.orderId,
+        stockLocationId: input.stockLocationId ?? null,
         status: input.status,
         metadata: { reservationIds: input.reservationIds },
       })
@@ -162,6 +164,7 @@ function toFulfillmentDTO(r: typeof schema.fulfillment.$inferSelect): Fulfillmen
   return {
     id: r.id,
     order_id: r.orderId,
+    stock_location_id: r.stockLocationId ?? null,
     status: r.status as FulfillmentStatus,
     reservation_ids: meta.reservationIds ?? [],
     tracking_links: (r.trackingLinks as Array<{ carrier: string; number: string }> | null) ?? null,

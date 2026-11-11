@@ -31,3 +31,40 @@ export function invalidQuantity(variantId: string, quantity: number): DomainErro
     message: `库存数量非法：${variantId} 的 quantity=${quantity}（必须为正整数）`,
   });
 }
+
+export function inventoryItemNotFoundById(id: string): DomainError {
+  return new DomainError({ code: 30001, message: `Inventory item not found: ${id}` });
+}
+
+export function stockLocationNotFound(id: string): DomainError {
+  return new DomainError({ code: 30001, message: `Stock location not found: ${id}` });
+}
+
+// —— 仓间调拨（ADR-013 §4）——
+
+export function transferNotFound(id: string): DomainError {
+  return new DomainError({ code: 30001, message: `Inventory transfer not found: ${id}` });
+}
+
+export function transferStateInvalid(id: string, status: string): DomainError {
+  return new DomainError({ code: 30002, message: `Inventory transfer ${id} is ${status}, cannot transition` });
+}
+
+export function transferLocationsSame(fromLocationId: string, toLocationId: string): DomainError {
+  return new DomainError({
+    code: 30002,
+    message: `调拨源仓与目标仓不能相同：${fromLocationId} → ${toLocationId}`,
+  });
+}
+
+/** 源仓可用量不足（不能把已承诺给订单的货调走）。 */
+export function transferInsufficientStock(
+  itemId: string,
+  fromLocationId: string,
+  quantity: number,
+): DomainError {
+  return new DomainError({
+    code: 30003,
+    message: `调拨失败：${itemId}@${fromLocationId} 可用量不足以调出 ${quantity}`,
+  });
+}

@@ -1,10 +1,13 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
   InventoryItemDTO,
   InventoryLevelDTO,
+  InventoryLevelRowDTO,
   InventoryRepository,
+  InventoryTransferDTO,
+  InventoryTransferStatus,
   ReservationDTO,
   ReservationStatus,
   StockLocationDTO,
@@ -62,8 +65,7 @@ export class DrizzleInventoryRepository implements InventoryRepository {
   }
 
   /** 按订单查未释放的预留 id（发货时转真实出库）。 */
-  async reservationIdsByOrder(orderId: string): Promise<string[]> {
-    // reservation_item 无软删列，软删以 status 表达（reserved → committed/released）
+  async reservationIdsByOrder(orderId: string): Promise<string[]> {    // reservation_item 无软删列，软删以 status 表达（reserved → committed/released）
     const res = await this.db.execute(
       sql`SELECT id FROM reservation_item
           WHERE order_id = ${orderId} AND status = 'reserved'`,
@@ -97,6 +99,80 @@ export class DrizzleInventoryRepository implements InventoryRepository {
       name: String(r.name),
       priority: Number(r.priority ?? 0),
     }));
+  }
+
+  async findInventoryItem(id: string): Promise<InventoryItemDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.inventoryItem)
+      .where(and(eq(schema.inventoryItem.id, id), isNull(schema.inventoryItem.deletedAt)))
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    return { id: r.id, sku: r.sku, title: r.title ?? null, requires_shipping: r.requiresShipping };
+  }
+
+  /** 按仓列「仓 × SKU」库存行（sku 冗余带出，后台库存/调拨页直接展示）。 */
+  async listLevels(q: {
+    locationId?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: InventoryLevelRowDTO[]; count: number }> {
+    const conditions = and(
+      isNull(schema.inventoryLevel.deletedAt),
+      isNull(schema.inventoryItem.deletedAt),
+      q.locationId ? eq(schema.inventoryLevel.stockLocationId, q.locationId) : undefined,
+    );
+    const rows = await this.db
+      .select({
+        id: schema.inventoryLevel.id,
+        inventoryItemId: schema.inventoryLevel.inventoryItemId,
+        sku: schema.inventoryItem.sku,
+        stockLocationId: schema.inventoryLevel.stockLocationId,
+        stockedQuantity: schema.inventoryLevel.stockedQuantity,
+        reservedQuantity: schema.inventoryLevel.reservedQuantity,
+        availableQuantity: schema.inventoryLevel.availableQuantity,
+      })
+      .from(schema.inventoryLevel)
+      .innerJoin(
+        schema.inventoryItem,
+        eq(schema.inventoryLevel.inventoryItemId, schema.inventoryItem.id),
+      )
+      .where(conditions)
+      .orderBy(asc(schema.inventoryLevel.stockLocationId), asc(schema.inventoryItem.sku))
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.inventoryLevel)
+      .innerJoin(
+        schema.inventoryItem,
+        eq(schema.inventoryLevel.inventoryItemId, schema.inventoryItem.id),
+      )
+      .where(conditions);
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        inventory_item_id: r.inventoryItemId,
+        sku: r.sku,
+        stock_location_id: r.stockLocationId,
+        stocked_quantity: r.stockedQuantity,
+        reserved_quantity: r.reservedQuantity,
+        available_quantity: r.availableQuantity,
+      })),
+      count: countRows[0]?.count ?? 0,
+    };
+  }
+
+  async findLocation(id: string): Promise<StockLocationDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.stockLocation)
+      .where(and(eq(schema.stockLocation.id, id), isNull(schema.stockLocation.deletedAt)))
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    return { id: r.id, name: r.name, priority: r.priority };
   }
 
   async findLevelById(levelId: string): Promise<InventoryLevelDTO | null> {
@@ -175,6 +251,55 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     );
   }
 
+  /**
+   * 仓间搬货（ADR-013 §4）：源仓一条条件 UPDATE 完成「校验 + 扣减」，
+   * 杜绝先读再写绝对值。目标仓不存在则在同一事务内新建。
+   * 调用方必须已开启事务（service 用 withTransaction 包裹）。
+   */
+  async moveStock(input: {
+    inventoryItemId: string;
+    fromLocationId: string;
+    toLocationId: string;
+    quantity: number;
+  }): Promise<boolean> {
+    const moved = await this.db.execute(
+      sql`UPDATE inventory_level
+             SET stocked_quantity = stocked_quantity - ${input.quantity},
+                 available_quantity = available_quantity - ${input.quantity},
+                 updated_at = now()
+           WHERE inventory_item_id = ${input.inventoryItemId}
+             AND stock_location_id = ${input.fromLocationId}
+             AND stocked_quantity - reserved_quantity >= ${input.quantity}
+             AND deleted_at IS NULL
+         RETURNING id`,
+    );
+    if (moved.rows.length === 0) return false;
+
+    const added = await this.db.execute(
+      sql`UPDATE inventory_level
+             SET stocked_quantity = stocked_quantity + ${input.quantity},
+                 available_quantity = available_quantity + ${input.quantity},
+                 updated_at = now()
+           WHERE inventory_item_id = ${input.inventoryItemId}
+             AND stock_location_id = ${input.toLocationId}
+             AND deleted_at IS NULL
+         RETURNING id`,
+    );
+    if (added.rows.length === 0) {
+      await this.db
+        .insert(schema.inventoryLevel)
+        .values({
+          id: prefixedUlid("invlvl"),
+          inventoryItemId: input.inventoryItemId,
+          stockLocationId: input.toLocationId,
+          stockedQuantity: input.quantity,
+          reservedQuantity: 0,
+          availableQuantity: input.quantity,
+        });
+    }
+    return true;
+  }
+
   /** 同一事务内执行：分配计算、条件占用、写预留要么全成、要么全回滚。 */
   async withTransaction<T>(fn: (repo: InventoryRepository) => Promise<T>): Promise<T> {
     return this.db.transaction(async (tx) =>
@@ -240,6 +365,23 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     return { id: r.id, name: r.name, priority: r.priority };
   }
 
+  async updateStockLocation(
+    id: string,
+    patch: { name?: string; priority?: number },
+  ): Promise<StockLocationDTO> {
+    const values: { name?: string; priority?: number; updatedAt: Date } = { updatedAt: new Date() };
+    if (patch.name !== undefined) values.name = patch.name;
+    if (patch.priority !== undefined) values.priority = patch.priority;
+    const rows = await this.db
+      .update(schema.stockLocation)
+      .set(values)
+      .where(and(eq(schema.stockLocation.id, id), isNull(schema.stockLocation.deletedAt)))
+      .returning();
+    const r = rows[0];
+    if (!r) throw new Error(`Stock location not found: ${id}`);
+    return { id: r.id, name: r.name, priority: r.priority };
+  }
+
   async createLevel(input: {
     inventoryItemId: string;
     stockLocationId: string;
@@ -264,6 +406,96 @@ export class DrizzleInventoryRepository implements InventoryRepository {
       sql`INSERT INTO inventory_item_variant (id, inventory_item_id, variant_id) VALUES (${prefixedUlid("lnk")}, ${itemId}, ${variantId})`,
     );
   }
+
+  // —— 仓间调拨流水 ——
+
+  async createTransfer(input: {
+    inventoryItemId: string;
+    fromLocationId: string;
+    toLocationId: string;
+    quantity: number;
+    note?: string | null;
+    createdBy?: string | null;
+  }): Promise<InventoryTransferDTO> {
+    const rows = await this.db
+      .insert(schema.inventoryTransfer)
+      .values({
+        id: prefixedUlid("xfer"),
+        inventoryItemId: input.inventoryItemId,
+        fromLocationId: input.fromLocationId,
+        toLocationId: input.toLocationId,
+        quantity: input.quantity,
+        status: "pending",
+        note: input.note ?? null,
+        createdBy: input.createdBy ?? null,
+      })
+      .returning();
+    return toTransferDTO(rows[0]!);
+  }
+
+  async findTransfer(id: string): Promise<InventoryTransferDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.inventoryTransfer)
+      .where(eq(schema.inventoryTransfer.id, id))
+      .limit(1);
+    return rows[0] ? toTransferDTO(rows[0]) : null;
+  }
+
+  async listTransfers(q: {
+    limit: number;
+    offset: number;
+    status?: InventoryTransferStatus;
+  }): Promise<{ items: InventoryTransferDTO[]; count: number }> {
+    const condition = q.status
+      ? eq(schema.inventoryTransfer.status, q.status)
+      : sql`true`;
+    const rows = await this.db
+      .select()
+      .from(schema.inventoryTransfer)
+      .where(condition)
+      .orderBy(sql`${schema.inventoryTransfer.createdAt} DESC`)
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.inventoryTransfer)
+      .where(condition);
+    return { items: rows.map(toTransferDTO), count: countRows[0]?.count ?? 0 };
+  }
+
+  /**
+   * 条件状态流转（CAS）：并发下两个 complete 只有一个能把 pending 改成 completed，
+   * 另一个影响 0 行 → 抛状态错误并回滚自己那笔搬货。
+   */
+  async transitionTransferStatus(
+    id: string,
+    from: InventoryTransferStatus,
+    to: InventoryTransferStatus,
+  ): Promise<boolean> {
+    const res = await this.db.execute(
+      sql`UPDATE inventory_transfer
+             SET status = ${to}, updated_at = now()
+           WHERE id = ${id} AND status = ${from}
+         RETURNING id`,
+    );
+    return res.rows.length > 0;
+  }
+}
+
+function toTransferDTO(r: typeof schema.inventoryTransfer.$inferSelect): InventoryTransferDTO {
+  return {
+    id: r.id,
+    inventory_item_id: r.inventoryItemId,
+    from_location_id: r.fromLocationId,
+    to_location_id: r.toLocationId,
+    quantity: r.quantity,
+    status: r.status as InventoryTransferStatus,
+    note: r.note ?? null,
+    created_by: r.createdBy ?? null,
+    created_at: r.createdAt.toISOString(),
+    updated_at: r.updatedAt.toISOString(),
+  };
 }
 
 function toLevelDTO(r: typeof schema.inventoryLevel.$inferSelect): InventoryLevelDTO {

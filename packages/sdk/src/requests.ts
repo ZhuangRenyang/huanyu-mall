@@ -133,12 +133,14 @@ export interface CreateRefundRequest {
   reason: string;
 }
 
-/** 创建发货单。 */
+/** 创建发货单（一张发货单只发一个仓；reservation_ids 必须是该仓预留的子集）。 */
 export interface CreateFulfillmentRequest {
   items: {
     order_line_item_id: string;
     quantity: number;
   }[];
+  stock_location_id?: string;
+  reservation_ids?: string[];
 }
 
 /** 发货（手填承运商 + 单号）。 */
@@ -150,6 +152,29 @@ export interface CreateShipmentRequest {
 /** 更新库存量（在库量）。 */
 export interface UpdateInventoryLevelRequest {
   stocked_quantity: number;
+}
+
+// —— 多仓（ADR-013）：仓库 / 按仓库存行 / 调拨 ——
+
+/** 创建仓库。priority 大者优先（分配时先扣高优先级仓）。 */
+export interface CreateStockLocationRequest {
+  name: string;
+  priority?: number;
+}
+
+/** 更新仓库；priority 语义同创建（大者优先）。 */
+export interface UpdateStockLocationRequest {
+  name?: string;
+  priority?: number;
+}
+
+/** 创建调拨单（pending 只登记，不占量；complete 时才搬货）。 */
+export interface CreateInventoryTransferRequest {
+  inventory_item_id: string;
+  from_location_id: string;
+  to_location_id: string;
+  quantity: number;
+  note?: string;
 }
 
 /** 更新设置。 */

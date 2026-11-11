@@ -26,6 +26,8 @@ export interface PriceRuleDTO {
 export interface FulfillmentDTO {
   id: string;
   order_id: string;
+  /** 所属仓（ADR-013 §3）：一张发货单只发一个仓；历史数据为 null。 */
+  stock_location_id: string | null;
   status: FulfillmentStatus;
   reservation_ids: string[];
   tracking_links: Array<{ carrier: string; number: string }> | null;
@@ -56,11 +58,23 @@ export interface ShippingPriceContext {
   weightGram?: number;
 }
 
+/** 库存预留明细（跨模块端口视图，按仓拆单要 location + quantity）。 */
+export interface ReservationDTO {
+  id: string;
+  inventory_item_id: string;
+  stock_location_id: string;
+  line_item_id: string;
+  order_id: string | null;
+  quantity: number;
+  status: string;
+  workflow_run_id: string | null;
+}
+
 /** 发货时把库存预留转真实出库（通过端口调 inventory.commitReservation）。 */
 export interface InventoryPort {
   commitReservation(reservationId: string): Promise<void>;
-  /** 按订单查未释放的预留 id（发货单自动关联预留）。 */
-  listReservationsByOrder(orderId: string): Promise<string[]>;
+  /** 按订单查未释放的预留明细（发货单按仓关联预留）。 */
+  listReservationsByOrder(orderId: string): Promise<ReservationDTO[]>;
 }
 
 export interface FulfillmentRepository {
@@ -70,6 +84,7 @@ export interface FulfillmentRepository {
   insertFulfillment(input: {
     id: string;
     orderId: string;
+    stockLocationId?: string | null;
     status: FulfillmentStatus;
     reservationIds: string[];
   }): Promise<FulfillmentDTO>;
@@ -98,6 +113,8 @@ export interface IFulfillmentModuleService {
   ): Promise<{ amountMinor: bigint; currencyCode: string }>;
   createFulfillment(input: {
     orderId: string;
+    /** 指定发货仓；不传时仅当订单预留只落一个仓才允许（兼容单仓流程）。 */
+    stockLocationId?: string;
     items: FulfillmentItemInput[];
     reservationIds?: string[];
   }): Promise<FulfillmentDTO>;

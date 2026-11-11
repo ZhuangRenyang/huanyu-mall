@@ -2,6 +2,8 @@
 
 export type ReservationStatus = "reserved" | "committed" | "released";
 
+export type InventoryTransferStatus = "pending" | "completed" | "cancelled";
+
 export interface AvailabilityDTO {
   variantId: string;
   available: number;
@@ -27,6 +29,11 @@ export interface InventoryLevelDTO {
   available_quantity: number;
 }
 
+/** 后台「仓 × SKU」库存行（带 sku，供仓储/调拨页展示）。 */
+export interface InventoryLevelRowDTO extends InventoryLevelDTO {
+  sku: string;
+}
+
 export interface InventoryItemDTO {
   id: string;
   sku: string;
@@ -38,6 +45,20 @@ export interface StockLocationDTO {
   id: string;
   name: string;
   priority: number;
+}
+
+/** 仓间调拨流水（ADR-013 §4）：只搬运 stocked，不动 reserved。 */
+export interface InventoryTransferDTO {
+  id: string;
+  inventory_item_id: string;
+  from_location_id: string;
+  to_location_id: string;
+  quantity: number;
+  status: InventoryTransferStatus;
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ReserveInput {
@@ -59,9 +80,17 @@ export interface InventoryRepository {
   /** inventory_item_variant link：变体 → inventory_item id（批量禁循环）。 */
   itemIdsByVariantIds(variantIds: string[]): Promise<Map<string, string>>;
   listItems(q: { limit: number; offset: number }): Promise<{ items: InventoryItemDTO[]; count: number }>;
+  findInventoryItem(id: string): Promise<InventoryItemDTO | null>;
   findLevelsByItemIds(itemIds: string[]): Promise<InventoryLevelDTO[]>;
+  /** 按仓列「仓 × SKU」库存行（sku 来自 inventory_item）；locationId 为空则全仓。 */
+  listLevels(q: {
+    locationId?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: InventoryLevelRowDTO[]; count: number }>;
   /** 列出可用仓库（按 priority 降序）。 */
   listLocations(): Promise<StockLocationDTO[]>;
+  findLocation(id: string): Promise<StockLocationDTO | null>;
   /** 按订单查未释放的预留 id。 */
   reservationIdsByOrder(orderId: string): Promise<string[]>;
   /** 按订单查未释放的预留明细（幂等回放用）。 */
@@ -79,6 +108,16 @@ export interface InventoryRepository {
   commitLevelQuantity(levelId: string, quantity: number): Promise<void>;
   /** 原子调整在库量：stocked += delta，available = stocked - reserved。 */
   adjustLevelQuantity(levelId: string, delta: number): Promise<void>;
+  /**
+   * 仓间搬货（ADR-013 §4）：源仓条件扣减（不能动已承诺给订单的货），
+   * 目标仓 upsert。必须在调用方事务内执行，返回源仓是否扣减成功。
+   */
+  moveStock(input: {
+    inventoryItemId: string;
+    fromLocationId: string;
+    toLocationId: string;
+    quantity: number;
+  }): Promise<boolean>;
   /** 同一事务内执行 fn；fn 收到的 repo 绑定事务连接。 */
   withTransaction<T>(fn: (repo: InventoryRepository) => Promise<T>): Promise<T>;
   createReservation(input: {
@@ -94,12 +133,34 @@ export interface InventoryRepository {
   /** 测试/种子：建库存项 + 仓库 + 库存量 + 变体关联。 */
   createInventoryItem(input: { sku: string; title?: string | null }): Promise<InventoryItemDTO>;
   createStockLocation(input: { name: string; priority?: number }): Promise<StockLocationDTO>;
+  updateStockLocation(id: string, patch: { name?: string; priority?: number }): Promise<StockLocationDTO>;
   createLevel(input: {
     inventoryItemId: string;
     stockLocationId: string;
     stockedQuantity: number;
   }): Promise<InventoryLevelDTO>;
   linkVariant(itemId: string, variantId: string): Promise<void>;
+  // —— 仓间调拨流水 ——
+  createTransfer(input: {
+    inventoryItemId: string;
+    fromLocationId: string;
+    toLocationId: string;
+    quantity: number;
+    note?: string | null;
+    createdBy?: string | null;
+  }): Promise<InventoryTransferDTO>;
+  findTransfer(id: string): Promise<InventoryTransferDTO | null>;
+  listTransfers(q: {
+    limit: number;
+    offset: number;
+    status?: InventoryTransferStatus;
+  }): Promise<{ items: InventoryTransferDTO[]; count: number }>;
+  /** 条件状态流转（CAS）：仅当当前状态为 from 时改为 to，返回是否生效（并发双完成兜底）。 */
+  transitionTransferStatus(
+    id: string,
+    from: InventoryTransferStatus,
+    to: InventoryTransferStatus,
+  ): Promise<boolean>;
 }
 
 export interface AllocateAndReserveInput {
@@ -117,9 +178,19 @@ export interface IInventoryModuleService {
   getAvailability(input: { variantIds: string[]; locationIds?: string[] }): Promise<AvailabilityDTO[]>;
   /** 可用仓库列表（按 priority 降序）；一期单仓时取第一个即默认仓。 */
   listStockLocations(): Promise<StockLocationDTO[]>;
-  /** 按订单查未释放的预留 id（发货转出库用）。 */
-  listReservationsByOrder(orderId: string): Promise<string[]>;
+  createStockLocation(input: { name: string; priority?: number }): Promise<StockLocationDTO>;
+  updateStockLocation(id: string, patch: { name?: string; priority?: number }): Promise<StockLocationDTO>;
+  /** 按订单查未释放的预留 id（workflow 幂等兜底/发货关联用）。 */
+  listReservationIdsByOrder(orderId: string): Promise<string[]>;
+  /** 按订单查未释放的预留明细（发货按仓拆单用，含 stock_location_id/quantity）。 */
+  listReservationsByOrder(orderId: string): Promise<ReservationDTO[]>;
   listInventoryItems(q: { limit: number; offset: number }): Promise<{ items: InventoryItemDTO[]; count: number }>;
+  /** 按仓列库存行（后台库存页/调拨页）。 */
+  listInventoryLevels(q: {
+    locationId?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: InventoryLevelRowDTO[]; count: number }>;
   /**
    * 整单原子分配 + 预留：按仓 priority 贪心，可跨仓拆单；同一 orderId 幂等。
    * 任一 SKU 合计不足 → 整单失败，不产生部分预留。
@@ -136,4 +207,20 @@ export interface IInventoryModuleService {
     reason: string;
   }): Promise<InventoryLevelDTO>;
   adjustLevelByLevelId(levelId: string, input: { delta: number; reason: string }): Promise<InventoryLevelDTO>;
+  // —— 仓间调拨（pending 只登记不占量；completed 才搬货）——
+  createInventoryTransfer(input: {
+    inventoryItemId: string;
+    fromLocationId: string;
+    toLocationId: string;
+    quantity: number;
+    note?: string | null;
+    createdBy?: string | null;
+  }): Promise<InventoryTransferDTO>;
+  completeInventoryTransfer(id: string): Promise<InventoryTransferDTO>;
+  cancelInventoryTransfer(id: string): Promise<InventoryTransferDTO>;
+  listInventoryTransfers(q: {
+    limit: number;
+    offset: number;
+    status?: InventoryTransferStatus;
+  }): Promise<{ items: InventoryTransferDTO[]; count: number }>;
 }

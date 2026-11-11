@@ -2,9 +2,15 @@ import {
   insufficientStock,
   invalidQuantity,
   inventoryItemNotFound,
+  inventoryItemNotFoundById,
   levelNotFound,
   reservationNotFound,
   reservationStateInvalid,
+  stockLocationNotFound,
+  transferInsufficientStock,
+  transferLocationsSame,
+  transferNotFound,
+  transferStateInvalid,
 } from "../errors.js";
 import { planAllocation, type LevelSnapshot } from "./allocation.js";
 import type {
@@ -14,9 +20,13 @@ import type {
   AvailabilityDTO,
   IInventoryModuleService,
   InventoryLevelDTO,
+  InventoryLevelRowDTO,
   InventoryRepository,
+  InventoryTransferDTO,
+  InventoryTransferStatus,
   ReservationDTO,
   ReserveInput,
+  StockLocationDTO,
 } from "../types.js";
 
 /**
@@ -37,13 +47,39 @@ export class InventoryService implements IInventoryModuleService {
   }
 
   /** 可用仓库列表（按 priority 降序）。 */
-  async listStockLocations(): Promise<import("../types.js").StockLocationDTO[]> {
+  async listStockLocations(): Promise<StockLocationDTO[]> {
     return this.repo.listLocations();
   }
 
-  /** 按订单查未释放的预留 id（发货转出库用）。 */
-  async listReservationsByOrder(orderId: string): Promise<string[]> {
+  async createStockLocation(input: { name: string; priority?: number }): Promise<StockLocationDTO> {
+    return this.repo.createStockLocation(input);
+  }
+
+  async updateStockLocation(
+    id: string,
+    patch: { name?: string; priority?: number },
+  ): Promise<StockLocationDTO> {
+    if (!(await this.repo.findLocation(id))) throw stockLocationNotFound(id);
+    return this.repo.updateStockLocation(id, patch);
+  }
+
+  /** 按订单查未释放的预留 id（workflow 幂等兜底用）。 */
+  async listReservationIdsByOrder(orderId: string): Promise<string[]> {
     return this.repo.reservationIdsByOrder(orderId);
+  }
+
+  /** 按订单查未释放的预留明细（发货按仓拆单用）。 */
+  async listReservationsByOrder(orderId: string): Promise<ReservationDTO[]> {
+    return this.repo.findReservationsByOrder(orderId);
+  }
+
+  /** 按仓列「仓 × SKU」库存行（后台库存页/调拨页）。 */
+  async listInventoryLevels(q: {
+    locationId?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: InventoryLevelRowDTO[]; count: number }> {
+    return this.repo.listLevels(q);
   }
 
   async getAvailability(input: {
@@ -232,6 +268,95 @@ export class InventoryService implements IInventoryModuleService {
     if (!level) throw levelNotFound(levelId, "");
     await this.repo.adjustLevelQuantity(level.id, input.delta);
     return (await this.repo.findLevelById(levelId))!;
+  }
+
+  // —— 仓间调拨（ADR-013 §4）：pending 只登记不占量；completed 才搬货 ——
+
+  async createInventoryTransfer(input: {
+    inventoryItemId: string;
+    fromLocationId: string;
+    toLocationId: string;
+    quantity: number;
+    note?: string | null;
+    createdBy?: string | null;
+  }): Promise<InventoryTransferDTO> {
+    assertQuantity(input.inventoryItemId, input.quantity);
+    if (input.fromLocationId === input.toLocationId) {
+      throw transferLocationsSame(input.fromLocationId, input.toLocationId);
+    }
+    if (!(await this.repo.findInventoryItem(input.inventoryItemId))) {
+      throw inventoryItemNotFoundById(input.inventoryItemId);
+    }
+    if (!(await this.repo.findLocation(input.fromLocationId))) {
+      throw stockLocationNotFound(input.fromLocationId);
+    }
+    if (!(await this.repo.findLocation(input.toLocationId))) {
+      throw stockLocationNotFound(input.toLocationId);
+    }
+    return this.repo.createTransfer(input);
+  }
+
+  /**
+   * 完成调拨：单事务内「源仓条件扣减 + 目标仓累加/新建 + 状态 completed」。
+   * 源仓可用量不足时 moveStock 影响 0 行 → 抛错并整体回滚（两仓都不动）。
+   */
+  async completeInventoryTransfer(id: string): Promise<InventoryTransferDTO> {
+    return this.repo.withTransaction(async (repo) => {
+      const transfer = await repo.findTransfer(id);
+      if (!transfer) throw transferNotFound(id);
+      if (transfer.status !== "pending") throw transferStateInvalid(id, transfer.status);
+
+      if (!(await repo.findInventoryItem(transfer.inventory_item_id))) {
+        throw inventoryItemNotFoundById(transfer.inventory_item_id);
+      }
+      if (!(await repo.findLocation(transfer.from_location_id))) {
+        throw stockLocationNotFound(transfer.from_location_id);
+      }
+      if (!(await repo.findLocation(transfer.to_location_id))) {
+        throw stockLocationNotFound(transfer.to_location_id);
+      }
+
+      const moved = await repo.moveStock({
+        inventoryItemId: transfer.inventory_item_id,
+        fromLocationId: transfer.from_location_id,
+        toLocationId: transfer.to_location_id,
+        quantity: transfer.quantity,
+      });
+      if (!moved) {
+        throw transferInsufficientStock(
+          transfer.inventory_item_id,
+          transfer.from_location_id,
+          transfer.quantity,
+        );
+      }
+
+      // CAS：并发双完成时只有一笔能落状态，另一笔抛错回滚搬货。
+      if (!(await repo.transitionTransferStatus(id, "pending", "completed"))) {
+        throw transferStateInvalid(id, "completed");
+      }
+      return (await repo.findTransfer(id))!;
+    });
+  }
+
+  /** 取消调拨：仅 pending 可取消（已完成的不可回滚，否则库存账会对不上）。 */
+  async cancelInventoryTransfer(id: string): Promise<InventoryTransferDTO> {
+    return this.repo.withTransaction(async (repo) => {
+      const transfer = await repo.findTransfer(id);
+      if (!transfer) throw transferNotFound(id);
+      if (transfer.status !== "pending") throw transferStateInvalid(id, transfer.status);
+      if (!(await repo.transitionTransferStatus(id, "pending", "cancelled"))) {
+        throw transferStateInvalid(id, "cancelled");
+      }
+      return (await repo.findTransfer(id))!;
+    });
+  }
+
+  async listInventoryTransfers(q: {
+    limit: number;
+    offset: number;
+    status?: InventoryTransferStatus;
+  }): Promise<{ items: InventoryTransferDTO[]; count: number }> {
+    return this.repo.listTransfers(q);
   }
 }
 

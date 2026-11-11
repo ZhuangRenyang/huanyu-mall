@@ -4,7 +4,7 @@ import { linkable } from "./linkable.js";
 import * as schema from "./models/index.js";
 import { DrizzleFulfillmentRepository } from "./repositories/fulfillment.repository.js";
 import { FulfillmentService } from "./services/fulfillment.service.js";
-import type { InventoryPort } from "./types.js";
+import type { InventoryPort, ReservationDTO } from "./types.js";
 
 export * from "./types.js";
 export * from "./errors.js";
@@ -16,7 +16,7 @@ export default Module("fulfillment", {
   service: (ctx) => {
     const inventory = ctx.resolve<{
       commitReservation(id: string): Promise<void>;
-      listReservationsByOrder(orderId: string): Promise<string[]>;
+      listReservationsByOrder(orderId: string): Promise<ReservationDTO[]>;
     }>("inventory");
     const inventoryPort: InventoryPort = {
       commitReservation: (id) => inventory.commitReservation(id),

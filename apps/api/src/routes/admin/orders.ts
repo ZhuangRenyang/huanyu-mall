@@ -10,6 +10,8 @@ const refundBody = z.object({ amount_minor: z.number().int().positive(), reason:
 const createFulfillmentBody = z.object({
   items: z.array(z.object({ order_line_item_id: z.string(), quantity: z.number().int().min(1) })).min(1),
   reservation_ids: z.array(z.string()).optional(),
+  // 发货仓（ADR-013 §3）：订单预留跨多仓时必填，单仓时可省略。
+  stock_location_id: z.string().min(1).optional(),
 });
 const addShipmentBody = z.object({
   carrier_name: z.string(),
@@ -86,6 +88,25 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
+  /**
+   * 订单预留明细（含仓）：后台按仓拆发货单前先让操作员选仓。
+   * 只读，不写审计。
+   */
+  app.get("/api/v1/admin/orders/:id/reservations", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await deps.services.order.retrieveOrder(id);
+    const reservations = await deps.services.inventory.listReservationsByOrder(id);
+    reply.ok({
+      items: reservations.map((r) => ({
+        id: r.id,
+        stock_location_id: r.stock_location_id,
+        quantity: r.quantity,
+        inventory_item_id: r.inventory_item_id,
+      })),
+      count: reservations.length,
+    });
+  });
+
   app.post(
     "/api/v1/admin/orders/:id/fulfillments",
     { preHandler: guard, schema: { body: createFulfillmentBody } },
@@ -94,6 +115,7 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
       const b = req.body as z.infer<typeof createFulfillmentBody>;
       const fulfillment = await deps.services.fulfillment.createFulfillment({
         orderId: id,
+        stockLocationId: b.stock_location_id,
         items: b.items.map((i) => ({ orderLineItemId: i.order_line_item_id, quantity: i.quantity })),
         reservationIds: b.reservation_ids ?? [],
       });

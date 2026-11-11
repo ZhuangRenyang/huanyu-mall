@@ -47,6 +47,8 @@ export interface Shipment {
 export interface Fulfillment {
   id: string;
   order_id?: string;
+  /** 所属仓（ADR-013 §3）：一张发货单只发一个仓；历史数据为 null。 */
+  stock_location_id?: string | null;
   status: 'not_fulfilled' | 'fulfilled' | 'shipped' | 'delivered' | 'canceled';
   shipments?: Shipment[];
 }
@@ -76,6 +78,32 @@ export interface InventoryLevel {
   stocked_quantity: number;
   reserved_quantity: number;
   available_quantity: number;
+}
+
+/** 按仓库存行（仓 × SKU，带 sku 便于后台展示）。 */
+export interface InventoryLevelRow extends InventoryLevel {
+  sku: string;
+}
+
+/** 仓库。priority 大者优先（分配时先扣高优先级仓）。 */
+export interface StockLocation {
+  id: string;
+  name: string;
+  priority: number;
+}
+
+/** 仓间调拨流水。pending 只登记不占量；completed 才搬货。 */
+export interface InventoryTransfer {
+  id: string;
+  inventory_item_id: string;
+  from_location_id: string;
+  to_location_id: string;
+  quantity: number;
+  status: 'pending' | 'completed' | 'cancelled';
+  note: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /** 文件信息。 */
