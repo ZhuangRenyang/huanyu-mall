@@ -64,3 +64,17 @@ describe("迁移装载（Phase 4 审计表）", () => {
     }
   });
 });
+
+describe("迁移来源清单（防「加了模块忘了加迁移」）", () => {
+  it("packages/modules 下每个有 migrations 的模块都在清单里", async () => {
+    const { readdirSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { MODULES } = await import("../src/infra/migration-sources.js");
+    const root = join(process.cwd(), "..", "..", "packages", "modules");
+    const withMigrations = readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && existsSync(join(root, d.name, "migrations")))
+      .map((d) => d.name);
+    const missing = withMigrations.filter((m) => !MODULES.includes(m));
+    expect(missing).toEqual([]);
+  });
+});
