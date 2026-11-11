@@ -169,6 +169,24 @@ expect_num "中国税率（bps）" "$(printf '%s' "$BODY" | jq -r '.data.country
 expect_num "默认税率（bps）" "$(jqr '.data.default_rate.rate_bps')" "1000"
 
 # ---------------------------------------------------------------- #
+sec "3.1 店面可选国家：顾客真的能选（不只中国一条）"
+call GET "/store/checkout/countries"
+expect_2xx "读可选国家" || exit 1
+COUNTRY_COUNT="$(jqr '.data.count')"
+if is_int "$COUNTRY_COUNT" && (( COUNTRY_COUNT > 10 )); then
+  ok "可选国家数量：$COUNTRY_COUNT（> 10）"
+else
+  bad "可选国家数量异常：$COUNTRY_COUNT"
+fi
+expect_num "默认国家" "$(jqr '.data.default_country')" "CN"
+expect_num "中国税率（应为已配的 1300）" \
+  "$(printf '%s' "$BODY" | jq -r '.data.items[] | select(.code=="CN") | .tax_rate_bps' | tr -d '\r' | head -1)" "1300"
+expect_num "中国税率来源（country）" \
+  "$(printf '%s' "$BODY" | jq -r '.data.items[] | select(.code=="CN") | .rate_source' | tr -d '\r' | head -1)" "country"
+expect_num "日本走默认税率来源（default）" \
+  "$(printf '%s' "$BODY" | jq -r '.data.items[] | select(.code=="JP") | .rate_source' | tr -d '\r' | head -1)" "default"
+
+# ---------------------------------------------------------------- #
 sec "4. 准备商品与库存"
 call GET "/admin/products?limit=100" "" auth
 expect_2xx "读商品列表" || exit 1
