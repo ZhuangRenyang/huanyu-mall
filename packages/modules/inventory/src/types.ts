@@ -89,6 +89,8 @@ export interface InventoryRepository {
   /** 按仓列「仓 × SKU」库存行（sku 来自 inventory_item）；locationId 为空则全仓。 */
   listLevels(q: {
     locationId?: string;
+    /** 只返回可用量 ≤ 该值的行（库存预警，ADR-039）。 */
+    lowStockThreshold?: number;
     limit: number;
     offset: number;
   }): Promise<{ items: InventoryLevelRowDTO[]; count: number }>;
@@ -192,6 +194,8 @@ export interface IInventoryModuleService {
   /** 按仓列库存行（后台库存页/调拨页）。 */
   listInventoryLevels(q: {
     locationId?: string;
+    /** 只返回可用量 ≤ 该值的行（库存预警）。 */
+    lowStockThreshold?: number;
     limit: number;
     offset: number;
   }): Promise<{ items: InventoryLevelRowDTO[]; count: number }>;

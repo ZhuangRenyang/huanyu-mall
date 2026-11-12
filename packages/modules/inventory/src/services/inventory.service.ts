@@ -77,6 +77,7 @@ export class InventoryService implements IInventoryModuleService {
   /** 按仓列「仓 × SKU」库存行（后台库存页/调拨页）。 */
   async listInventoryLevels(q: {
     locationId?: string;
+    lowStockThreshold?: number;
     limit: number;
     offset: number;
   }): Promise<{ items: InventoryLevelRowDTO[]; count: number }> {

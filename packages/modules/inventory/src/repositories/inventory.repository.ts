@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -135,6 +135,7 @@ export class DrizzleInventoryRepository implements InventoryRepository {
   /** 按仓列「仓 × SKU」库存行（sku 冗余带出，后台库存/调拨页直接展示）。 */
   async listLevels(q: {
     locationId?: string;
+    lowStockThreshold?: number;
     limit: number;
     offset: number;
   }): Promise<{ items: InventoryLevelRowDTO[]; count: number }> {
@@ -142,6 +143,11 @@ export class DrizzleInventoryRepository implements InventoryRepository {
       isNull(schema.inventoryLevel.deletedAt),
       isNull(schema.inventoryItem.deletedAt),
       q.locationId ? eq(schema.inventoryLevel.stockLocationId, q.locationId) : undefined,
+      // 库存预警：可用量 ≤ 阈值。用 available 而不是 stocked ——
+      // 已预留的货卖不了，按在库量预警会漏掉「看起来有货但已经卖光」的 SKU
+      q.lowStockThreshold !== undefined
+        ? lte(schema.inventoryLevel.availableQuantity, q.lowStockThreshold)
+        : undefined,
     );
     const rows = await this.db
       .select({

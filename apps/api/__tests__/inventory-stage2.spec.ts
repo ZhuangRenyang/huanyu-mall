@@ -321,3 +321,24 @@ describe("发货计划（跨仓拆单自动化）", () => {
     }
   });
 });
+
+describe("库存预警筛选（ADR-039）", () => {
+  it("low_stock_threshold 过滤可用量：命中返回行，未命中返回空", async () => {
+    await withApp(async (app) => {
+      const hit = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/inventory-levels?low_stock_threshold=10",
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(hit.statusCode, hit.body).toBe(200);
+      expect(hit.json().data.items).toHaveLength(1);
+
+      const miss = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/inventory-levels?low_stock_threshold=3",
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(miss.json().data.items).toHaveLength(0);
+    });
+  });
+});

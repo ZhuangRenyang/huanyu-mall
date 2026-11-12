@@ -239,13 +239,27 @@ export async function updateStockLocation(id: string, input: StockLocationInput)
 // 对外接口（按仓库存行）
 // ------------------------------------------------------------------ *
 
-export async function listInventoryLevels(locationId?: string): Promise<InventoryLevelView[]> {
+/**
+ * 按仓库存行。
+ *
+ * `lowStockThreshold` 传了就只返回可用量 ≤ 该值的行（库存预警，ADR-039）。
+ * 阈值由界面传，不在后端写死 —— 卖手机和卖家具的「低库存」不是一个数。
+ */
+export async function listInventoryLevels(
+  locationId?: string,
+  lowStockThreshold?: number,
+): Promise<InventoryLevelView[]> {
   if (getAdminApiMode() !== 'live') {
-    const list = mockLevels();
-    return locationId ? list.filter((l) => l.locationId === locationId) : list;
+    let list = mockLevels();
+    if (locationId) list = list.filter((l) => l.locationId === locationId);
+    if (lowStockThreshold !== undefined) {
+      list = list.filter((l) => l.available <= lowStockThreshold);
+    }
+    return list;
   }
   const res = (await adminClient().listInventoryLevels({
     ...(locationId ? { location_id: locationId } : {}),
+    ...(lowStockThreshold !== undefined ? { low_stock_threshold: lowStockThreshold } : {}),
     limit: 200,
   })) as { items?: InventoryLevelRow[] };
   return (res.items ?? []).map(mapLevel);

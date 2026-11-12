@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Boxes } from 'lucide-react';
-import { EmptyState } from '@mall/ui';
+import { Badge, EmptyState } from '@mall/ui';
 import { SelectField } from './field';
 import { listInventoryLevels, listStockLocations } from '@/lib/admin-api';
 import type { InventoryLevelView, StockLocationView } from '@/lib/admin-api';
@@ -14,6 +14,10 @@ export function InventoryLevelsTab() {
   const [locations, setLocations] = useState<StockLocationView[]>([]);
   const [levels, setLevels] = useState<InventoryLevelView[]>([]);
   const [locationId, setLocationId] = useState('all');
+  /** 库存预警（ADR-039）：只看可用量 ≤ 阈值的行。阈值由商家定，不写死。 */
+  const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [threshold, setThreshold] = useState('5');
+  const thresholdNum = Math.max(0, Math.floor(Number(threshold)) || 0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +25,10 @@ export function InventoryLevelsTab() {
     setLoading(true);
     setError(null);
     try {
-      const [locs, rows] = await Promise.all([listStockLocations(), listInventoryLevels()]);
+      const [locs, rows] = await Promise.all([
+        listStockLocations(),
+        listInventoryLevels(undefined, lowStockOnly ? thresholdNum : undefined),
+      ]);
       setLocations(locs);
       setLevels(rows);
     } catch (err) {
@@ -29,7 +36,7 @@ export function InventoryLevelsTab() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [lowStockOnly, thresholdNum]);
 
   useEffect(() => {
     void refresh();
@@ -48,14 +55,37 @@ export function InventoryLevelsTab() {
         <p className="text-sm text-muted-foreground">
           可用量由后端下发（在库 − 已预留）。多仓时下单按优先级从高到低分配，同优先级老仓优先。
         </p>
-        <div className="w-48">
-          <SelectField
-            id="inventory-location-filter"
-            label="仓库"
-            value={locationId}
-            onChange={(e) => setLocationId(e.target.value)}
-            options={[{ value: 'all', label: '全部仓库' }, ...locations.map((l) => ({ value: l.id, label: l.name }))]}
-          />
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex items-center gap-2 pb-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={lowStockOnly}
+              onChange={(e) => setLowStockOnly(e.target.checked)}
+              className="size-4 accent-primary"
+            />
+            只看低库存
+          </label>
+          <label className="text-sm text-foreground">
+            <span className="mb-1 block text-xs text-muted-foreground">低库存阈值</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={threshold}
+              onChange={(e) => setThreshold(e.target.value)}
+              className="tabular h-9 w-24 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-ring"
+              aria-label="低库存阈值"
+            />
+          </label>
+          <div className="w-48">
+            <SelectField
+              id="inventory-location-filter"
+              label="仓库"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              options={[{ value: 'all', label: '全部仓库' }, ...locations.map((l) => ({ value: l.id, label: l.name }))]}
+            />
+          </div>
         </div>
       </div>
 
@@ -90,10 +120,22 @@ export function InventoryLevelsTab() {
                     className={
                       level.available === 0
                         ? 'tabular px-4 py-3 text-right text-muted-foreground'
-                        : 'tabular px-4 py-3 text-right'
+                        : level.available <= thresholdNum
+                          ? 'tabular px-4 py-3 text-right font-medium text-destructive'
+                          : 'tabular px-4 py-3 text-right'
                     }
                   >
                     {level.available}
+                    {level.available > 0 && level.available <= thresholdNum && (
+                      <Badge variant="destructive" className="ml-2">
+                        偏低
+                      </Badge>
+                    )}
+                    {level.available === 0 && (
+                      <Badge variant="neutral" className="ml-2">
+                        无货
+                      </Badge>
+                    )}
                   </td>
                 </tr>
               ))}

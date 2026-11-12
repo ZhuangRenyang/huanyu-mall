@@ -14,6 +14,8 @@ const adjustBody = z.object({
 });
 const listLevelsQuery = listQuery.extend({
   location_id: z.string().min(1).optional(),
+  /** 库存预警：只看可用量 ≤ 该值的行（ADR-039）。 */
+  low_stock_threshold: z.coerce.number().int().min(0).max(1000).optional(),
 });
 const createStockLocationBody = z.object({
   name: z.string().min(1),
@@ -136,6 +138,9 @@ export function adminInventoryRoutes(app: FastifyInstance, deps: AppDeps): void 
       const q = req.query as z.infer<typeof listLevelsQuery>;
       const res = await deps.services.inventory.listInventoryLevels({
         locationId: q.location_id,
+        ...(q.low_stock_threshold !== undefined
+          ? { lowStockThreshold: q.low_stock_threshold }
+          : {}),
         limit: q.limit,
         offset: q.offset,
       });

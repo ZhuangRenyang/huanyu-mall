@@ -682,20 +682,26 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         if (patch.priority !== undefined) loc.priority = patch.priority;
         return { ...loc };
       },
-      listInventoryLevels: async (q?: { locationId?: string }) => ({
-        items: [
-          {
-            id: "invlvl_1",
-            inventory_item_id: "invitem_1",
-            sku: "SKU-1",
-            stock_location_id: q?.locationId ?? "loc_1",
-            stocked_quantity: 10,
-            reserved_quantity: 0,
-            available_quantity: 10,
-          },
-        ],
-        count: 1,
-      }),
+      listInventoryLevels: async (q?: { locationId?: string; lowStockThreshold?: number }) => {
+        // 一行可用 10 的库存：阈值 ≥10 命中，<10 不命中（够验筛选是否真的生效）
+        const available = 10;
+        const hit =
+          q?.lowStockThreshold === undefined || available <= q.lowStockThreshold;
+        const items = hit
+          ? [
+              {
+                id: "invlvl_1",
+                inventory_item_id: "invitem_1",
+                sku: "SKU-1",
+                stock_location_id: q?.locationId ?? "loc_1",
+                stocked_quantity: 10,
+                reserved_quantity: 0,
+                available_quantity: available,
+              },
+            ]
+          : [];
+        return { items, count: items.length };
+      },
       listReservationIdsByOrder: async () => ["rsv_1"],
       listReservationsByOrder: async (orderId: string) => [
         {
