@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { OrderStatus } from "@mall/order";
 import { PaginationQuerySchema } from "@mall/types";
 import { errors } from "@mall/core";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
-import { mapAdminOrder } from "../mappers.js";
+import { mapAdminOrder, mapOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
 
 /**
@@ -17,6 +18,11 @@ const createFulfillmentBody = z.object({
   reservation_ids: z.array(z.string()).optional(),
   // 发货仓（ADR-013 §3）：订单预留跨多仓时必填，单仓时可省略。
   stock_location_id: z.string().min(1).optional(),
+});
+/** 列表筛选：状态页签（逗号分隔）+ 订单号/邮箱搜索，与淘宝订单列表一致。 */
+const adminOrderListQuery = PaginationQuerySchema.extend({
+  status: z.string().max(120).optional(),
+  q: z.string().min(1).max(80).optional(),
 });
 const addShipmentBody = z.object({
   carrier_name: z.string(),
@@ -31,13 +37,28 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
 
   app.get(
     "/api/v1/admin/orders",
-    { preHandler: guard, schema: { querystring: PaginationQuerySchema } },
+    { preHandler: guard, schema: { querystring: adminOrderListQuery } },
     async (req, reply) => {
-      const q = req.query as { limit: number; offset: number };
-      const res = await deps.services.order.listOrders({ limit: q.limit, offset: q.offset });
+      const q = req.query as { limit: number; offset: number; status?: string; q?: string };
+      // 页签是多状态（待发货 = paid + partially_fulfilled），所以用逗号分隔而不是单值
+      const statuses = q.status
+        ? (q.status.split(",").map((s) => s.trim()).filter(Boolean) as OrderStatus[])
+        : undefined;
+      const [res, counts] = await Promise.all([
+        deps.services.order.listOrderSummaries({
+          limit: q.limit,
+          offset: q.offset,
+          ...(statuses ? { statuses } : {}),
+          ...(q.q ? { q: q.q } : {}),
+        }),
+        // 页签角标：各状态计数一次 GROUP BY，前端按页签分组求和
+        deps.services.order.countByStatus(),
+      ]);
       reply.ok({
-        items: res.items,
+        // 行项一并返回：列表的「商品」列没有它就是一列空白
+        items: res.items.map(mapOrder),
         count: res.count,
+        counts,
         offset: q.offset,
         limit: q.limit,
         hasMore: q.offset + res.items.length < res.count,

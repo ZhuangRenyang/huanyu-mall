@@ -139,10 +139,76 @@ export async function listOrderLogs(id: string): Promise<AdminOrderLog[]> {
   }));
 }
 
-export async function listOrders(): Promise<AdminOrder[]> {
-  if (getAdminApiMode() !== 'live') return mockListOrders();
-  const res = (await adminClient().listOrders({ limit: 100 })) as { items?: ApiOrder[] };
-  return (res.items ?? []).map(mapOrder);
+export interface OrderListParams {
+  /** 状态集合（页签是多状态，如待发货 = paid + partially_fulfilled）。 */
+  statuses?: string[];
+  /** 订单号或顾客邮箱。 */
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface OrderListResult {
+  items: AdminOrder[];
+  /** 满足筛选条件的总条数（服务端分页用）。 */
+  total: number;
+  /** 各状态计数（页签角标）；mock 模式下由本地订单现算。 */
+  counts: Record<string, number>;
+  hasMore: boolean;
+}
+
+/**
+ * 订单列表：筛选、搜索与分页都在服务端。
+ *
+ * 之前是一次拉 100 条再本地筛 —— 订单一多就静默漏，而且工作台说「待发货 5」
+ * 点进来可能是空列表（那 5 单不在前 100 条里）。
+ */
+export async function listOrders(params: OrderListParams = {}): Promise<OrderListResult> {
+  const limit = params.limit ?? 20;
+  const offset = params.offset ?? 0;
+
+  if (getAdminApiMode() !== 'live') {
+    let all = mockListOrders();
+    const counts: Record<string, number> = {};
+    for (const o of all) {
+      const key = o.orderStatus ?? 'unknown';
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    const wanted = params.statuses;
+    if (wanted && wanted.length > 0) {
+      all = all.filter((o) => wanted.includes(o.orderStatus ?? 'unknown'));
+    }
+    if (params.q) {
+      const needle = params.q.toLowerCase();
+      all = all.filter(
+        (o) =>
+          o.id.toLowerCase().includes(needle) ||
+          o.customerEmail.toLowerCase().includes(needle),
+      );
+    }
+    return {
+      items: all.slice(offset, offset + limit),
+      total: all.length,
+      counts,
+      hasMore: offset + limit < all.length,
+    };
+  }
+
+  const query: Record<string, string | number> = { limit, offset };
+  if (params.statuses && params.statuses.length > 0) query.status = params.statuses.join(',');
+  if (params.q) query.q = params.q;
+  const res = (await adminClient().listOrders(query)) as {
+    items?: ApiOrder[];
+    count?: number;
+    counts?: Record<string, number>;
+    hasMore?: boolean;
+  };
+  return {
+    items: (res.items ?? []).map(mapOrder),
+    total: res.count ?? 0,
+    counts: res.counts ?? {},
+    hasMore: res.hasMore === true,
+  };
 }
 
 export async function getOrder(id: string): Promise<AdminOrder | null> {

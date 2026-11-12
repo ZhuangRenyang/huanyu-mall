@@ -183,6 +183,10 @@ export interface OrderQuery {
   limit?: number;
   offset?: number;
   status?: OrderStatus;
+  /** 多状态筛选（后台页签：待发货 = paid + partially_fulfilled）。 */
+  statuses?: OrderStatus[];
+  /** 关键字：订单号或顾客邮箱（后台订单搜索）。 */
+  q?: string;
   /** 按购物车反查订单（支付侧复用 workflow 建好的支付集合时用）。 */
   cartId?: string;
   /** 只看某个顾客的订单（店面「我的订单」）。 */

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -387,9 +387,18 @@ export class DrizzleOrderRepository implements OrderRepository {
   async list(q: OrderQuery): Promise<{ items: OrderDTO[]; count: number }> {
     const conditions = [
       q.status ? eq(schema.order.status, q.status) : null,
+      // 后台页签用多状态（待发货 = paid + partially_fulfilled），单状态仍兼容
+      q.statuses && q.statuses.length > 0 ? inArray(schema.order.status, q.statuses) : null,
       q.cartId ? eq(schema.order.cartId, q.cartId) : null,
       // 顾客列表必须带这个条件：漏了会把全店订单返回给任意顾客
       q.customerId ? eq(schema.order.customerId, q.customerId) : null,
+      // 后台搜索：订单号或邮箱。不做标题搜索 —— 订单号是商家手里唯一的线索
+      q.q
+        ? or(
+            ilike(schema.order.id, `%${q.q}%`),
+            ilike(schema.order.email, `%${q.q}%`),
+          )
+        : null,
     ].filter((c): c is SQL => c !== null);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const rows = await this.db

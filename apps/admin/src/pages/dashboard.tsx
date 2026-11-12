@@ -85,7 +85,7 @@ export function DashboardPage() {
           label="待发货"
           value={String(pending.toFulfill)}
           hint={pending.toFulfill > 0 ? '付过款还没发完' : '没有积压'}
-          href="/orders"
+          href="/orders?filter=unfulfilled"
           actionLabel="去发货"
         />
         <MetricCard

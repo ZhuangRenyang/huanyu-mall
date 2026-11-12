@@ -36,6 +36,8 @@ export type {
   OrderFulfillmentView,
   FulfillmentPlanView,
   ShipOrderOptions,
+  OrderListParams,
+  OrderListResult,
 } from './admin-orders';
 
 export {

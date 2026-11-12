@@ -165,7 +165,12 @@ const INITIAL_THEME: Record<string, unknown> = {
   metadata: null,
 };
 
-export function makeDeps(): AppDeps & { seen: Set<string>; auditRepo: InMemoryAuditRepository } {
+export function makeDeps(): AppDeps & {
+  seen: Set<string>;
+  auditRepo: InMemoryAuditRepository;
+  /** 共享状态：测试可以改订单是否已创建、分类列表等前置条件。 */
+  state: FakeServicesState;
+} {
   const state: FakeServicesState = {
     seen: new Set<string>(),
     providerConfig: new Map<string, Record<string, string>>(),
@@ -200,5 +205,6 @@ export function makeDeps(): AppDeps & { seen: Set<string>; auditRepo: InMemoryAu
     audit: auditFixture.service,
     seen: state.seen,
     auditRepo: auditFixture.repo,
+    state,
   };
 }

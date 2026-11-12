@@ -853,8 +853,29 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           },
         ];
       },
-      listOrderSummaries: async (q: { customerId?: string; limit?: number; offset?: number }) => {
-        if (q.customerId !== "cust_1") return { items: [], count: 0 };
+      listOrderSummaries: async (q: {
+        customerId?: string;
+        statuses?: string[];
+        q?: string;
+        limit?: number;
+        offset?: number;
+      }) => {
+        // 店面：只返回该顾客的订单
+        if (q.customerId) {
+          if (q.customerId !== "cust_1") return { items: [], count: 0 };
+        } else if (!state.orderCreated) {
+          // 后台：没下过单就是空列表
+          return { items: [], count: 0 };
+        }
+        // 后台页签与搜索：按状态集合 / 订单号邮箱过滤
+        if (q.statuses && q.statuses.length > 0 && !q.statuses.includes(order.status)) {
+          return { items: [], count: 0 };
+        }
+        if (q.q) {
+          const needle = q.q.toLowerCase();
+          const hay = `${order.id} ${order.email}`.toLowerCase();
+          if (!hay.includes(needle)) return { items: [], count: 0 };
+        }
         const item = { ...order, customer_id: "cust_1", items: [{ ...order.items[0] }] };
         return { items: [item], count: 1 };
       },
