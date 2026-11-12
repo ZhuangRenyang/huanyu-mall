@@ -172,6 +172,8 @@ export interface OrderRecord {
   contactName?: string;
   shippingRegion?: string;
   shippingLine1?: string;
+  /** 物流单号：后台发货时填的，顾客在订单详情看「到哪了」（ADR-033）。 */
+  tracking?: { carrier: string; number: string };
 }
 
 const ORDER_PREFIX = 'order:';
@@ -539,6 +541,8 @@ export function toOrderRecord(order: Order): OrderRecord {
     })),
     createdAt: order.placed_at ? Date.parse(order.placed_at) : Date.now(),
     pollCount: 0,
+    // 物流：取第一张有单号的发货单。拆包分批发时，顾客先看到第一个包裹
+    ...mapTracking(order),
     ...(address
       ? {
           contactName: [address.first_name, address.last_name].filter(Boolean).join(' '),
@@ -551,6 +555,15 @@ export function toOrderRecord(order: Order): OrderRecord {
 }
 
 /** 查询 live 订单（结果页轮询用）。查不到返回 null。 */
+/** 从订单的发货单里取一条物流单号（没有就返回空对象，不塞 undefined 字段）。 */
+function mapTracking(order: Order): { tracking?: { carrier: string; number: string } } {
+  for (const f of order.fulfillments ?? []) {
+    const link = f.tracking_links?.find((l) => l.number);
+    if (link) return { tracking: { carrier: link.carrier, number: link.number } };
+  }
+  return {};
+}
+
 export async function loadLiveOrder(orderId: string): Promise<OrderRecord | null> {
   try {
     const order = (await getStoreClient().getOrder(orderId)) as Order;

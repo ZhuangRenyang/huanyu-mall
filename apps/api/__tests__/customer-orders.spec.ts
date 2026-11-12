@@ -154,3 +154,26 @@ describe("顾客地址簿", () => {
     });
   });
 });
+
+describe("订单详情带物流（ADR-033）", () => {
+  it("商家填了单号，顾客在订单详情看得到快递公司与单号", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/store/orders/ord_1",
+        headers: customer,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const data = res.json().data;
+      expect(Array.isArray(data.fulfillments)).toBe(true);
+      expect(data.fulfillments[0]).toMatchObject({
+        id: "fulf_1",
+        status: "shipped",
+      });
+      expect(data.fulfillments[0].tracking_links[0]).toMatchObject({
+        carrier: "顺丰",
+        number: "SF1",
+      });
+    });
+  });
+});

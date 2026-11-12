@@ -390,6 +390,21 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OrderLineItem' }
         placed_at: { type: string, format: date-time, example: "2026-11-08T10:00:00Z" }
+        fulfillments:
+          type: array
+          description: 发货单与物流单号（仅详情接口返回，ADR-033）。顾客据此看「包裹到哪了」。
+          items:
+            type: object
+            properties:
+              id: { type: string, example: fulf_01H }
+              status: { type: string, enum: [pending, shipped, delivered, canceled], example: shipped }
+              tracking_links:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    carrier: { type: string, example: "顺丰" }
+                    number: { type: string, example: "SF1234567890" }
 
     # ===== 客户 =====
     Address:

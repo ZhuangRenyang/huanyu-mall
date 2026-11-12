@@ -89,7 +89,21 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     const { id } = req.params as { id: string };
     const order = await deps.services.order.retrieveOrder(id);
     assertOrderAccess(order, req.auth);
-    reply.ok(mapOrder(order));
+
+    /*
+     * 带上发货单：商家在后台填了快递单号，顾客必须能在「我的订单」看到 ——
+     * 「我的包裹到哪了」是下单后最高频的查询。改造前这个接口不返回物流，
+     * 店面前端即便有渲染分支也永远是空的（ADR-033）。
+     */
+    const fulfillments = await deps.services.fulfillment.listByOrder(id);
+    reply.ok({
+      ...mapOrder(order),
+      fulfillments: fulfillments.map((f) => ({
+        id: f.id,
+        status: f.status,
+        tracking_links: f.tracking_links ?? [],
+      })),
+    });
   });
 
   /**

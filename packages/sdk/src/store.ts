@@ -227,6 +227,12 @@ export interface Order {
   shipping_address?: OrderShippingAddress;
   line_items: OrderLineItem[];
   placed_at?: string;
+  /** 发货单（含物流单号）：顾客端「物流信息」用它（ADR-033）。 */
+  fulfillments?: Array<{
+    id: string;
+    status: string;
+    tracking_links: Array<{ carrier: string; number: string }>;
+  }>;
 }
 
 /** 顾客。 */
