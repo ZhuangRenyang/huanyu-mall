@@ -36,6 +36,8 @@ const updateProductBody = z.object({
   status: z.enum(["draft", "published", "archived"]).optional(),
   shipping_profile_id: z.string().nullable().optional(),
   free_shipping: z.boolean().optional(),
+  /** 整组替换分类关联（不传 = 不动；空数组 = 清空）。 */
+  category_ids: z.array(z.string()).optional(),
 });
 /** 列表筛选：状态页签 + 标题/编码搜索（对应淘宝的「出售中/仓库中」与搜索框）。 */
 const adminProductListQuery = PaginationQuerySchema.extend({
@@ -252,6 +254,8 @@ export function adminProductRoutes(app: FastifyInstance, deps: AppDeps): void {
           ? { shippingProfileId: b.shipping_profile_id }
           : {}),
         ...(b.free_shipping !== undefined ? { freeShipping: b.free_shipping } : {}),
+        // 分类同理：不显式映射就会「保存成功但分类没变」
+        ...(b.category_ids !== undefined ? { categoryIds: b.category_ids } : {}),
       });
       await deps.audit.record(
         auditEntry(req, {

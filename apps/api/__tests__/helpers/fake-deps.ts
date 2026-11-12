@@ -174,6 +174,10 @@ export function makeDeps(): AppDeps & { seen: Set<string>; auditRepo: InMemoryAu
     revokedRefreshTokens: 0,
     orderCreated: false,
     registerMode: "email",
+    categories: [
+      { id: "cat_1", name: "服饰", handle: "apparel", parent_id: null, sort_order: 0, product_count: 1 },
+      { id: "cat_2", name: "外套", handle: "coats", parent_id: "cat_1", sort_order: 0, product_count: 0 },
+    ],
   };
   const auditFixture = makeAuditFixture();
   const services = makeFakeServices(state);

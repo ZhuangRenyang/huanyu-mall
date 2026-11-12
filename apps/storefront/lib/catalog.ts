@@ -53,6 +53,10 @@ export interface MockCategory {
   id: string;
   name: string;
   handle: string;
+  /** 父分类；null/undefined = 一级分类（ADR-028 只做两级）。 */
+  parentId?: string | null;
+  /** 该类下上架中的商品数（店面只算已上架）。 */
+  productCount?: number;
 }
 
 export interface AttributeGroup {

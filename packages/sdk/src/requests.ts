@@ -98,6 +98,8 @@ export interface CreateProductRequest {
   shipping_profile_id?: string | null;
   /** 卖家包邮：该商品不产生运费。 */
   free_shipping?: boolean;
+  /** 所属分类（可多选，对应淘宝发布页的「商品分类」）。 */
+  category_ids?: string[];
   attributes?: AttributeInput[];
   variants?: CreateVariantRequest[];
 }
@@ -110,6 +112,23 @@ export interface UpdateProductRequest {
   subtitle?: string | null;
   description?: string | null;
   status?: 'draft' | 'published' | 'archived';
+  /** 整组替换分类关联（不传 = 不动；空数组 = 清空）。 */
+  category_ids?: string[];
+}
+
+/** 商品分类（ADR-028）。 */
+export interface CreateCategoryRequest {
+  name: string;
+  handle?: string;
+  parent_id?: string | null;
+  sort_order?: number;
+}
+
+export interface UpdateCategoryRequest {
+  name?: string;
+  handle?: string;
+  parent_id?: string | null;
+  sort_order?: number;
 }
 
 /** 创建变体。 */

@@ -56,6 +56,7 @@ interface ApiCategory {
   name: string;
   handle: string;
   parent_id?: string | null;
+  product_count?: number;
 }
 
 export interface ProductQuery {
@@ -160,7 +161,13 @@ export async function getStoreCategories(): Promise<MockCategory[]> {
   }
   try {
     const res = (await getStoreClient().listCategories()) as { items?: ApiCategory[] };
-    return (res.items ?? []).map((c) => ({ id: c.id, name: c.name, handle: c.handle }));
+    return (res.items ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      handle: c.handle,
+      parentId: c.parent_id ?? null,
+      productCount: c.product_count ?? 0,
+    }));
   } catch {
     return [];
   }

@@ -48,6 +48,40 @@ export interface ImageDTO {
 export interface ProductDetailDTO extends ProductDTO {
   variants: VariantDTO[];
   images: ImageDTO[];
+  /** 所属分类（后台编辑回显、店面按分类筛选都靠它）。 */
+  category_ids: string[];
+}
+
+/**
+ * 商品分类（ADR-028）。
+ *
+ * 淘宝叫「商品分类」，是商品域的组织方式，不是标签也不是营销分组 ——
+ * 它决定顾客怎么逛（分类导航 → 分类页 → 商品），所以必须能建、能排序、能停用。
+ */
+export interface CategoryDTO {
+  id: string;
+  name: string;
+  handle: string;
+  /** 父分类；null = 一级分类。只支持两级（淘宝的多级对自建店铺是过度设计）。 */
+  parent_id: string | null;
+  sort_order: number;
+  /** 直接挂在该分类下的商品数（不含子分类，商家看的是「这一类有多少货」）。 */
+  product_count: number;
+}
+
+export interface CreateCategoryInput {
+  name: string;
+  /** URL 标识；留空自动生成。 */
+  handle?: string;
+  parentId?: string | null;
+  sortOrder?: number;
+}
+
+export interface UpdateCategoryInput {
+  name?: string;
+  handle?: string;
+  parentId?: string | null;
+  sortOrder?: number;
 }
 
 export interface ProductTypeDTO {
@@ -114,6 +148,8 @@ export interface UpdateProductInput {
   shippingProfileId?: string | null;
   freeShipping?: boolean;
   metadata?: Record<string, unknown> | null;
+  /** 整组替换分类关联（不传 = 不动；传空数组 = 清空）。 */
+  categoryIds?: string[];
 }
 
 export interface ProductQuery {
@@ -169,8 +205,27 @@ export interface ProductRepository {
   /** 软删该商品所有图片（整组替换前调用）。 */
   softDeleteImages(productId: string): Promise<void>;
   linkCategories(productId: string, categoryIds: string[]): Promise<void>;
+  /** 整组替换分类关联（后台编辑一次提交整组，不做增量 diff）。 */
+  replaceCategories(productId: string, categoryIds: string[]): Promise<void>;
   /** product_category_link：批量查「商品 → 分类」映射（供 promotion 目录促销算折扣，禁 N+1）。 */
   listCategoryIdsByProducts(productIds: string[]): Promise<Array<{ productId: string; categoryIds: string[] }>>;
+
+  // —— 分类（ADR-028）——
+  /** publishedOnly：店面只统计上架中商品数（草稿不算）。 */
+  listCategories(publishedOnly?: boolean): Promise<CategoryDTO[]>;
+  findCategoryById(id: string): Promise<CategoryDTO | null>;
+  findCategoryByHandle(handle: string): Promise<CategoryDTO | null>;
+  insertCategory(input: {
+    id: string;
+    name: string;
+    handle: string;
+    parentId: string | null;
+    sortOrder: number;
+  }): Promise<CategoryDTO>;
+  updateCategory(id: string, patch: UpdateCategoryInput): Promise<CategoryDTO | null>;
+  softDeleteCategory(id: string): Promise<void>;
+  /** 各分类下直接关联的商品数（一次 GROUP BY）。 */
+  countProductsByCategory(): Promise<Map<string, number>>;
   /** 批量查商品的运费归属（模板 + 是否卖家包邮），供购物车分组算运费。 */
   listShippingInfoByProducts(
     productIds: string[],
@@ -216,6 +271,13 @@ export interface IProductModuleService {
   resolveSellableVariants(q: SellableVariantQuery): Promise<{ items: SellableVariantDTO[]; count: number }>;
   /** 批量查「商品 → 分类」映射（供 promotion 目录促销算折扣）。 */
   listCategoryIdsByProducts(productIds: string[]): Promise<Array<{ productId: string; categoryIds: string[] }>>;
+
+  // —— 分类（ADR-028）：商品域的组织方式，后台「商品 → 分类」维护 ——
+  listCategories(publishedOnly?: boolean): Promise<CategoryDTO[]>;
+  createCategory(input: CreateCategoryInput): Promise<CategoryDTO>;
+  updateCategory(id: string, patch: UpdateCategoryInput): Promise<CategoryDTO>;
+  /** 删除分类：有子分类或有商品时拒绝（不能把商品变成孤儿）。 */
+  deleteCategory(id: string): Promise<void>;
   /** 批量查商品的运费归属（模板 + 是否卖家包邮），供购物车分组算运费。 */
   listShippingInfoByProducts(
     productIds: string[],

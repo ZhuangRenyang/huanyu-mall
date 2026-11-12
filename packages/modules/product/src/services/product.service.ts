@@ -1,6 +1,17 @@
 import { prefixedUlid } from "@mall/core";
-import { productNotFound, variantNotFound } from "../errors.js";
+import {
+  categoryCannotBeOwnParent,
+  categoryHandleTaken,
+  categoryHasChildren,
+  categoryHasProducts,
+  categoryNestingTooDeep,
+  categoryNotFound,
+  productNotFound,
+  variantNotFound,
+} from "../errors.js";
 import type {
+  CategoryDTO,
+  CreateCategoryInput,
   CreateProductInput,
   IProductModuleService,
   ProductDTO,
@@ -11,9 +22,18 @@ import type {
   ProductStatus,
   SellableVariantDTO,
   SellableVariantQuery,
+  UpdateCategoryInput,
   UpdateProductInput,
   VariantDTO,
 } from "../types.js";
+
+/** 分类标识：英文名转 slug；中文名转不出可读 slug，退回随机短码。 */
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
 /** M01 对外门面（架构 §2.1 契约）。 */
 export class ProductService implements IProductModuleService {
@@ -44,9 +64,17 @@ export class ProductService implements IProductModuleService {
   async retrieveProduct(id: string, opts?: { withVariants?: boolean }): Promise<ProductDetailDTO> {
     const product = await this.repo.findById(id);
     if (!product) throw productNotFound(id);
-    const variants = opts?.withVariants === false ? [] : await this.repo.listVariantsByProductIds([id]);
-    const images = await this.repo.listImagesByProductId(id);
-    return { ...product, variants, images };
+    const [variants, images, categoryLinks] = await Promise.all([
+      opts?.withVariants === false ? Promise.resolve([]) : this.repo.listVariantsByProductIds([id]),
+      this.repo.listImagesByProductId(id),
+      this.repo.listCategoryIdsByProducts([id]),
+    ]);
+    return {
+      ...product,
+      variants,
+      images,
+      category_ids: categoryLinks[0]?.categoryIds ?? [],
+    };
   }
 
   async createProduct(input: CreateProductInput): Promise<ProductDetailDTO> {
@@ -86,7 +114,95 @@ export class ProductService implements IProductModuleService {
   async updateProduct(id: string, patch: UpdateProductInput): Promise<ProductDTO> {
     const updated = await this.repo.update(id, patch);
     if (!updated) throw productNotFound(id);
+    // 分类是另一张关联表：不在这里整组替换，后台改分类就会静默不生效
+    if (patch.categoryIds !== undefined) {
+      await this.repo.replaceCategories(id, patch.categoryIds);
+    }
     return updated;
+  }
+
+  // —— 分类（ADR-028）——
+
+  async listCategories(publishedOnly = false): Promise<CategoryDTO[]> {
+    return this.repo.listCategories(publishedOnly);
+  }
+
+  async createCategory(input: CreateCategoryInput): Promise<CategoryDTO> {
+    const name = input.name.trim();
+    const parentId = input.parentId ?? null;
+    if (parentId) {
+      const parent = await this.repo.findCategoryById(parentId);
+      if (!parent) throw categoryNotFound(parentId);
+      // 只做两级：父级自己已经是二级分类，就不能再往下挂
+      if (parent.parent_id) throw categoryNestingTooDeep();
+    }
+    const handle = await this.uniqueHandle(input.handle?.trim() || slugify(name) || "category");
+    const created = await this.repo.insertCategory({
+      id: prefixedUlid("cat"),
+      name,
+      handle,
+      parentId,
+      sortOrder: input.sortOrder ?? 0,
+    });
+    return created;
+  }
+
+  async updateCategory(id: string, patch: UpdateCategoryInput): Promise<CategoryDTO> {
+    const current = await this.repo.findCategoryById(id);
+    if (!current) throw categoryNotFound(id);
+
+    const next: UpdateCategoryInput = {};
+    if (patch.name !== undefined) next.name = patch.name.trim();
+    if (patch.sortOrder !== undefined) next.sortOrder = patch.sortOrder;
+
+    if (patch.handle !== undefined && patch.handle.trim() !== current.handle) {
+      next.handle = await this.uniqueHandle(patch.handle.trim());
+    }
+
+    if (patch.parentId !== undefined) {
+      const parentId = patch.parentId;
+      if (parentId === id) throw categoryCannotBeOwnParent();
+      if (parentId) {
+        const parent = await this.repo.findCategoryById(parentId);
+        if (!parent) throw categoryNotFound(parentId);
+        if (parent.parent_id) throw categoryNestingTooDeep();
+        // 自己下面已经挂了子分类，就不能再变成别人的子分类（否则成环/超两层）
+        const all = await this.repo.listCategories();
+        if (all.some((c) => c.parent_id === id)) throw categoryCannotBeOwnParent();
+      }
+      next.parentId = parentId;
+    }
+
+    const updated = await this.repo.updateCategory(id, next);
+    if (!updated) throw categoryNotFound(id);
+    return updated;
+  }
+
+  /**
+   * 删除分类。
+   *
+   * 有子分类或仍有商品时拒绝 —— 软删分类后商品会变成「挂在不存在分类下」，
+   * 店面的分类导航与筛选都会指向空页，比直接报错更难排查。
+   */
+  async deleteCategory(id: string): Promise<void> {
+    const current = await this.repo.findCategoryById(id);
+    if (!current) throw categoryNotFound(id);
+    if (current.product_count > 0) throw categoryHasProducts(current.product_count);
+    const all = await this.repo.listCategories();
+    const children = all.filter((c) => c.parent_id === id).length;
+    if (children > 0) throw categoryHasChildren(children);
+    await this.repo.softDeleteCategory(id);
+  }
+
+  /** handle 唯一：重复时依次尝试 -2、-3…（商家不该为了一个标识去改名字）。 */
+  private async uniqueHandle(base: string): Promise<string> {
+    const root = base || "category";
+    for (let i = 1; i <= 50; i++) {
+      const candidate = i === 1 ? root : `${root}-${i}`;
+      const existing = await this.repo.findCategoryByHandle(candidate);
+      if (!existing) return candidate;
+    }
+    throw categoryHandleTaken(root);
   }
 
   async countByStatus(): Promise<Record<string, number>> {

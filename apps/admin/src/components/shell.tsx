@@ -7,6 +7,7 @@ import {
   Package,
   Settings,
   Tag,
+  Tags,
   Users,
   Truck,
   TicketPercent,
@@ -33,6 +34,8 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     label: '商品',
     items: [
       { to: '/products', label: '商品列表', icon: Package },
+      // 分类是商品的组织方式，紧跟列表；它不是设置项（ADR-028）
+      { to: '/categories', label: '分类', icon: Tags },
       { to: '/inventory', label: '库存', icon: Warehouse },
       // 运费模板是低频配置项，放商品域末尾：日常用的是上面两个
       { to: '/shipping-profiles', label: '运费模板', icon: Truck },

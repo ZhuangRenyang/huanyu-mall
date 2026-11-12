@@ -5,6 +5,7 @@ import type {
   AttributeDTO,
   AttributeInputType,
   AttributeValueDTO,
+  CategoryDTO,
   CreateImageInput,
   CreateProductInput,
   CreateVariantInput,
@@ -14,6 +15,7 @@ import type {
   ProductRepository,
   ProductStatus,
   ProductTypeDTO,
+  UpdateCategoryInput,
   UpdateProductInput,
   VariantDTO,
 } from "../types.js";
@@ -236,6 +238,118 @@ export class DrizzleProductRepository implements ProductRepository {
       .values(categoryIds.map((categoryId) => ({ id: prefixedUlid("pcat"), productId, categoryId })));
   }
 
+  /** 整组替换分类关联：先清后插，同一事务（后台一次提交整组，前端不做增量 diff）。 */
+  async replaceCategories(productId: string, categoryIds: string[]): Promise<void> {
+    const unique = [...new Set(categoryIds)].filter(Boolean);
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.productCategoryLink)
+        .where(eq(schema.productCategoryLink.productId, productId));
+      if (unique.length === 0) return;
+      await tx.insert(schema.productCategoryLink).values(
+        unique.map((categoryId) => ({
+          id: prefixedUlid("pcat"),
+          productId,
+          categoryId,
+        })),
+      );
+    });
+  }
+
+  // —— 分类（ADR-028）——
+
+  async listCategories(publishedOnly = false): Promise<CategoryDTO[]> {
+    const [rows, counts] = await Promise.all([
+      this.db
+        .select()
+        .from(schema.productCategory)
+        .where(isNull(schema.productCategory.deletedAt))
+        .orderBy(asc(schema.productCategory.sortOrder), asc(schema.productCategory.name)),
+      this.countProductsByCategory(publishedOnly),
+    ]);
+    return rows.map((r) => toCategoryDTO(r, counts.get(r.id) ?? 0));
+  }
+
+  async findCategoryById(id: string): Promise<CategoryDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.productCategory)
+      .where(and(eq(schema.productCategory.id, id), isNull(schema.productCategory.deletedAt)))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    const counts = await this.countProductsByCategory();
+    return toCategoryDTO(row, counts.get(row.id) ?? 0);
+  }
+
+  async findCategoryByHandle(handle: string): Promise<CategoryDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.productCategory)
+      .where(and(eq(schema.productCategory.handle, handle), isNull(schema.productCategory.deletedAt)))
+      .limit(1);
+    return rows[0] ? toCategoryDTO(rows[0], 0) : null;
+  }
+
+  async insertCategory(input: {
+    id: string;
+    name: string;
+    handle: string;
+    parentId: string | null;
+    sortOrder: number;
+  }): Promise<CategoryDTO> {
+    const rows = await this.db
+      .insert(schema.productCategory)
+      .values({
+        id: input.id,
+        name: input.name,
+        handle: input.handle,
+        parentId: input.parentId,
+        sortOrder: input.sortOrder,
+      })
+      .returning();
+    return toCategoryDTO(rows[0]!, 0);
+  }
+
+  async updateCategory(id: string, patch: UpdateCategoryInput): Promise<CategoryDTO | null> {
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (patch.name !== undefined) set.name = patch.name;
+    if (patch.handle !== undefined) set.handle = patch.handle;
+    if (patch.parentId !== undefined) set.parentId = patch.parentId;
+    if (patch.sortOrder !== undefined) set.sortOrder = patch.sortOrder;
+    const rows = await this.db
+      .update(schema.productCategory)
+      .set(set)
+      .where(and(eq(schema.productCategory.id, id), isNull(schema.productCategory.deletedAt)))
+      .returning();
+    if (!rows[0]) return null;
+    const counts = await this.countProductsByCategory();
+    return toCategoryDTO(rows[0], counts.get(id) ?? 0);
+  }
+
+  async softDeleteCategory(id: string): Promise<void> {
+    await this.db
+      .update(schema.productCategory)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.productCategory.id, id));
+  }
+
+  async countProductsByCategory(publishedOnly = false): Promise<Map<string, number>> {
+    const conditions = [isNull(schema.product.deletedAt)];
+    // 店面只该看到「上架中」的数量：把草稿算进去会让分类页写着 10 件、点开只有 3 件
+    if (publishedOnly) conditions.push(eq(schema.product.status, "published"));
+    const rows = await this.db
+      .select({
+        categoryId: schema.productCategoryLink.categoryId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(schema.productCategoryLink)
+      .innerJoin(schema.product, eq(schema.product.id, schema.productCategoryLink.productId))
+      .where(and(...conditions))
+      .groupBy(schema.productCategoryLink.categoryId);
+    return new Map(rows.map((r) => [r.categoryId, Number(r.count)]));
+  }
+
   /** 批量取商品的运费归属（模板 + 卖家包邮），禁 N+1。 */
   async listShippingInfoByProducts(
     productIds: string[],
@@ -395,5 +509,19 @@ function toImageDTO(r: typeof schema.productImage.$inferSelect): ImageDTO {
     alt: r.alt ?? null,
     sort_order: r.sortOrder,
     is_primary: r.isPrimary,
+  };
+}
+
+function toCategoryDTO(
+  r: typeof schema.productCategory.$inferSelect,
+  productCount: number,
+): CategoryDTO {
+  return {
+    id: r.id,
+    name: r.name,
+    handle: r.handle,
+    parent_id: r.parentId ?? null,
+    sort_order: r.sortOrder,
+    product_count: productCount,
   };
 }

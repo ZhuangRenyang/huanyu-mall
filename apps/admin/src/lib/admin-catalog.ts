@@ -24,6 +24,8 @@ interface ApiProduct {
   free_shipping?: boolean;
   description?: string | null;
   thumbnail_url?: string | null;
+  /** 仅详情接口返回：所属分类。 */
+  category_ids?: string[];
   images?: Array<{ file_id: string; url?: string | null }>;
   variants?: Array<{
     id: string;
@@ -57,6 +59,7 @@ function mapProduct(p: ApiProduct): ProductDraft {
     createdAt: p.created_at ?? '',
     shippingProfileId: p.shipping_profile_id ?? null,
     freeShipping: p.free_shipping ?? false,
+    categoryIds: p.category_ids ?? [],
     description: p.description ?? '',
     thumbnailUrl: p.thumbnail_url ?? null,
     images: (p.images ?? []).map((i) => ({ fileId: i.file_id, url: i.url ?? null })),
@@ -159,6 +162,7 @@ export async function saveProduct(product: ProductDraft): Promise<void> {
       subtitle: product.subtitle ?? null,
       shipping_profile_id: product.shippingProfileId ?? null,
       free_shipping: product.freeShipping ?? false,
+      ...(product.categoryIds ? { category_ids: product.categoryIds } : {}),
     })) as ApiProduct;
     for (const v of product.variants) {
       await client.createVariant(created.id, {
@@ -185,6 +189,7 @@ export async function saveProduct(product: ProductDraft): Promise<void> {
     status: product.status,
     shipping_profile_id: product.shippingProfileId ?? null,
     free_shipping: product.freeShipping ?? false,
+    ...(product.categoryIds ? { category_ids: product.categoryIds } : {}),
   });
   // 图片单独走整组替换（第一张即主图），顺序由界面决定
   if (product.images) {

@@ -573,6 +573,44 @@ components:
       properties:
         register_mode: { type: string, enum: [email, phone], example: email }
 
+    AddressInput:
+      type: object
+      description: 收货地址（ADR-026）。中文地址不拆姓/名：first_name 收件人全名，「省市区」整串放 province，邮编选填。
+      required: [first_name, line1, country_code]
+      properties:
+        first_name: { type: string, maxLength: 60, example: "张三" }
+        last_name: { type: string, maxLength: 60, nullable: true, description: 中文地址通常留空 }
+        phone: { type: string, maxLength: 30, example: "13800001111" }
+        line1: { type: string, maxLength: 200, example: "科技园路 1 号 3 栋 501" }
+        line2: { type: string, maxLength: 200, nullable: true }
+        city: { type: string, maxLength: 80, nullable: true, description: 中文地址留空，省市区在 province }
+        province: { type: string, maxLength: 80, example: "广东省深圳市南山区" }
+        postal_code: { type: string, maxLength: 20, nullable: true }
+        country_code: { type: string, minLength: 2, maxLength: 2, example: CN }
+        is_default_shipping: { type: boolean }
+        is_default_billing: { type: boolean }
+
+    Address:
+      allOf:
+        - { $ref: '#/components/schemas/AddressInput' }
+        - type: object
+          properties:
+            id: { type: string, example: addr_01H }
+            customer_id: { type: string, example: cus_01H }
+            is_default_shipping: { type: boolean, example: true }
+            is_default_billing: { type: boolean, example: false }
+
+    Category:
+      type: object
+      description: 商品分类（ADR-028）。最多两级，product_count 只统计直接挂在该类下的商品。
+      properties:
+        id: { type: string, example: cat_01H }
+        name: { type: string, example: "外套" }
+        handle: { type: string, example: coats }
+        parent_id: { type: string, nullable: true, example: null }
+        sort_order: { type: integer, example: 0 }
+        product_count: { type: integer, example: 12 }
+
     LoginRequest:
       type: object
       description: 登录标识（邮箱或管理员名，内置管理员为 admin）
@@ -1231,6 +1269,60 @@ paths:
                       dev_code: { type: string, nullable: true, example: "123456" }
         '429': { description: 60 秒冷却 / 每日上限(60001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
+  /store/auth/password/forgot:
+    post:
+      tags: [store-auth]
+      summary: 忘记密码第一步：发重置验证码
+      description: 通道跟着账号类型走 —— 邮箱发邮件、手机号发短信（ADR-027）。
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier]
+              properties:
+                identifier: { type: string, example: "buyer@example.com", description: 邮箱或手机号 }
+      responses:
+        '200':
+          description: OK（开发环境带 dev_code）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      sent: { type: boolean, example: true }
+                      channel: { type: string, enum: [email, sms], example: email }
+                      dev_code: { type: string, nullable: true, example: "123456" }
+        '404': { description: 账号未注册(30001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/auth/password/reset:
+    post:
+      tags: [store-auth]
+      summary: 忘记密码第二步：验证码 + 新密码
+      description: 成功后撤销该账号全部会话，且不签发 token（需重新登录）。
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, code, new_password]
+              properties:
+                identifier: { type: string, example: "buyer@example.com" }
+                code: { type: string, minLength: 6, maxLength: 6, example: "123456" }
+                new_password: { type: string, minLength: 8, example: "NewPassword123" }
+      responses:
+        '204': { description: 已重设（不签发 token） }
+        '400': { description: 验证码错(20001) / 口令强度不足(20001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { description: 账号未注册(30001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
   /store/auth/login/phone:
     post:
       tags: [store-auth]
@@ -1323,6 +1415,99 @@ paths:
                   code: { type: integer, example: 0 }
                   data: { type: object, nullable: true }
                   message: { type: string, example: "" }
+
+  /store/customer/addresses:
+    get:
+      tags: [store-customer]
+      summary: 我的收货地址（默认地址排最前）
+      description: 需顾客登录；归属只认 token，不接受 customer_id 参数（ADR-026）。
+      security: [{ customerJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Address' }
+                      count: { type: integer, example: 2 }
+        '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    post:
+      tags: [store-customer]
+      summary: 新增收货地址（首条自动成为默认）
+      security: [{ customerJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddressInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Address' }
+
+  /store/customer/addresses/{id}:
+    patch:
+      tags: [store-customer]
+      summary: 更新收货地址（只改自身字段）
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddressInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Address' }
+    delete:
+      tags: [store-customer]
+      summary: 删除收货地址（软删）
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: No Content }
+
+  /store/customer/addresses/{id}/default:
+    post:
+      tags: [store-customer]
+      summary: 设为默认收货地址（唯一默认）
+      description: 独立动作：服务端先清同客户其它默认，再设这条，同一事务内完成。
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Address' }
 
   # ===================== Admin =====================
   /admin/auth/login:
@@ -1421,6 +1606,94 @@ paths:
         '400': { description: 新口令强度不足或与当前口令相同(20001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '401': { description: 未认证(10001)或当前口令错误(10005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '429': { description: 尝试过于频繁(60001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/categories:
+    get:
+      tags: [admin]
+      summary: 商品分类列表（扁平，含 parent_id / sort_order / product_count）
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Category' }
+                      count: { type: integer, example: 3 }
+    post:
+      tags: [admin]
+      summary: 新建分类（一级；传 parent_id 建二级）
+      description: 最多两级（ADR-028）。handle 不传时按名称生成，重名自动加后缀。
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "外套" }
+                handle: { type: string, example: "coats" }
+                parent_id: { type: string, nullable: true, example: cat_01H }
+                sort_order: { type: integer, example: 0 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Category' }
+        '400': { description: 超过两级(20001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/categories/{id}:
+    patch:
+      tags: [admin]
+      summary: 改分类（名称 / 标识 / 排序）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                handle: { type: string }
+                parent_id: { type: string, nullable: true }
+                sort_order: { type: integer }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Category' }
+    delete:
+      tags: [admin]
+      summary: 删分类（有商品或有子分类时拒绝）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: 已删除 }
+        '409': { description: 分类下还有商品或子分类(30003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
   /admin/products:
     get:

@@ -14,4 +14,13 @@ export interface FakeServicesState {
   orderCreated: boolean;
   /** 顾客注册方式（auth 设置，默认邮箱注册）。 */
   registerMode: "email" | "phone";
+  /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
+  categories: Array<{
+    id: string;
+    name: string;
+    handle: string;
+    parent_id: string | null;
+    sort_order: number;
+    product_count: number;
+  }>;
 }

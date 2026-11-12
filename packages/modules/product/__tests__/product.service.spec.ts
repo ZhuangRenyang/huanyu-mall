@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { prefixedUlid } from "@mall/core";
+import { DomainError, prefixedUlid } from "@mall/core";
 import { ProductService } from "../src/services/product.service.js";
 import { seedCatalog } from "../src/services/seed.js";
 import type {
   AttributeDTO,
   AttributeInputType,
   AttributeValueDTO,
+  CategoryDTO,
+  CreateCategoryInput,
   CreateImageInput,
   CreateProductInput,
   CreateVariantInput,
@@ -15,6 +17,7 @@ import type {
   ProductRepository,
   ProductStatus,
   ProductTypeDTO,
+  UpdateCategoryInput,
   UpdateProductInput,
   VariantDTO,
 } from "../src/types.js";
@@ -28,6 +31,7 @@ class InMemoryProductRepository implements ProductRepository {
   readonly channelVisible = new Map<string, Set<string>>();
   readonly variantPriceSet = new Map<string, string>();
   readonly categoryLinks = new Map<string, Set<string>>();
+  readonly categories = new Map<string, CategoryDTO>();
 
   async findById(id: string): Promise<ProductDTO | null> {
     return this.products.get(id) ?? null;
@@ -98,6 +102,66 @@ class InMemoryProductRepository implements ProductRepository {
     const set = this.categoryLinks.get(productId) ?? new Set<string>();
     for (const cid of categoryIds) set.add(cid);
     this.categoryLinks.set(productId, set);
+  }
+  async replaceCategories(productId: string, categoryIds: string[]): Promise<void> {
+    this.categoryLinks.set(productId, new Set(categoryIds));
+  }
+  private withCount(c: CategoryDTO): CategoryDTO {
+    return {
+      ...c,
+      product_count: [...this.categoryLinks.values()].filter((s) => s.has(c.id)).length,
+    };
+  }
+  async listCategories(): Promise<CategoryDTO[]> {
+    return [...this.categories.values()].map((c) => this.withCount(c));
+  }
+  async findCategoryById(id: string): Promise<CategoryDTO | null> {
+    const row = this.categories.get(id);
+    return row ? this.withCount(row) : null;
+  }
+  async findCategoryByHandle(handle: string): Promise<CategoryDTO | null> {
+    return [...this.categories.values()].find((c) => c.handle === handle) ?? null;
+  }
+  async insertCategory(input: {
+    id: string;
+    name: string;
+    handle: string;
+    parentId: string | null;
+    sortOrder: number;
+  }): Promise<CategoryDTO> {
+    const dto: CategoryDTO = {
+      id: input.id,
+      name: input.name,
+      handle: input.handle,
+      parent_id: input.parentId,
+      sort_order: input.sortOrder,
+      product_count: [...this.categoryLinks.values()].filter((s) => s.has(input.id)).length,
+    };
+    this.categories.set(dto.id, dto);
+    return dto;
+  }
+  async updateCategory(id: string, patch: UpdateCategoryInput): Promise<CategoryDTO | null> {
+    const row = this.categories.get(id);
+    if (!row) return null;
+    const next: CategoryDTO = {
+      ...row,
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.handle !== undefined ? { handle: patch.handle } : {}),
+      ...(patch.parentId !== undefined ? { parent_id: patch.parentId } : {}),
+      ...(patch.sortOrder !== undefined ? { sort_order: patch.sortOrder } : {}),
+    };
+    this.categories.set(id, next);
+    return next;
+  }
+  async softDeleteCategory(id: string): Promise<void> {
+    this.categories.delete(id);
+  }
+  async countProductsByCategory(): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    for (const set of this.categoryLinks.values()) {
+      for (const id of set) counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    return counts;
   }
   async listCategoryIdsByProducts(
     productIds: string[],
@@ -294,5 +358,85 @@ describe("ProductService（M01 契约）", () => {
     expect(repo.attributes).toHaveLength(3);
     expect(priceSets).toHaveLength(3); // 2 变体 + 1 变体
     expect(repo.channelVisible.get("chn_cn")?.size).toBe(2);
+  });
+});
+
+describe("商品分类（ADR-028）", () => {
+  it("建一级 + 二级分类，按 sort_order 排序返回", async () => {
+    const { service } = setup();
+    const apparel = await service.createCategory({ name: "服饰", handle: "apparel", sortOrder: 2 });
+    const digital = await service.createCategory({ name: "数码", handle: "digital", sortOrder: 1 });
+    const coats = await service.createCategory({ name: "外套", parentId: apparel.id, sortOrder: 0 });
+
+    const list = await service.listCategories();
+    expect(list).toHaveLength(3);
+    expect(coats.parent_id).toBe(apparel.id);
+    expect(apparel.handle).toBe("apparel");
+    expect(digital.sort_order).toBe(1);
+  });
+
+  it("中文名生成不了 slug 时退回短码；重名自动加后缀", async () => {
+    const { service } = setup();
+    const a = await service.createCategory({ name: "外套" });
+    const b = await service.createCategory({ name: "外套" });
+    expect(a.handle.length).toBeGreaterThan(0);
+    expect(a.handle).not.toBe(b.handle); // 唯一性由服务层保证
+  });
+
+  it("只允许两级：二级分类下再建子分类被拒", async () => {
+    const { service } = setup();
+    const l1 = await service.createCategory({ name: "服饰" });
+    const l2 = await service.createCategory({ name: "外套", parentId: l1.id });
+    await expect(
+      service.createCategory({ name: "羽绒服", parentId: l2.id }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("更新：改名 / 改排序 / 不能把自己设为父级", async () => {
+    const { service } = setup();
+    const cat = await service.createCategory({ name: "服饰" });
+    const updated = await service.updateCategory(cat.id, { name: "服装", sortOrder: 5 });
+    expect(updated.name).toBe("服装");
+    expect(updated.sort_order).toBe(5);
+
+    await expect(service.updateCategory(cat.id, { parentId: cat.id })).rejects.toBeInstanceOf(
+      DomainError,
+    );
+  });
+
+  it("删除：有商品或有子分类时拒绝，空分类可删", async () => {
+    const { service } = setup();
+    const parent = await service.createCategory({ name: "服饰" });
+    const child = await service.createCategory({ name: "外套", parentId: parent.id });
+
+    await expect(service.deleteCategory(parent.id)).rejects.toBeInstanceOf(DomainError);
+    await expect(service.deleteCategory(child.id)).resolves.toBeUndefined();
+
+    const product = await service.createProduct({
+      title: "大衣",
+      handle: "coat",
+      categoryIds: [parent.id],
+    });
+    expect(product.category_ids).toEqual([parent.id]);
+    await expect(service.deleteCategory(parent.id)).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("商品改分类：整组替换，且详情能读回来", async () => {
+    const { service } = setup();
+    const a = await service.createCategory({ name: "服饰" });
+    const b = await service.createCategory({ name: "数码" });
+    const product = await service.createProduct({
+      title: "T 恤",
+      handle: "tee",
+      categoryIds: [a.id],
+    });
+
+    await service.updateProduct(product.id, { categoryIds: [b.id] });
+    const detail = await service.retrieveProduct(product.id);
+    expect(detail.category_ids).toEqual([b.id]);
+
+    // 传空数组 = 清空（不是「不动」）
+    await service.updateProduct(product.id, { categoryIds: [] });
+    expect((await service.retrieveProduct(product.id)).category_ids).toEqual([]);
   });
 });

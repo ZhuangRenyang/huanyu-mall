@@ -11,6 +11,7 @@ import type {
   ChangePasswordRequest,
   CreateCartRequest,
   CreateFulfillmentRequest,
+  CreateCategoryRequest,
   CreateGiftCardRequest,
   CreateInventoryTransferRequest,
   CreatePaymentSessionRequest,
@@ -28,6 +29,7 @@ import type {
   SetGiftCardCodesRequest,
   SetShippingMethodRequest,
   SetVoucherCodesRequest,
+  UpdateCategoryRequest,
   UpdateGiftCardRequest,
   UpdateInventoryLevelRequest,
   UpdateLineItemRequest,
@@ -216,6 +218,12 @@ export function createStoreClient(opts: ClientOptions) {
     /** 手机号 + 验证码登录（手机号不存在时自动注册）。 */
     loginCustomerWithPhone: (b: { phone: string; code: string }) =>
       post("/api/v1/store/auth/login/phone", b),
+    /** 忘记密码第一步：按账号类型发验证码（邮箱发邮件 / 手机号发短信）。 */
+    forgotCustomerPassword: (b: { identifier: string }) =>
+      post("/api/v1/store/auth/password/forgot", b),
+    /** 忘记密码第二步：验证码 + 新密码；不签发 token，需重新登录。 */
+    resetCustomerPassword: (b: { identifier: string; code: string; new_password: string }) =>
+      post("/api/v1/store/auth/password/reset", b),
     refreshCustomer: (b: { refresh_token: string }) =>
       post("/api/v1/store/auth/refresh", b),
     logoutCustomer: (b: { refresh_token: string }) =>
@@ -277,6 +285,12 @@ export function createAdminClient(opts: ClientOptions) {
     /** 整组替换商品图片；第一张即主图。 */
     replaceProductImages: (id: string, b: { file_ids: string[] }) =>
       put(`/api/v1/admin/products/${id}/images`, b),
+    // —— 商品分类（ADR-028）——
+    listCategories: () => get("/api/v1/admin/categories"),
+    createCategory: (b: CreateCategoryRequest) => post("/api/v1/admin/categories", b),
+    updateCategory: (id: string, b: UpdateCategoryRequest) =>
+      patch(`/api/v1/admin/categories/${id}`, b),
+    deleteCategory: (id: string) => del(`/api/v1/admin/categories/${id}`),
     /** 上传文件（JSON + base64，后端限制 20MB）。 */
     uploadFile: (b: { filename: string; content_type: string; data_base64: string }) =>
       post("/api/v1/admin/files", b),

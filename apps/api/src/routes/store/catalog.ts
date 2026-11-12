@@ -162,7 +162,20 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
     });
   });
 
+  /**
+   * 店面分类（ADR-028）。
+   *
+   * 返回全部分类（含两级结构）：一级分类 parent_id = null，二级挂在下面。
+   * 商品数只算「上架中」—— 把草稿算进去会让分类页写着 10 件、点开只有 3 件。
+   */
   app.get("/api/v1/store/categories", async (_req, reply) => {
-    reply.ok({ items: [], count: 0, offset: 0, limit: 20, hasMore: false });
+    const items = await deps.services.product.listCategories(true);
+    reply.ok({
+      items,
+      count: items.length,
+      offset: 0,
+      limit: items.length,
+      hasMore: false,
+    });
   });
 }

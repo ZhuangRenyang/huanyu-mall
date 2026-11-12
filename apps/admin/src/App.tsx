@@ -3,6 +3,7 @@ import { RequireAuth } from './components/require-auth';
 import { Shell } from './components/shell';
 import { LoginPage } from './pages/login';
 import { ProductsPage } from './pages/products';
+import { CategoriesPage } from './pages/categories';
 import { OrdersPage } from './pages/orders';
 import { InventoryPage } from './pages/inventory';
 import { ShippingProfilesPage } from './pages/shipping-profiles';
@@ -23,6 +24,7 @@ export function App() {
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/products" replace />} />
           <Route path="products" element={<ProductsPage />} />
+          <Route path="categories" element={<CategoriesPage />} />
           <Route path="orders" element={<OrdersPage />} />
           <Route path="refunds" element={<RefundsPage />} />
           <Route path="customers" element={<CustomersPage />} />

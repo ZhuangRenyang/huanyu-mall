@@ -26,6 +26,8 @@ export interface ProductDraft {
   shippingProfileId?: string | null;
   /** 卖家包邮（淘宝的「卖家承担运费」）。 */
   freeShipping?: boolean;
+  /** 所属分类（可多选，对应淘宝发布页的「商品分类」）。 */
+  categoryIds?: string[];
   /** 商品详情（纯文本，空行分段）。 */
   description?: string;
   /** 图集顺序：第一张即主图。 */

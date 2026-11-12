@@ -113,6 +113,18 @@ export function ProductListing({
       const cur = prev[name] ?? [];
       return { ...prev, [name]: cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value] };
     });
+  // 两级分类：一行一级；选中一级后，下面再出一行它的二级（淘宝就是这个层级）
+  const rootCategories = categories.filter((c) => !c.parentId);
+  const selectedCategory = categories.find((c) => c.id === selectedCategories[0]);
+  const activeRoot = selectedCategory
+    ? (selectedCategory.parentId
+        ? categories.find((c) => c.id === selectedCategory.parentId)
+        : selectedCategory)
+    : undefined;
+  const subCategories = activeRoot
+    ? categories.filter((c) => c.parentId === activeRoot.id)
+    : [];
+
   const clearCategory = () => setSelectedCategories([]);
   const clearAttr = (name: string) => setSelectedAttrs((prev) => ({ ...prev, [name]: [] }));
   const clearFilters = () => {
@@ -164,11 +176,24 @@ export function ProductListing({
       <div className="mb-6 space-y-2">
         <FilterRow
           label="分类"
-          values={categories.map((c) => ({ key: c.id, label: c.name }))}
+          values={(rootCategories.length > 0 ? rootCategories : categories).map((c) => ({
+            key: c.id,
+            label: c.name,
+          }))}
           selected={selectedCategories}
           onToggle={toggleCategory}
           onClear={clearCategory}
         />
+        {activeRoot && subCategories.length > 0 && (
+          <FilterRow
+            label={activeRoot.name}
+            values={subCategories.map((c) => ({ key: c.id, label: c.name }))}
+            selected={selectedCategories}
+            onToggle={toggleCategory}
+            // 「全部」回到一级分类本身，而不是清空筛选（否则一级那一行的高亮也对不上）
+            onClear={() => toggleCategory(activeRoot.id)}
+          />
+        )}
         {attributeGroups.map((g) => (
           <FilterRow
             key={g.name}

@@ -3,6 +3,7 @@
  * 与真实模块服务保持同名同参，路由层行为可被完整驱动。
  */
 import { buildCheckoutCountries } from "@mall/tax";
+import { DomainError } from "@mall/core";
 import type { FakeServicesState } from "./fake-services-state.js";
 
 export function makeFakeCatalogServices(state: FakeServicesState) {
@@ -94,6 +95,7 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
       retrieveProduct: async () => ({
         ...product,
         variants: [variant],
+        category_ids: ["cat_1"],
         images: [
           {
             id: "pimg_1",
@@ -111,6 +113,7 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
         handle: input.handle,
         variants: [],
         images: [],
+        category_ids: [],
       }),
       // 按真实 DTO 契约回显（服务层入参 camelCase → DTO snake_case）：
       // 路由若把字段名弄错，这里就会漏字段，测试能立刻看出来
@@ -122,6 +125,7 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
           status?: string;
           shippingProfileId?: string | null;
           freeShipping?: boolean;
+          categoryIds?: string[];
         },
       ) => ({
         ...product,
@@ -131,12 +135,53 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
           ? { shipping_profile_id: patch.shippingProfileId }
           : {}),
         ...(patch.freeShipping !== undefined ? { free_shipping: patch.freeShipping } : {}),
+        ...(patch.categoryIds !== undefined ? { category_ids: patch.categoryIds } : {}),
       }),
+      // —— 分类（ADR-028）：状态放在 state 里，改完能读回来 ——
+      listCategories: async () => state.categories.map((c) => ({ ...c })),
+      createCategory: async (input: {
+        name: string;
+        handle?: string;
+        parentId?: string | null;
+        sortOrder?: number;
+      }) => {
+        const created = {
+          id: `cat_${state.categories.length + 1}`,
+          name: input.name,
+          handle: input.handle ?? input.name,
+          parent_id: input.parentId ?? null,
+          sort_order: input.sortOrder ?? 0,
+          product_count: 0,
+        };
+        state.categories.push(created);
+        return { ...created };
+      },
+      updateCategory: async (
+        id: string,
+        patch: { name?: string; handle?: string; parentId?: string | null; sortOrder?: number },
+      ) => {
+        const row = state.categories.find((c) => c.id === id);
+        if (!row) throw new DomainError({ code: 30001, message: `分类不存在：${id}` });
+        if (patch.name !== undefined) row.name = patch.name;
+        if (patch.handle !== undefined) row.handle = patch.handle;
+        if (patch.parentId !== undefined) row.parent_id = patch.parentId;
+        if (patch.sortOrder !== undefined) row.sort_order = patch.sortOrder;
+        return { ...row };
+      },
+      deleteCategory: async (id: string) => {
+        const row = state.categories.find((c) => c.id === id);
+        if (!row) throw new DomainError({ code: 30001, message: `分类不存在：${id}` });
+        if (row.product_count > 0) {
+          throw new DomainError({ code: 30003, message: `该分类下还有 ${row.product_count} 个商品` });
+        }
+        state.categories = state.categories.filter((c) => c.id !== id);
+      },
       replaceProductImages: async (productId: string, fileIds: string[]) => ({
         ...product,
         id: productId,
         thumbnail_file_id: fileIds[0] ?? null,
         description: null,
+        category_ids: [],
         images: fileIds.map((fileId, index) => ({
           id: `pimg_${index}`,
           product_id: productId,

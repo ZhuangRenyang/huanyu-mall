@@ -14,6 +14,7 @@ import {
 import { SelectField, TextAreaField, TextField } from './field';
 import { ImageUploader } from './image-uploader';
 import { getShippingConfig, type ShippingProfileView } from '@/lib/admin-shipping';
+import { buildTree, listCategories, type CategoryView } from '@/lib/admin-categories';
 import { Switch } from '@mall/ui';
 import { newId } from '@/lib/admin-store';
 import { saveProduct } from '@/lib/admin-api';
@@ -52,11 +53,17 @@ export function ProductEditor({
   /** 图集（第一张主图）与详情描述 —— 淘宝发布页在「价格库存」之后。 */
   const [images, setImages] = useState<ProductImageDraft[]>([]);
   const [description, setDescription] = useState('');
+  /** 商品分类（可多选）：淘宝发布页里紧跟在标题之后的一项，决定顾客从哪个类目逛到它。 */
+  const [categories, setCategories] = useState<CategoryView[]>([]);
+  const [categoryIds, setCategoryIds] = useState<string[]>([]);
 
   useEffect(() => {
     void getShippingConfig()
       .then((c) => setProfiles(c.profiles))
       .catch(() => setProfiles([]));
+    void listCategories()
+      .then(setCategories)
+      .catch(() => setCategories([]));
   }, []);
 
   useEffect(() => {
@@ -71,6 +78,7 @@ export function ProductEditor({
       setFreeShipping(product.freeShipping ?? false);
       setImages(product.images ?? []);
       setDescription(product.description ?? '');
+      setCategoryIds(product.categoryIds ?? []);
     } else {
       setTitle('');
       setHandle('');
@@ -81,6 +89,7 @@ export function ProductEditor({
       setFreeShipping(false);
       setImages([]);
       setDescription('');
+      setCategoryIds([]);
     }
     setErrors({});
   }, [open, product]);
@@ -119,6 +128,7 @@ export function ProductEditor({
       freeShipping,
       description: description.trim() || undefined,
       images,
+      categoryIds,
     });
     onSaved();
   };
@@ -162,6 +172,45 @@ export function ProductEditor({
             />
           </div>
           <TextField id="p-subtitle" label="副标题" placeholder="选填，一句话卖点" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
+        </section>
+
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-foreground">商品分类</h3>
+            <span className="text-xs text-muted-foreground">可多选，顾客按分类逛店</span>
+          </div>
+          {categories.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              还没有分类。先到「商品 → 分类」建一级/二级分类，再回来勾选。
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              {buildTree(categories)
+                .flatMap((node) => [node, ...node.children])
+                .map((cat) => {
+                  const isChild = Boolean(cat.parentId);
+                  const checked = categoryIds.includes(cat.id);
+                  return (
+                    <label
+                      key={cat.id}
+                      className={cn('flex items-center gap-2 text-sm text-foreground', isChild && 'pl-4')}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setCategoryIds((prev) =>
+                            checked ? prev.filter((id) => id !== cat.id) : [...prev, cat.id],
+                          )
+                        }
+                        className="size-4 accent-primary"
+                      />
+                      {cat.name}
+                    </label>
+                  );
+                })}
+            </div>
+          )}
         </section>
 
         <section className="space-y-3">
