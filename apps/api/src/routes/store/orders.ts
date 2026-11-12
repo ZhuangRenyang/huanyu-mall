@@ -111,10 +111,12 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
      * 「我的包裹到哪了」是下单后最高频的查询。改造前这个接口不返回物流，
      * 店面前端即便有渲染分支也永远是空的（ADR-033）。
      */
-    const [fulfillments, payment] = await Promise.all([
+    const [fulfillments, payment, reviews] = await Promise.all([
       deps.services.fulfillment.listByOrder(id),
       // 支付渠道：顾客要看到「我用什么付的」。没有支付单（未付款/货到付款）就返回 null
       deps.services.payment.findPaymentByOrderId(id).catch(() => null),
+      // 已评价的商品：「我的订单」据此把「评价」按钮换成「已评价」（ADR-042）
+      deps.services.review.listByOrder(id).catch(() => []),
     ]);
 
     let paymentProvider: { id: string; label: string } | null = null;
@@ -135,6 +137,7 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         tracking_links: f.tracking_links ?? [],
       })),
       payment_provider: paymentProvider,
+      reviewed_product_ids: reviews.map((r) => r.product_id),
     });
   });
 

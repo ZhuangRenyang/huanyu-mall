@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/dashboard';
 import { ProductsPage } from './pages/products';
 import { CategoriesPage } from './pages/categories';
 import { OrdersPage } from './pages/orders';
+import { ReviewsPage } from './pages/reviews';
 import { InventoryPage } from './pages/inventory';
 import { ShippingProfilesPage } from './pages/shipping-profiles';
 import { RefundsPage } from './pages/refunds';
@@ -28,6 +29,7 @@ export function App() {
           <Route path="products" element={<ProductsPage />} />
           <Route path="categories" element={<CategoriesPage />} />
           <Route path="orders" element={<OrdersPage />} />
+          <Route path="reviews" element={<ReviewsPage />} />
           <Route path="refunds" element={<RefundsPage />} />
           <Route path="customers" element={<CustomersPage />} />
           <Route path="inventory" element={<InventoryPage />} />

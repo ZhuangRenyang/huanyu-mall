@@ -26,6 +26,7 @@ const LAYERS: Record<string, number> = {
   cart: 3,
   fulfillment: 3,
   auth: 3,
+  review: 3,
   order: 4,
   payment: 4,
   workflows: 5,

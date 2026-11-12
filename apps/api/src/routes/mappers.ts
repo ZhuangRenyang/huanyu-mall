@@ -33,6 +33,8 @@ export function mapOrder(
     shipping_address: order.shipping_address,
     line_items: order.items.map((li) => ({
       id: li.id,
+      // 商品 id：顾客「评价」时按它提交（ADR-042）
+      product_id: li.product_id,
       variant_id: li.variant_id,
       title: li.title,
       sku: li.sku,

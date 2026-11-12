@@ -16,6 +16,8 @@ export interface FakeServicesState {
   registerMode: "email" | "phone";
   /** 变体可用量（默认 12）；设 0 可测「已售罄」链路。 */
   variantAvailable?: number;
+  /** 订单是否可评价（默认 true）；设 false 模拟「还没收货」。 */
+  orderReviewable?: boolean;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
   categories: Array<{
     id: string;

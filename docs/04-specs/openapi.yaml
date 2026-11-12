@@ -202,6 +202,38 @@ components:
           description: 变体级可用量（AC-03/行业交互要求）
         available_quantity: { type: integer, example: 12 }
 
+    Review:
+      type: object
+      description: 店面评价（ADR-042）。展示名已脱敏。
+      properties:
+        id: { type: string, example: rev_01H }
+        product_id: { type: string, example: prod_01H }
+        product_title: { type: string, example: 无线静音鼠标 }
+        customer_name: { type: string, example: 张** }
+        rating: { type: integer, minimum: 1, maximum: 5, example: 5 }
+        content: { type: string, example: 静音效果很好 }
+        reply: { type: string, nullable: true, example: 感谢反馈 }
+        created_at: { type: string, format: date-time }
+
+    ReviewSummary:
+      type: object
+      properties:
+        average: { type: number, nullable: true, example: 4.8, description: 一位小数；无评价为 null }
+        count: { type: integer, example: 12 }
+        distribution:
+          type: object
+          additionalProperties: { type: integer }
+          example: { "5": 9, "4": 2, "3": 1, "2": 0, "1": 0 }
+
+    AdminReview:
+      allOf:
+        - { $ref: '#/components/schemas/Review' }
+        - type: object
+          properties:
+            order_id: { type: string, example: ord_01H }
+            is_visible: { type: boolean, example: true }
+            replied_at: { type: string, format: date-time, nullable: true }
+
     PublicVoucher:
       type: object
       description: 店面可领券（ADR-029）。金额为 minor unit，币种见列表响应。
@@ -1376,6 +1408,156 @@ paths:
                       count: { type: integer, example: 1 }
                       currency_code: { type: string, example: CNY }
         '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/products/{handle}/reviews:
+    get:
+      tags: [store]
+      summary: 商品评价（匿名可读）
+      description: 只返回 is_visible 的评价，按时间倒序；summary 为评分聚合（ADR-042）。
+      security: [{ publishableKey: [] }]
+      parameters:
+        - { name: handle, in: path, required: true, schema: { type: string } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      summary: { $ref: '#/components/schemas/ReviewSummary' }
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Review' }
+                      count: { type: integer, example: 12 }
+                      hasMore: { type: boolean, example: false }
+
+  /store/reviews:
+    post:
+      tags: [store]
+      summary: 提交评价（需登录，一单一商品一条）
+      description: |
+        服务端校验：订单归属（10003）、订单已收货（20001）、商品在订单里（20002）、
+        一单一商品只能评一次（30002）。展示名由服务端脱敏后落库。
+      security: [{ customerJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id, product_id, rating]
+              properties:
+                order_id: { type: string, example: ord_01H }
+                product_id: { type: string, example: prod_01H }
+                rating: { type: integer, minimum: 1, maximum: 5, example: 5 }
+                content: { type: string, maxLength: 500, example: "静音效果很好" }
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Review' }
+        '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /admin/reviews:
+    get:
+      tags: [admin]
+      summary: 评价列表（含已隐藏）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: product_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: visible
+          in: query
+          required: false
+          schema: { type: string, enum: ['true', 'false'] }
+          description: 只看展示中 / 只看已隐藏；不传 = 全部
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/AdminReview' }
+                      count: { type: integer, example: 3 }
+                      hasMore: { type: boolean, example: false }
+
+  /admin/reviews/{id}:
+    patch:
+      tags: [admin]
+      summary: 显示 / 隐藏评价（不改评分与内容）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_visible]
+              properties:
+                is_visible: { type: boolean, example: false }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AdminReview' }
+
+  /admin/reviews/{id}/reply:
+    put:
+      tags: [admin]
+      summary: 商家解释（空串 = 清除）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, maxLength: 300, example: "感谢反馈，已调整静音微动" }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AdminReview' }
 
   /store/auth/settings:
     get:

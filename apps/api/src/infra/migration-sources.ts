@@ -19,6 +19,7 @@ export const MODULES = [
   "fulfillment",
   "theme",
   "notification",
+  "review",
 ];
 
 export interface MigrationSource {

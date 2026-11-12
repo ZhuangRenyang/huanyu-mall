@@ -4,6 +4,7 @@
 import { makeFakeCatalogServices } from "./fake-services-catalog.js";
 import { makeFakeCommerceServices } from "./fake-services-commerce.js";
 import { makeFakePaymentServices } from "./fake-services-payment.js";
+import { makeFakeReviewServices } from "./fake-services-review.js";
 import { makeFakeSystemUpdate } from "./fake-services-system.js";
 import type { FakeServicesState } from "./fake-services-state.js";
 
@@ -14,6 +15,7 @@ export function makeFakeServices(state: FakeServicesState) {
     ...makeFakeCatalogServices(state),
     ...makeFakeCommerceServices(state),
     ...makeFakePaymentServices(state),
+    ...makeFakeReviewServices(state),
     systemUpdate: makeFakeSystemUpdate(),
   };
 }

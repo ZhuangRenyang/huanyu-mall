@@ -20,6 +20,13 @@ export {
   bulkProductAction,
 } from './admin-catalog';
 
+export { listReviews, setReviewVisible, replyReview } from './admin-reviews';
+export type {
+  AdminReviewView,
+  ReviewListResult,
+  ReviewVisibilityFilter,
+} from './admin-reviews';
+
 export {
   listOrders,
   getOrder,

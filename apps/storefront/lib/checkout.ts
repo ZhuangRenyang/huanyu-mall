@@ -136,6 +136,8 @@ export function validateStep(step: number, form: CheckoutForm): CheckoutErrors {
 }
 
 export interface OrderLineSnapshot {
+  /** 商品 id：订单详情据此提交评价（ADR-042）。 */
+  productId?: string;
   title: string;
   variantTitle?: string;
   quantity: number;
@@ -176,6 +178,8 @@ export interface OrderRecord {
   tracking?: { carrier: string; number: string };
   /** 支付渠道展示名（如「支付宝」）；未付款时为空。 */
   paymentMethod?: string;
+  /** 已评价商品 id（来自订单详情接口）。 */
+  reviewedProductIds?: string[];
 }
 
 const ORDER_PREFIX = 'order:';
@@ -537,6 +541,7 @@ export function toOrderRecord(order: Order): OrderRecord {
     phone: address?.phone ?? '',
     shippingOptionName: order.shipping_method?.name ?? '',
     items: (order.line_items ?? []).map((li) => ({
+      productId: li.product_id,
       title: li.title,
       quantity: li.quantity,
       unitPriceMinor: li.unit_price_minor,
@@ -547,6 +552,7 @@ export function toOrderRecord(order: Order): OrderRecord {
     ...mapTracking(order),
     // 支付渠道用后端给的 label，不写死渠道：写死「微信支付」会让 PayPal 订单也显示微信
     paymentMethod: order.payment_provider?.label,
+    reviewedProductIds: order.reviewed_product_ids ?? [],
     ...(address
       ? {
           contactName: [address.first_name, address.last_name].filter(Boolean).join(' '),

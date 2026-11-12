@@ -2,8 +2,10 @@ import { ChevronRight } from 'lucide-react';
 import { ProductGallery } from '@mall/ui';
 import { ProductBuyBox } from './product-buy-box';
 import { VoucherStrip } from './vouchers/voucher-strip';
+import { ProductReviews } from './product-reviews';
 import type { CatalogProduct } from '@/lib/mock-products';
 import type { PublicVoucherView } from '@/lib/vouchers';
+import type { ProductReviewsView } from '@/lib/reviews';
 
 export interface ProductDetailViewProps {
   product: CatalogProduct;
@@ -12,6 +14,8 @@ export interface ProductDetailViewProps {
   /** 可领取的店铺券（无券时传空数组，券条自动隐藏）。 */
   vouchers?: PublicVoucherView[];
   voucherCurrency?: string;
+  /** 商品评价（含评分摘要）；缺省时整块不渲染。 */
+  reviews?: ProductReviewsView;
 }
 
 /** PDP 布局：面包屑 → [画廊 | 购买区] → 详情 → 参数表。移动单列，桌面 7:5 非对称。 */
@@ -21,6 +25,7 @@ export function ProductDetailView({
   channel,
   vouchers = [],
   voucherCurrency = 'CNY',
+  reviews,
 }: ProductDetailViewProps) {
   const base = `/${locale}/${channel}`;
   /*
@@ -80,6 +85,9 @@ export function ProductDetailView({
         </h2>
         <p className="text-base leading-7 text-muted-foreground">{product.description}</p>
       </section>
+
+      {/* 评价在详情之后、参数之前：顾客看完介绍，接着看别人怎么说（淘宝同一顺序） */}
+      {reviews && <ProductReviews data={reviews} />}
 
       {product.attributes.length > 0 && (
         <section className="mt-8 max-w-prose" aria-labelledby="spec-heading">

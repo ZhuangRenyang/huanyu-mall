@@ -5,6 +5,7 @@ import {
   Gift,
   LayoutDashboard,
   LogOut,
+  MessageSquare,
   Package,
   Settings,
   Tag,
@@ -53,6 +54,8 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
       { to: '/orders', label: '订单列表', icon: ClipboardList },
       // 退款是独立单据（有自己的状态与时效），必须能单独筛出待处理
       { to: '/refunds', label: '退款管理', icon: Banknote },
+      // 评价属交易：它是订单完成后的产物，不是商品资料（ADR-042）
+      { to: '/reviews', label: '评价管理', icon: MessageSquare },
     ],
   },
   {

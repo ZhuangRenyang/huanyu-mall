@@ -190,6 +190,8 @@ export interface PaymentSession {
 /** 订单行（含快照）。 */
 export interface OrderLineItem {
   id: string;
+  /** 商品 id：评价按它提交。 */
+  product_id?: string;
   variant_id?: string;
   title: string;
   sku: string;
@@ -236,6 +238,8 @@ export interface Order {
   } | null;
   /** 支付渠道（详情接口返回）。未付款或货到付款为 null。 */
   payment_provider?: { id: string; label: string } | null;
+  /** 已提交过评价的商品 id（「我的订单」显示「已评价」）。 */
+  reviewed_product_ids?: string[];
   /** 发货单（含物流单号）：顾客端「物流信息」用它（ADR-033）。 */
   fulfillments?: Array<{
     id: string;

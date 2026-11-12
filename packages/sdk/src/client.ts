@@ -166,6 +166,12 @@ export function createStoreClient(opts: ClientOptions) {
     collectVoucher: (id: string) => post(`/api/v1/store/vouchers/${id}/collect`, {}),
     /** 我的卡券（未用在前）。 */
     listMyVouchers: () => get("/api/v1/store/customer/vouchers"),
+    /** 商品评价（匿名可读）。 */
+    listProductReviews: (handle: string, q?: Query) =>
+      get(`/api/v1/store/products/${handle}/reviews`, q),
+    /** 提交评价（需登录；一单一商品一条）。 */
+    createReview: (b: { order_id: string; product_id: string; rating: number; content?: string }) =>
+      post("/api/v1/store/reviews", b),
     setGiftCardCodes: (cartId: string, b: SetGiftCardCodesRequest) =>
       put(`/api/v1/store/carts/${cartId}/gift-card-codes`, b),
     listPaymentProviders: (cartId: string) =>
@@ -279,6 +285,12 @@ export function createAdminClient(opts: ClientOptions) {
       post("/api/v1/admin/auth/change-password", b),
     /** 工作台：今日支付、待发货、待退款、最近订单（ADR-030）。 */
     getDashboard: () => get("/api/v1/admin/dashboard"),
+    /** 评价管理（ADR-042）。 */
+    listReviews: (q?: Query) => get("/api/v1/admin/reviews", q),
+    setReviewVisible: (id: string, visible: boolean) =>
+      patch(`/api/v1/admin/reviews/${id}`, { is_visible: visible }),
+    replyReview: (id: string, content: string) =>
+      put(`/api/v1/admin/reviews/${id}/reply`, { content }),
     listProducts: (q?: Query) => get("/api/v1/admin/products", q),
     getProduct: (id: string) => get(`/api/v1/admin/products/${id}`),
     createProduct: (b: CreateProductRequest) => post("/api/v1/admin/products", b),

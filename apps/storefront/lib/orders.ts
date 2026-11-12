@@ -52,6 +52,8 @@ export interface OrderView {
   shippingRegion: string;
   shippingLine1: string;
   tracking?: { carrier: string; number: string };
+  /** 已提交过评价的商品 id（「评价」按钮变「已评价」）。 */
+  reviewedProductIds?: string[];
   timeline: TimelineItem[];
 }
 
@@ -101,6 +103,7 @@ function recordToView(rec: OrderRecord): OrderView {
     contactEmail: rec.email || undefined,
     shippingRegion: rec.shippingRegion ?? '—',
     shippingLine1: rec.shippingLine1 ?? '—',
+    reviewedProductIds: rec.reviewedProductIds ?? [],
     timeline: buildTimeline(status, rec.createdAt),
   };
 }

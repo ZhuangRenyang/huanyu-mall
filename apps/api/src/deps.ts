@@ -27,6 +27,7 @@ import paymentModule from "@mall/payment";
 import fulfillmentModule from "@mall/fulfillment";
 import themeModule from "@mall/theme";
 import notificationModule, { NotificationDispatcher } from "@mall/notification";
+import reviewModule from "@mall/review";
 import { createWorkflowRegistry, registerSubscribers } from "@mall/workflows";
 import type { IRegionChannelModuleService } from "@mall/region-channel";import type { IProductModuleService } from "@mall/product";
 import type { IPricingModuleService } from "@mall/pricing";
@@ -42,6 +43,7 @@ import type { IPaymentModuleService } from "@mall/payment";
 import type { IFulfillmentModuleService } from "@mall/fulfillment";
 import type { IThemeModuleService } from "@mall/theme";
 import type { INotificationModuleService } from "@mall/notification";
+import type { IReviewModuleService } from "@mall/review";
 import type { ApiConfig } from "./config.js";
 import { PgAuditRepository } from "./repositories/audit.repository.js";
 import { PgSystemUpdateRepository } from "./repositories/system-update.repository.js";
@@ -64,6 +66,7 @@ export interface AppServices {
   fulfillment: IFulfillmentModuleService;
   theme: IThemeModuleService;
   notification: INotificationModuleService;
+  review: IReviewModuleService;
   systemUpdate: SystemUpdateService;
 }
 
@@ -102,6 +105,7 @@ const MODULES: ModuleDefinition[] = [
   fulfillmentModule,
   themeModule,
   notificationModule,
+  reviewModule,
 ];
 
 /** 组合根：按依赖拓扑序把各业务模块注册进容器，实例化 workflow 引擎。 */
@@ -157,6 +161,27 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     },
   );
 
+  /*
+   * 评价模块的订单端口：只为「评价必须挂在自己买过且已收货的订单上」。
+   * 用适配器而不是让 review 直接依赖 order —— 模块图不新增边；
+   * 延迟 resolve("order")：此刻 services 还没构造完。
+   */
+  container.register("review-order-port", () => ({
+    getOrder: async (orderId: string) => {
+      const order = await container
+        .resolve<IOrderModuleService>("order")
+        .retrieveOrder(orderId)
+        .catch(() => null);
+      if (!order) return null;
+      return {
+        id: order.id,
+        customer_id: order.customer_id,
+        status: order.status,
+        items: order.items.map((i) => ({ product_id: i.product_id, title: i.title })),
+      };
+    },
+  }));
+
   const services: AppServices = {
     regionChannel: container.resolve<IRegionChannelModuleService>("region-channel"),
     product: container.resolve<IProductModuleService>("product"),
@@ -173,6 +198,7 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     fulfillment: container.resolve<IFulfillmentModuleService>("fulfillment"),
     theme: container.resolve<IThemeModuleService>("theme"),
     notification: container.resolve<INotificationModuleService>("notification"),
+    review: container.resolve<IReviewModuleService>("review"),
     systemUpdate: new SystemUpdateService(new PgSystemUpdateRepository(pool), config),
   };
 

@@ -11,6 +11,7 @@ import { storeAddressRoutes } from "./store/addresses.js";
 import { storeCustomerRoutes } from "./store/customer.js";
 import { storeAuthRoutes } from "./store/auth.js";
 import { storePromotionRoutes } from "./store/promotions.js";
+import { storeReviewRoutes } from "./store/reviews.js";
 import { adminAuthRoutes } from "./admin/auth.js";
 import { adminDashboardRoutes } from "./admin/dashboard.js";
 import { adminProductRoutes } from "./admin/products.js";
@@ -27,6 +28,7 @@ import { adminSystemRoutes } from "./admin/system.js";
 import { adminTaxRoutes } from "./admin/tax.js";
 import { adminShippingRoutes } from "./admin/shipping.js";
 import { adminRefundRoutes } from "./admin/refunds.js";
+import { adminReviewRoutes } from "./admin/reviews.js";
 
 export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   healthRoutes(app, deps.config);
@@ -43,6 +45,7 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   storeCustomerRoutes(app, deps);
   storeAuthRoutes(app, deps);
   storePromotionRoutes(app, deps);
+  storeReviewRoutes(app, deps);
   // Admin API（21）
   adminAuthRoutes(app, deps);
   adminDashboardRoutes(app, deps);
@@ -60,4 +63,5 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   adminTaxRoutes(app, deps);
   adminShippingRoutes(app, deps);
   adminRefundRoutes(app, deps);
+  adminReviewRoutes(app, deps);
 }

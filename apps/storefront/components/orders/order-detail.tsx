@@ -6,6 +6,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Badge, Button, formatMoney } from '@mall/ui';
 import { loadOrderRefunds, requestOrderRefund, type StoreRefundView } from '@/lib/refunds';
 import { OrderTimeline } from './order-timeline';
+import { ReviewDialog } from './review-dialog';
 import { ORDER_STATUS_META, formatDateTime, type OrderView } from '@/lib/orders';
 
 /**
@@ -187,6 +188,14 @@ function InfoCard({ icon: Icon, title, children }: { icon: LucideIcon; title: st
 /** 订单详情：状态+时间线 → 商品/金额（左）+ 地址/配送/支付（右）。 */
 export function OrderDetail({ order }: { order: OrderView }) {
   const meta = ORDER_STATUS_META[order.status];
+  /** 已评价的商品：初始来自订单详情，提交成功后本地追加（不用整页刷新）。 */
+  const [reviewed, setReviewed] = useState<string[]>(order.reviewedProductIds ?? []);
+  const [reviewTarget, setReviewTarget] = useState<{ productId: string; title: string } | null>(null);
+  /*
+   * 只有「已收货/已完成」能评价 —— 与服务端 REVIEWABLE_STATUSES 同一口径。
+   * 前端藏按钮只是体验；绕过它服务端仍会拒。
+   */
+  const canReview = order.status === 'to_receive' || order.status === 'completed';
 
   return (
     <div className="space-y-6">
@@ -220,7 +229,24 @@ export function OrderDetail({ order }: { order: OrderView }) {
                   {item.variantTitle && <span className="block text-xs text-muted-foreground">{item.variantTitle}</span>}
                   <span className="block text-xs text-muted-foreground">× {item.quantity}</span>
                 </span>
-                <span className="tabular shrink-0">{formatMoney(item.unitPriceMinor * item.quantity, order.currencyCode)}</span>
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  <span className="tabular">{formatMoney(item.unitPriceMinor * item.quantity, order.currencyCode)}</span>
+                  {canReview &&
+                    item.productId &&
+                    (reviewed.includes(item.productId) ? (
+                      <span className="text-xs text-muted-foreground">已评价</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReviewTarget({ productId: item.productId!, title: item.title })
+                        }
+                        className="rounded border border-border px-2 py-0.5 text-xs text-foreground transition-colors duration-150 hover:bg-muted"
+                      >
+                        评价
+                      </button>
+                    ))}
+                </span>
               </li>
             ))}
           </ul>
@@ -266,6 +292,19 @@ export function OrderDetail({ order }: { order: OrderView }) {
           currencyCode={order.currencyCode}
         />
       </div>
+
+      <ReviewDialog
+        open={reviewTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setReviewTarget(null);
+        }}
+        orderId={order.id}
+        productId={reviewTarget?.productId ?? ''}
+        productTitle={reviewTarget?.title ?? ''}
+        onDone={() => {
+          if (reviewTarget) setReviewed((prev) => [...prev, reviewTarget.productId]);
+        }}
+      />
     </div>
   );
 }
