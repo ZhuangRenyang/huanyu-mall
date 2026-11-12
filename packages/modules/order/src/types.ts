@@ -273,18 +273,30 @@ export interface OrderRepository {
   listLineItemsByOrderIds(orderIds: string[]): Promise<OrderLineItemDTO[]>;
   /** 按客户聚合订单数与消费额（一次 GROUP BY，禁 N+1）。 */
   summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]>;
+  /** 各状态订单数（一次 GROUP BY）。 */
+  countByStatus(): Promise<Record<string, number>>;
+  /** 某时刻之后「已付款」订单数与金额（工作台「今日」口径）。 */
+  summarizePaidSince(since: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
   updateStatus(id: string, status: OrderStatus): Promise<void>;
   updatePaymentStatus(id: string, paymentStatus: PaymentStatus): Promise<void>;
 }
 
 export interface IOrderModuleService {
   createOrder(input: CreateOrderInput): Promise<OrderDetailDTO>;
+  /** 各状态订单数（后台工作台与订单页签角标，一次 GROUP BY）。 */
+  countByStatus(): Promise<Record<string, number>>;
+  /** 某时刻之后「已付款」订单数与金额（工作台「今日」口径）。 */
+  summarizePaidSince(since: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
   retrieveOrder(id: string): Promise<OrderDetailDTO>;
   /** 写商家备注（仅后台可见）；传 null/空串即清空。 */
   setMerchantNote(id: string, note: string | null): Promise<OrderDetailDTO>;
   listOrders(q: OrderQuery): Promise<{ items: OrderDTO[]; count: number }>;
   /** 按客户聚合订单数与消费额（后台客户列表）。 */
   summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]>;
+  /** 各状态订单数（一次 GROUP BY）。 */
+  countByStatus(): Promise<Record<string, number>>;
+  /** 某时刻之后「已付款」订单数与金额（工作台「今日」口径）。 */
+  summarizePaidSince(since: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
   /** 列表 + 行项（店面「我的订单」要显示商品；一次批量取，不做 N+1）。 */
   listOrderSummaries(
     q: OrderQuery,

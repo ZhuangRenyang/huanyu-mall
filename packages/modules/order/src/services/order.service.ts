@@ -127,6 +127,16 @@ export class OrderService implements IOrderModuleService {
     return this.repo.list(q);
   }
 
+  async countByStatus(): Promise<Record<string, number>> {
+    return this.repo.countByStatus();
+  }
+
+  async summarizePaidSince(
+    since: Date,
+  ): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }> {
+    return this.repo.summarizePaidSince(since);
+  }
+
   async summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]> {
     return this.repo.summarizeByCustomerIds(customerIds);
   }

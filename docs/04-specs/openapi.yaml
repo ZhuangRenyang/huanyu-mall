@@ -1715,6 +1715,56 @@ paths:
         '401': { description: 未认证(10001)或当前口令错误(10005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '429': { description: 尝试过于频繁(60001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
+  /admin/dashboard:
+    get:
+      tags: [admin]
+      summary: 工作台（今日支付、待发货、待退款、最近订单）
+      description: |
+        口径（ADR-030）：
+        - today：今天 0 点后「已付款」的订单数与金额（未付款、已退款不计）
+        - pending.to_fulfill：paid / partially_fulfilled
+        - pending.refunds：退款单 status = pending
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      today:
+                        type: object
+                        properties:
+                          paid_orders: { type: integer, example: 12 }
+                          paid_amount_minor: { type: integer, example: 259900 }
+                          currency_code: { type: string, example: CNY }
+                      pending:
+                        type: object
+                        properties:
+                          to_fulfill: { type: integer, example: 5 }
+                          refunds: { type: integer, example: 2 }
+                      order_status_counts:
+                        type: object
+                        additionalProperties: { type: integer }
+                        example: { paid: 5, fulfilled: 40 }
+                      recent_orders:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, example: ord_01H }
+                            status: { type: string, example: paid }
+                            payment_status: { type: string, example: paid }
+                            email: { type: string, example: "buyer@example.com" }
+                            total_minor: { type: integer, example: 19900 }
+                            currency_code: { type: string, example: CNY }
+                            placed_at: { type: string, format: date-time, nullable: true }
+
   /admin/categories:
     get:
       tags: [admin]

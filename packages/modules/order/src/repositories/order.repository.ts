@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -350,6 +350,38 @@ export class DrizzleOrderRepository implements OrderRepository {
       .where(eq(schema.orderShippingMethod.orderId, orderId))
       .limit(1);
     return rows[0] ? toShippingDTO(rows[0]) : null;
+  }
+
+  async countByStatus(): Promise<Record<string, number>> {
+    const rows = await this.db
+      .select({ status: schema.order.status, count: sql<number>`count(*)::int` })
+      .from(schema.order)
+      .groupBy(schema.order.status);
+    return Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
+  }
+
+  async summarizePaidSince(
+    since: Date,
+  ): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }> {
+    const rows = await this.db
+      .select({
+        count: sql<number>`count(*)::int`,
+        amount: sql<string>`coalesce(sum(${schema.order.totalMinor}), 0)::text`,
+        currency: sql<string | null>`max(${schema.order.currencyCode})`,
+      })
+      .from(schema.order)
+      .where(
+        and(
+          eq(schema.order.paymentStatus, "paid"),
+          gte(schema.order.createdAt, since),
+        ),
+      );
+    const row = rows[0];
+    return {
+      count: Number(row?.count ?? 0),
+      amountMinor: BigInt(row?.amount ?? "0"),
+      currencyCode: row?.currency ?? null,
+    };
   }
 
   async list(q: OrderQuery): Promise<{ items: OrderDTO[]; count: number }> {

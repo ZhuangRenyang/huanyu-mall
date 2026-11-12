@@ -873,6 +873,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         state.orderCreated && (!q?.cartId || q.cartId === "cart_1")
           ? { items: [order], count: 1 }
           : { items: [], count: 0 },
+      // 工作台（ADR-030）：内存版计数，够驱动路由契约测试
+      countByStatus: async () => (state.orderCreated ? { paid: 1 } : {}),
+      summarizePaidSince: async () => ({
+        count: state.orderCreated ? 1 : 0,
+        amountMinor: state.orderCreated ? BigInt(String(order.total_minor ?? 0)) : 0n,
+        currencyCode: "CNY",
+      }),
       cancelOrder: async () => {},
       /*
        * 退款申请单用内存数组：够跑「申请 → 列表 → 同意/拒绝」这条链。

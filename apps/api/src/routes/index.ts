@@ -12,6 +12,7 @@ import { storeCustomerRoutes } from "./store/customer.js";
 import { storeAuthRoutes } from "./store/auth.js";
 import { storePromotionRoutes } from "./store/promotions.js";
 import { adminAuthRoutes } from "./admin/auth.js";
+import { adminDashboardRoutes } from "./admin/dashboard.js";
 import { adminProductRoutes } from "./admin/products.js";
 import { adminCategoryRoutes } from "./admin/categories.js";
 import { adminOrderRoutes } from "./admin/orders.js";
@@ -44,6 +45,7 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   storePromotionRoutes(app, deps);
   // Admin API（21）
   adminAuthRoutes(app, deps);
+  adminDashboardRoutes(app, deps);
   adminProductRoutes(app, deps);
   adminCategoryRoutes(app, deps);
   adminOrderRoutes(app, deps);

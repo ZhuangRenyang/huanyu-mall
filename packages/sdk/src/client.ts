@@ -277,6 +277,8 @@ export function createAdminClient(opts: ClientOptions) {
      */
     changePassword: (b: ChangePasswordRequest) =>
       post("/api/v1/admin/auth/change-password", b),
+    /** 工作台：今日支付、待发货、待退款、最近订单（ADR-030）。 */
+    getDashboard: () => get("/api/v1/admin/dashboard"),
     listProducts: (q?: Query) => get("/api/v1/admin/products", q),
     getProduct: (id: string) => get(`/api/v1/admin/products/${id}`),
     createProduct: (b: CreateProductRequest) => post("/api/v1/admin/products", b),
