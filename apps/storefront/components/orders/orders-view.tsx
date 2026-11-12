@@ -52,6 +52,10 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [filter, setFilter] = useState<OrderFilter>('all');
+  /** 分页：一页 20 单，超过就翻页（顾客订单多时第 21 单不能凭空消失）。 */
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [detail, setDetail] = useState<OrderView | null>(null);
   const [queryId, setQueryId] = useState('');
   const [identity, setIdentity] = useState('');
@@ -63,7 +67,10 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
     if (!live) {
       const all = listOrders();
       const view = ORDER_FILTERS.find((f) => f.key === filter)?.view;
-      setOrders(view ? all.filter((o) => view.includes(o.status)) : all);
+      const filteredAll = view ? all.filter((o) => view.includes(o.status)) : all;
+      const start = (page - 1) * PAGE_SIZE;
+      setOrders(filteredAll.slice(start, start + PAGE_SIZE));
+      setHasMore(start + PAGE_SIZE < filteredAll.length);
       return;
     }
     let cancelled = false;
@@ -82,11 +89,13 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
       try {
         const statuses = ORDER_FILTERS.find((f) => f.key === filter)?.statuses;
         const res = (await getStoreClient().listMyOrders({
-          limit: 20,
+          limit: PAGE_SIZE,
+          offset: (page - 1) * PAGE_SIZE,
           ...(statuses ? { status: statuses } : {}),
-        })) as { items?: Order[] };
+        })) as { items?: Order[]; hasMore?: boolean };
         if (!cancelled) {
           setOrders((res.items ?? []).map((o) => orderRecordToView(toOrderRecord(o))));
+          setHasMore(res.hasMore === true);
         }
       } catch {
         if (!cancelled) setOrders([]);
@@ -97,7 +106,7 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
     return () => {
       cancelled = true;
     };
-  }, [live, filter]);
+  }, [live, filter, page]);
 
   // 详情：按单号查（游客单号 + 后端订单号都能查到）
   useEffect(() => {
@@ -201,7 +210,11 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
               type="button"
               role="tab"
               aria-selected={filter === f.key}
-              onClick={() => setFilter(f.key)}
+              onClick={() => {
+                // 换页签回第一页：停在第 3 页筛一个只有 5 单的状态会看到空列表
+                setFilter(f.key);
+                setPage(1);
+              }}
               className={
                 filter === f.key
                   ? 'h-8 rounded-md bg-primary-subtle px-3 text-sm font-medium text-primary-subtle-foreground'
@@ -240,11 +253,34 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
             action={<Button onClick={() => router.push(`${base}/products`)}>去逛逛</Button>}
           />
         ) : (
-          <ul className="space-y-3">
-            {orders.map((o) => (
-              <OrderRow key={o.id} order={o} base={base} />
-            ))}
-          </ul>
+          <>
+            <ul className="space-y-3">
+              {orders.map((o) => (
+                <OrderRow key={o.id} order={o} base={base} />
+              ))}
+            </ul>
+            {(page > 1 || hasMore) && (
+              <nav aria-label="订单分页" className="mt-4 flex items-center justify-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  上一页
+                </Button>
+                <span className="tabular text-sm text-muted-foreground">第 {page} 页</span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!hasMore}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  下一页
+                </Button>
+              </nav>
+            )}
+          </>
         )}
       </section>
     </div>
