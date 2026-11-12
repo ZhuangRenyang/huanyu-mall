@@ -1,10 +1,10 @@
 import { invalidCredentials, passwordUnchanged, weakPassword } from "../errors.js";
 import { checkPasswordStrength } from "./password-policy.js";
+import { revokeIdentitySessions } from "./session-revoke.js";
 import type {
   AuthRepository,
   AuthScope,
   PasswordHasher,
-  RefreshTokenDTO,
   TokenBlacklist,
 } from "../types.js";
 
@@ -52,20 +52,12 @@ export async function changeAdminPassword(
     throw passwordUnchanged();
   }
 
-  const revoked = await deps.repo.revokeRefreshTokensByIdentity(identity.id);
-  if (deps.blacklist) {
-    for (const row of revoked) {
-      await deps.blacklist.revoke(row.id, remainingTtl(row, deps.refreshTtl));
-    }
-  }
+  const revoked = await revokeIdentitySessions(
+    { repo: deps.repo, blacklist: deps.blacklist, refreshTtl: deps.refreshTtl },
+    identity.id,
+  );
 
   const newHash = await deps.hasher.hash(input.newPassword);
   await deps.repo.updateCredentialHash(identity.id, newHash);
-  return { revokedRefreshTokens: revoked.length };
-}
-
-/** 剩余有效秒数（黑名单条目不该比 token 本身活得更久）。 */
-function remainingTtl(row: RefreshTokenDTO, refreshTtl: (scope: AuthScope) => number): number {
-  const remaining = Math.floor((new Date(row.expires_at).getTime() - Date.now()) / 1000);
-  return remaining > 0 ? remaining : refreshTtl(row.scope);
+  return { revokedRefreshTokens: revoked };
 }

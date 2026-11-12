@@ -21,6 +21,9 @@ const AUTH_PATHS = new Set([
   "/api/v1/store/auth/register",
   // 发码也要限：邮件通道上线后，不设限就等于把店铺变成「给任意邮箱发信」的跳板
   "/api/v1/store/auth/codes",
+  // 忘记密码：发码 + 重置都算凭据操作，与登录共用同一个桶
+  "/api/v1/store/auth/password/forgot",
+  "/api/v1/store/auth/password/reset",
   "/api/v1/admin/auth/login",
   "/api/v1/admin/auth/change-password",
 ]);
@@ -76,6 +79,8 @@ export function rateLimitMessage(path: string, tier: RateLimitTier, windowMs: nu
   if (path === "/api/v1/admin/auth/change-password") return `密码修改尝试过于频繁，请 ${wait}后再试`;
   if (path === "/api/v1/store/auth/register") return `账号注册请求过于频繁，请 ${wait}后再试`;
   if (path === "/api/v1/store/auth/codes") return `验证码请求过于频繁，请 ${wait}后再试`;
+  if (path === "/api/v1/store/auth/password/forgot") return `重置密码请求过于频繁，请 ${wait}后再试`;
+  if (path === "/api/v1/store/auth/password/reset") return `密码重置尝试过于频繁，请 ${wait}后再试`;
   if (tier === "checkout") return `下单请求过于频繁，请 ${wait}后再试`;
   return `接口请求过于频繁，请 ${wait}后再试`;
 }

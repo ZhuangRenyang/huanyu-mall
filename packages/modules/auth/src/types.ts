@@ -88,6 +88,13 @@ export interface RegisterInput {
   profile?: { firstName?: string; lastName?: string };
 }
 
+/** 顾客重置密码：账号（邮箱或手机号）+ 验证码 + 新密码。 */
+export interface ResetPasswordInput {
+  identifier: string;
+  code: string;
+  newPassword: string;
+}
+
 /** 顾客注册方式（店铺级设置）。 */
 export type RegisterMode = "email" | "phone";
 
@@ -241,6 +248,23 @@ export interface IAuthModuleService {
    * 手机号不存在时自动建客户与身份 —— 顾客不需要先「注册」再「登录」两步。
    */
   loginWithPhoneCode(input: { phone: string; code: string }): Promise<TokenPair>;
+  /**
+   * 发送重置密码验证码（淘宝「忘记密码」第一步）。
+   *
+   * 按账号类型自动选通道：邮箱发邮件、手机号发短信。账号不存在直接报错。
+   */
+  requestPasswordReset(input: { identifier: string }): Promise<{
+    sent: boolean;
+    channel: VerificationChannel;
+    devCode?: string;
+  }>;
+  /**
+   * 用验证码重设密码。
+   *
+   * 手机号注册的顾客从来没设过密码，这条路同时也是「首次设置密码」。
+   * 成功后撤销该身份的全部会话：密码变了，旧登录必须失效。
+   */
+  resetPassword(input: ResetPasswordInput): Promise<{ revokedRefreshTokens: number }>;
   adminLogin(input: { email: string; password: string }): Promise<TokenPair>;
   refresh(refreshToken: string): Promise<TokenPair>;
   logout(refreshToken: string): Promise<void>;

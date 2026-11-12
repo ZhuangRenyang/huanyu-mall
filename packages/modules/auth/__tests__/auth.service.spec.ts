@@ -287,6 +287,119 @@ describe("AuthService（M11，JWT + refresh 轮换单飞 + RBAC）", () => {
   });
 });
 
+describe("找回密码（重置 / 首次设密码）", () => {
+  it("邮箱账号：重置后旧密码失效、新密码可登录、旧会话被撤销", async () => {
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    const pair = await service.login({ identifier: "a@b.com", password: "pw123456" });
+
+    const forgot = await service.requestPasswordReset({ identifier: "a@b.com" });
+    expect(forgot.channel).toBe("email");
+    const resetCode = lastCodeOf(mailer);
+
+    const res = await service.resetPassword({
+      identifier: "a@b.com",
+      code: resetCode,
+      newPassword: "newpw123456",
+    });
+    expect(res.revokedRefreshTokens).toBe(1);
+
+    await expect(
+      service.login({ identifier: "a@b.com", password: "pw123456" }),
+    ).rejects.toBeInstanceOf(DomainError);
+    await expect(
+      service.login({ identifier: "a@b.com", password: "newpw123456" }),
+    ).resolves.toMatchObject({ scope: "customer" });
+    // 旧会话不能靠 refresh 续命
+    await expect(service.refresh(pair.refreshToken)).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("手机号账号：短信验证码重置（这条路同时是「首次设密码」）", async () => {
+    const { service, sms } = setup({ register_mode: "phone" });
+    await service.sendVerificationCode({ channel: "sms", target: PHONE, purpose: "login" });
+    await service.loginWithPhoneCode({ phone: PHONE, code: lastCodeOf(sms) });
+
+    const forgot = await service.requestPasswordReset({ identifier: PHONE });
+    expect(forgot.channel).toBe("sms");
+    await service.resetPassword({
+      identifier: PHONE,
+      code: lastCodeOf(sms),
+      newPassword: "newpw123456",
+    });
+
+    // 以前只能验证码登录，现在有密码了
+    await expect(service.login({ identifier: PHONE, password: "newpw123456" })).resolves.toMatchObject({
+      scope: "customer",
+    });
+  });
+
+  it("未注册的账号直接提示（不假装已发送）", async () => {
+    const { service } = setup();
+    await expect(
+      service.requestPasswordReset({ identifier: "none@b.com" }),
+    ).rejects.toBeInstanceOf(DomainError);
+    await expect(
+      service.requestPasswordReset({ identifier: "13900000000" }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("弱密码被拒，且原密码仍然可用", async () => {
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    await service.requestPasswordReset({ identifier: "a@b.com" });
+    const resetCode = lastCodeOf(mailer);
+
+    await expect(
+      service.resetPassword({ identifier: "a@b.com", code: resetCode, newPassword: "123" }),
+    ).rejects.toBeInstanceOf(DomainError);
+
+    await expect(
+      service.login({ identifier: "a@b.com", password: "pw123456" }),
+    ).resolves.toMatchObject({ scope: "customer" });
+  });
+
+  it("验证码一次性：同一码不能重置两次", async () => {
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    await service.requestPasswordReset({ identifier: "a@b.com" });
+    const resetCode = lastCodeOf(mailer);
+
+    await service.resetPassword({
+      identifier: "a@b.com",
+      code: resetCode,
+      newPassword: "newpw123456",
+    });
+    await expect(
+      service.resetPassword({
+        identifier: "a@b.com",
+        code: resetCode,
+        newPassword: "another123456",
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+});
+
 describe("顾客账号设置（注册方式切换）", () => {
   it("默认邮箱注册", async () => {
     const { service } = setup();

@@ -1,4 +1,5 @@
 import {
+  accountNotFound,
   emailAlreadyRegistered,
   emailNotConfigured,
   forbidden,
@@ -13,9 +14,12 @@ import {
   smsNotConfigured,
   verificationCodeExpired,
   verificationTooFrequent,
+  weakPassword,
 } from "../errors.js";
 import { randomInt, createHash } from "node:crypto";
 import { changeAdminPassword } from "./change-password.js";
+import { checkPasswordStrength } from "./password-policy.js";
+import { revokeIdentitySessions } from "./session-revoke.js";
 import { prefixedUlid } from "@mall/core";
 import { signJwt, verifyJwt } from "./jwt.js";
 import { hashToken, randomToken } from "./tokens.js";
@@ -32,6 +36,7 @@ import type {
   PasswordHasher,
   RegisterInput,
   RegisterMode,
+  ResetPasswordInput,
   SmsPort,
   VerificationChannel,
   VerificationPurpose,
@@ -252,6 +257,74 @@ export class AuthService implements IAuthModuleService {
     }
     if (identity.status !== "active") throw invalidCredentials();
     return this.toTokenPair(await this.issuePair(identity, "customer", NO_CLAIMS));
+  }
+
+  /**
+   * 忘记密码第一步：发重置验证码。
+   *
+   * 通道跟着账号类型走 —— 输邮箱就发邮件、输手机号就发短信。
+   * 不让顾客再选一次通道：他填的是哪个账号，码就该发到哪个地址。
+   */
+  async requestPasswordReset(input: { identifier: string }): Promise<{
+    sent: boolean;
+    channel: VerificationChannel;
+    devCode?: string;
+  }> {
+    const { channel, target } = await this.resolveCustomerAccount(input.identifier);
+    const res = await this.sendVerificationCode({ channel, target, purpose: "reset" });
+    return { ...res, channel };
+  }
+
+  /**
+   * 忘记密码第二步：验证码 + 新密码。
+   *
+   * 手机号注册的顾客从来没有密码，这条路同时就是「首次设置密码」——
+   * 所以 credential 不存在时是**插入**而不是报错（淘宝同样允许短信重设即设密码）。
+   *
+   * 顺序不能换：先验码（一次性消费）再改密，码不对时一个字都不该落库；
+   * 改密前撤销全部会话，密码变了旧登录必须立刻失效。
+   */
+  async resetPassword(input: ResetPasswordInput): Promise<{ revokedRefreshTokens: number }> {
+    const { identity, target } = await this.resolveCustomerAccount(input.identifier);
+    if (identity.status !== "active") throw invalidCredentials();
+
+    const strength = checkPasswordStrength(input.newPassword);
+    if (!strength.ok) throw weakPassword(strength.reason ?? "新口令强度不足");
+
+    await this.verifyCode(target, "reset", input.code);
+
+    const revoked = await revokeIdentitySessions(
+      {
+        repo: this.deps.repo,
+        blacklist: this.deps.blacklist,
+        refreshTtl: (scope) => this.refreshTtl(scope),
+      },
+      identity.id,
+    );
+
+    const newHash = await this.deps.hasher.hash(input.newPassword);
+    const existing = await this.deps.repo.findCredentialHash(identity.id);
+    if (existing) await this.deps.repo.updateCredentialHash(identity.id, newHash);
+    else await this.deps.repo.insertCredential(identity.id, newHash);
+
+    return { revokedRefreshTokens: revoked };
+  }
+
+  /** 按账号形态（邮箱 / 手机号）找顾客身份，并给出验证码该发到哪。 */
+  private async resolveCustomerAccount(
+    identifier: string,
+  ): Promise<{ identity: AuthIdentityDTO; channel: VerificationChannel; target: string }> {
+    const raw = identifier.trim();
+    if (raw.includes("@")) {
+      const email = normalizeEmail(raw);
+      const identity = await this.deps.repo.findIdentityByEmail(email, "customer");
+      if (!identity) throw accountNotFound(raw);
+      return { identity, channel: "email", target: email };
+    }
+    const phone = normalizePhone(raw);
+    const identity = await this.deps.repo.findIdentityByPhone(phone);
+    if (!identity) throw accountNotFound(raw);
+    return { identity, channel: "sms", target: phone };
   }
 
   /** 校验并消费验证码：错一次记一次，超限作废，成功后不可复用。 */

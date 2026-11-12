@@ -37,6 +37,19 @@ const codeBody = z.object({
 const phoneLoginBody = z.object({ phone: z.string().min(6).max(20), code: z.string().length(6) });
 const refreshBody = z.object({ refresh_token: z.string() });
 
+/**
+ * 忘记密码（ADR-027）。
+ *
+ * 第一步输账号（邮箱或手机号）发验证码，第二步填验证码 + 新密码。
+ * 通道跟着账号类型走，不让顾客再选一次。
+ */
+const forgotPasswordBody = z.object({ identifier: z.string().min(1).max(120) });
+const resetPasswordBody = z.object({
+  identifier: z.string().min(1).max(120),
+  code: z.string().length(6),
+  new_password: z.string().min(8),
+});
+
 function tokenResponse(pair: { accessToken: string; refreshToken: string; accessExpiresIn: number }) {
   return {
     access_token: pair.accessToken,
@@ -127,6 +140,40 @@ export function storeAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
       const b = req.body as z.infer<typeof phoneLoginBody>;
       const pair = await deps.services.auth.loginWithPhoneCode({ phone: b.phone, code: b.code });
       reply.ok(tokenResponse(pair));
+    },
+  );
+
+  app.post(
+    "/api/v1/store/auth/password/forgot",
+    { schema: { body: forgotPasswordBody } },
+    async (req, reply) => {
+      const b = req.body as z.infer<typeof forgotPasswordBody>;
+      const res = await deps.services.auth.requestPasswordReset({ identifier: b.identifier });
+      reply.ok({
+        sent: res.sent,
+        channel: res.channel,
+        ...(res.devCode ? { dev_code: res.devCode } : {}),
+      });
+    },
+  );
+
+  /**
+   * 第二步：验证码 + 新密码。
+   *
+   * 不签发 token（204）：重设完让顾客用新密码登录一次，
+   * 顺手验证「新密码确实记住了」，也避免旧设备被静默接管。
+   */
+  app.post(
+    "/api/v1/store/auth/password/reset",
+    { schema: { body: resetPasswordBody } },
+    async (req, reply) => {
+      const b = req.body as z.infer<typeof resetPasswordBody>;
+      await deps.services.auth.resetPassword({
+        identifier: b.identifier,
+        code: b.code,
+        newPassword: b.new_password,
+      });
+      reply.code(204).send();
     },
   );
 

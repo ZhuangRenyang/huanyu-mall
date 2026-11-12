@@ -9,6 +9,8 @@ import {
   login,
   loginWithPhoneCode,
   register,
+  requestPasswordReset,
+  resetPassword,
   sendCode,
   type CustomerProfile,
   type RegisterMode,
@@ -55,6 +57,13 @@ export function AuthForm({ onAuthed }: { onAuthed: (profile: CustomerProfile) =>
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** 重置密码视图：与登录/注册共用外框，但字段是另一套（账号 + 验证码 + 新密码）。 */
+  const [resetting, setResetting] = useState(false);
+  const [resetIdentifier, setResetIdentifier] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  /** 成功后回登录页给一句提示（否则顾客不知道刚才做了什么）。 */
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,6 +185,157 @@ export function AuthForm({ onAuthed }: { onAuthed: (profile: CustomerProfile) =>
     }
   };
 
+  /** 进入重置密码：账号预填刚才输的内容，省一次输入。 */
+  const openReset = () => {
+    setResetting(true);
+    setNotice(null);
+    setResetIdentifier(identifier.trim() || phone.trim());
+    setResetCode('');
+    setNewPassword('');
+    setErrors({});
+    setFormError(null);
+    setDevCode(null);
+    setCountdown(0);
+  };
+
+  /** 重置第一步：按账号类型发码（后端决定发邮件还是短信）。 */
+  const sendResetCode = async () => {
+    const id = resetIdentifier.trim();
+    if (!id) {
+      setErrors({ resetIdentifier: '请输入邮箱或手机号' });
+      return;
+    }
+    setSending(true);
+    setFormError(null);
+    try {
+      const res = await requestPasswordReset(id);
+      setCountdown(60);
+      setDevCode(res.devCode ?? null);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : '发送失败，请稍后重试');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /** 重置第二步：验证码 + 新密码。成功后不自动登录，回登录页让顾客用新密码登一次。 */
+  const submitReset = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setFormError(null);
+    const id = resetIdentifier.trim();
+    const e: Record<string, string> = {};
+    if (!id) e.resetIdentifier = '请输入邮箱或手机号';
+    else if (id.includes('@') ? !EMAIL_RE.test(id) : !PHONE_RE.test(id)) {
+      e.resetIdentifier = '请输入有效邮箱或手机号';
+    }
+    if (!/^\d{6}$/.test(resetCode.trim())) e.resetCode = '请输入 6 位验证码';
+    if (newPassword.length < 8) e.newPassword = '密码至少 8 位';
+    setErrors(e);
+    if (Object.keys(e).length > 0) return;
+
+    setSubmitting(true);
+    try {
+      await resetPassword({ identifier: id, code: resetCode, newPassword });
+      setResetting(false);
+      setTab('login');
+      setLoginMode('password');
+      setIdentifier(id);
+      setResetCode('');
+      setNewPassword('');
+      setNotice('密码已重设，请用新密码登录');
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : '重设失败，请稍后重试');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // —— 重置密码视图 ——
+  if (resetting) {
+    return (
+      <div className="mx-auto max-w-md">
+        <h2 className="mb-1 text-base font-semibold text-foreground">重设密码</h2>
+        <p className="mb-4 text-xs leading-5 text-muted-foreground">
+          输入注册时用的邮箱或手机号，验证码会发到对应地址。手机号注册的账号，这一步同时就是设置密码。
+        </p>
+
+        <form onSubmit={submitReset} noValidate className="space-y-4">
+          <TextField
+            id="reset-identifier"
+            label="邮箱或手机号"
+            required
+            autoComplete="username"
+            value={resetIdentifier}
+            onChange={(e) => setResetIdentifier(e.target.value)}
+            error={errors.resetIdentifier}
+          />
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <TextField
+                id="reset-code"
+                label="验证码"
+                required
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={resetCode}
+                onChange={(e) => setResetCode(e.target.value)}
+                error={errors.resetCode}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              className="mb-0.5 shrink-0"
+              disabled={sending || countdown > 0}
+              onClick={() => void sendResetCode()}
+            >
+              {countdown > 0 ? `${countdown}s 后重发` : sending ? '发送中…' : '获取验证码'}
+            </Button>
+          </div>
+          {devCode && (
+            <p className="text-xs text-muted-foreground" role="status">
+              开发环境验证码：
+              <span className="tabular font-medium text-foreground">{devCode}</span>
+            </p>
+          )}
+          <TextField
+            id="reset-password"
+            label="新密码"
+            required
+            type="password"
+            autoComplete="new-password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            error={errors.newPassword}
+            hint="至少 8 位"
+          />
+
+          {formError && (
+            <p className="text-sm text-destructive" role="alert">
+              {formError}
+            </p>
+          )}
+          <Button type="submit" size="lg" className="w-full" loading={submitting}>
+            重设密码
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="md"
+            className="w-full"
+            onClick={() => {
+              setResetting(false);
+              setErrors({});
+              setFormError(null);
+            }}
+          >
+            返回登录
+          </Button>
+        </form>
+      </div>
+    );
+  }
+
   const codeField = (
     <>
       <div className="flex items-end gap-2">
@@ -266,6 +426,11 @@ export function AuthForm({ onAuthed }: { onAuthed: (profile: CustomerProfile) =>
       </div>
 
       <form onSubmit={submit} noValidate className="space-y-4">
+        {notice && (
+          <p className="rounded-md bg-success-subtle px-3 py-2 text-sm text-success" role="status">
+            {notice}
+          </p>
+        )}
         {/* 密码登录：一个输入框同时收邮箱与手机号 */}
         {tab === 'login' && loginMode === 'password' && (
           <>
@@ -288,6 +453,15 @@ export function AuthForm({ onAuthed }: { onAuthed: (profile: CustomerProfile) =>
               onChange={(e) => setPassword(e.target.value)}
               error={errors.password}
             />
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={openReset}
+                className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              >
+                忘记密码？
+              </button>
+            </div>
           </>
         )}
 

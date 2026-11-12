@@ -79,3 +79,18 @@ export function registerModeDisabled(modeLabel: string): DomainError {
 export function invalidRegisterMode(): DomainError {
   return new DomainError({ code: 20001, message: "注册方式只能是 email 或 phone" });
 }
+
+// ---------------------------------------------------------------- *
+// 找回密码
+// ---------------------------------------------------------------- *
+
+/**
+ * 账号不存在（找回密码时）。
+ *
+ * 这里**明确告诉顾客**「未注册」而不是统一回「已发送」：
+ * 淘宝也是直接提示该手机号未注册 —— 顾客看到「已发送」却永远收不到码，
+ * 只会转头找客服。注册/登录接口本来就能判断账号是否存在，藏这一处没有意义。
+ */
+export function accountNotFound(identifier: string): DomainError {
+  return new DomainError({ code: 30001, message: `该账号未注册：${identifier}，请先注册` });
+}
