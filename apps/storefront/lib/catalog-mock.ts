@@ -167,6 +167,8 @@ function toStoreProduct(p: CatalogProduct): StoreProduct {
     thumbnail_url: p.images[0]?.url ?? null,
     status: 'published',
     price: { amount_minor: minPrice, currency_code: CNY },
+    // 与线上同口径：可用量 = 各变体库存之和
+    available: p.variants.reduce((sum, v) => sum + v.stock, 0),
     originalMinor: p.originalMinor,
     badge: p.badge,
     categoryId: p.categoryId,

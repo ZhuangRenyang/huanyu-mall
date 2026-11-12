@@ -53,14 +53,20 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
 
       // 批量计价（一次 pricing.calculatePrices，禁 N+1），商品价取变体最低价
       const variantIds = res.items.flatMap((p) => p.variants.map((v) => v.id));
-      const prices =
+      // 库存也批量取：列表要标「已售罄」，缺了它顾客只能点进详情才发现卖完了（ADR-041）
+      const [prices, availability] = await Promise.all([
         variantIds.length > 0
-          ? await deps.services.pricing.calculatePrices({
+          ? deps.services.pricing.calculatePrices({
               variantIds,
               context: { currencyCode: channel.currency_code, channelId },
             })
-          : [];
+          : Promise.resolve([]),
+        variantIds.length > 0
+          ? deps.services.inventory.getAvailability({ variantIds })
+          : Promise.resolve([]),
+      ]);
       const priceByVariant = new Map(prices.map((p) => [p.variantId, p.amountMinor]));
+      const availByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
       // 主图：批量取 URL。原来这里写死 null，导致店面列表永远没有图。
       const thumbIds = res.items
         .map((p) => p.thumbnail_file_id)
@@ -82,6 +88,11 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
             min !== undefined
               ? { amount_minor: Number(min), currency_code: channel.currency_code }
               : undefined,
+          // 商品级可用量 = 各变体可用量之和（0 = 售罄，门店前端据此标「已售罄」）
+          available_quantity: p.variants.reduce(
+            (sum, v) => sum + (availByVariant.get(v.id) ?? 0),
+            0,
+          ),
         };
       });
 

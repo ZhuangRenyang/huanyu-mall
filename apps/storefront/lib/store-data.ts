@@ -50,6 +50,8 @@ interface ApiProductSummary {
   thumbnail_url?: string | null;
   status?: string;
   price?: Money;
+  /** 可用量（各变体之和），0 = 已售罄（ADR-041）。 */
+  available_quantity?: number;
 }
 
 /** 真 API 的分类。 */
@@ -116,6 +118,7 @@ function mapSummary(p: ApiProductSummary): StoreProduct {
     thumbnail_url: p.thumbnail_url ?? undefined,
     status: (p.status ?? "published") as StoreProduct["status"],
     price: p.price,
+    available: p.available_quantity,
     originalMinor: undefined,
     badge: undefined,
     categoryId: "",

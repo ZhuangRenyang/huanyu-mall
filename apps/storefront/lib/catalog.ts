@@ -44,6 +44,8 @@ export interface CatalogProduct {
 
 /** 列表/卡片展示模型（在 SDK ProductSummary 之上补检索与促销字段）。 */
 export interface StoreProduct extends ProductSummary {
+  /** 可用量（各变体之和）：0 = 已售罄，列表卡片据此打标（ADR-041）。 */
+  available?: number;
   originalMinor?: number;
   badge?: string;
   categoryId: string;

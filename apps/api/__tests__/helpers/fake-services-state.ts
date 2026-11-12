@@ -14,6 +14,8 @@ export interface FakeServicesState {
   orderCreated: boolean;
   /** 顾客注册方式（auth 设置，默认邮箱注册）。 */
   registerMode: "email" | "phone";
+  /** 变体可用量（默认 12）；设 0 可测「已售罄」链路。 */
+  variantAvailable?: number;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
   categories: Array<{
     id: string;

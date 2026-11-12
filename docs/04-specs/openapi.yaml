@@ -150,6 +150,10 @@ components:
         status: { type: string, enum: [draft, published, archived], example: "published" }
         price:
           $ref: '#/components/schemas/Money'
+        available_quantity:
+          type: integer
+          example: 24
+          description: 各变体可用量之和；0 = 已售罄（店面列表据此打标，ADR-041）。
 
     ProductDetail:
       type: object

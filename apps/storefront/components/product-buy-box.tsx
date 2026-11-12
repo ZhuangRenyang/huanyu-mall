@@ -56,11 +56,18 @@ export function ProductBuyBox({ product }: { product: CatalogProduct }) {
   const basePrice = Math.min(...product.variants.map((v) => v.priceMinor));
   const priceMinor = variant?.priceMinor ?? basePrice;
   const originalMinor = variant?.originalMinor ?? product.originalMinor;
-  const soldOut = variant ? variant.stock === 0 : false;
+  /*
+   * 全部规格都没货时，直接判「已售罄」而不是等顾客选完规格再告诉他（ADR-041）。
+   * 之前 soldOut 只看当前选中变体：未选规格时永远是 false，
+   * 按钮可点、点了只提示「请先选择规格」，等于让顾客做无用功。
+   */
+  const allSoldOut = product.variants.length > 0 && product.variants.every((v) => v.stock === 0);
+  const soldOut = allSoldOut || (variant ? variant.stock === 0 : false);
   const lowStock: number | undefined =
     variant && variant.stock > 0 && variant.stock <= 5 ? variant.stock : undefined;
 
   const handleAdd = () => {
+    if (allSoldOut) return;
     if (!variant) {
       setHint(true);
       return;
@@ -88,7 +95,7 @@ export function ProductBuyBox({ product }: { product: CatalogProduct }) {
       <div className="flex flex-wrap items-center gap-3">
         <Price amountMinor={priceMinor} originalMinor={originalMinor} promo={originalMinor !== undefined} size="xl" />
         {lowStock !== undefined && <Badge variant="warning">仅剩 {lowStock} 件</Badge>}
-        {soldOut && <Badge variant="neutral">暂时缺货</Badge>}
+        {soldOut && <Badge variant="neutral">已售罄</Badge>}
       </div>
 
       {groups.length > 0 && (
@@ -109,7 +116,7 @@ export function ProductBuyBox({ product }: { product: CatalogProduct }) {
 
       <Button size="lg" className="w-full" onClick={handleAdd} disabled={soldOut}>
         <ShoppingBag className="size-5" strokeWidth={2} aria-hidden="true" />
-        {soldOut ? '暂时缺货' : '加入购物车'}
+        {soldOut ? '已售罄' : '加入购物车'}
       </Button>
 
       <div className="space-y-2 border-t border-border pt-4 text-sm text-muted-foreground">
