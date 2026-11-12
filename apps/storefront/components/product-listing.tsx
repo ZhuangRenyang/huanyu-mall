@@ -15,8 +15,14 @@ interface ProductListingProps {
   basePath: string;
   initialQuery?: string;
   initialCategory?: string;
+  initialSort?: string;
   /** live 模式：筛选与排序由服务端完成，前端只渲染并把交互转成 URL 查询。 */
   serverFiltered?: boolean;
+  /** 当前页码（从 1 开始）与服务端返回的总条数。 */
+  page?: number;
+  pageSize?: number;
+  total?: number;
+  hasMore?: boolean;
 }
 
 const SORT_OPTIONS = [
@@ -32,7 +38,12 @@ export function ProductListing({
   basePath,
   initialQuery = '',
   initialCategory,
+  initialSort = 'created_at.desc',
   serverFiltered = false,
+  page = 1,
+  pageSize = 24,
+  total = 0,
+  hasMore = false,
 }: ProductListingProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -41,7 +52,7 @@ export function ProductListing({
   const [debouncedQuery, setDebouncedQuery] = useState(initialQuery);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(initialCategory ? [initialCategory] : []);
   const [selectedAttrs, setSelectedAttrs] = useState<Record<string, string[]>>({});
-  const [sort, setSort] = useState<string>('created_at.desc');
+  const [sort, setSort] = useState<string>(initialSort);
 
   /** live 模式：把筛选/排序/搜索写回 URL，由服务端重新取数。 */
   const applyQuery = useCallback(
@@ -125,6 +136,17 @@ export function ProductListing({
     ? categories.filter((c) => c.parentId === activeRoot.id)
     : [];
 
+  /** 翻页：保留现有 q/category/sort，只替换 page。 */
+  const gotoPage = (next: number) => {
+    const sp = new URLSearchParams();
+    if (query.trim()) sp.set('q', query);
+    const category = selectedCategories[0];
+    if (category) sp.set('category', category);
+    if (sort) sp.set('sort', sort);
+    if (next > 1) sp.set('page', String(next));
+    router.push(`${pathname}${sp.toString() ? `?${sp.toString()}` : ''}`);
+  };
+
   const clearCategory = () => setSelectedCategories([]);
   const clearAttr = (name: string) => setSelectedAttrs((prev) => ({ ...prev, [name]: [] }));
   const clearFilters = () => {
@@ -141,7 +163,9 @@ export function ProductListing({
     <div className="mx-auto max-w-content px-4 py-6 md:py-8">
       <div className="mb-4 flex items-end justify-between gap-4">
         <h1 className="text-xl md:text-2xl">全部商品</h1>
-        <span className="tabular text-sm text-muted-foreground">{filtered.length} 件</span>
+        <span className="tabular text-sm text-muted-foreground">
+          {serverFiltered ? total : filtered.length} 件
+        </span>
       </div>
 
       {/* 工具条：搜索（防抖）+ 排序 */}
@@ -233,11 +257,41 @@ export function ProductListing({
           }
         />
       ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-6">
-          {filtered.map((p, i) => (
-            <ProductCard key={p.id} product={p} basePath={basePath} priority={i < 4} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-6">
+            {filtered.map((p, i) => (
+              <ProductCard key={p.id} product={p} basePath={basePath} priority={i < 4} />
+            ))}
+          </div>
+
+          {/*
+            分页只在 live 模式出现：mock 数据量小，本地筛选一次给完。
+            页码写进 URL，刷新/分享都能回到同一页（淘宝也是 URL 带页码）。
+          */}
+          {serverFiltered && total > pageSize && (
+            <nav aria-label="分页" className="mt-8 flex items-center justify-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => gotoPage(page - 1)}
+              >
+                上一页
+              </Button>
+              <span className="tabular text-sm text-muted-foreground">
+                第 {page} / {Math.max(1, Math.ceil(total / pageSize))} 页
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!hasMore}
+                onClick={() => gotoPage(page + 1)}
+              >
+                下一页
+              </Button>
+            </nav>
+          )}
+        </>
       )}
     </div>
   );

@@ -117,11 +117,30 @@ function mapSummary(p: ApiProductSummary): StoreProduct {
   };
 }
 
-/** 商品列表（live 走服务端筛选排序，mock 走本地数据 + 前端本地筛选）。 */
-export async function getStoreProducts(query: ProductQuery = {}): Promise<StoreProduct[]> {
+export interface StoreProductsPage {
+  items: StoreProduct[];
+  /** 满足筛选条件的总条数（服务端分页用）。 */
+  total: number;
+  hasMore: boolean;
+}
+
+/**
+ * 商品列表（分页版）。
+ *
+ * 改造前列表页不传 limit，服务端默认 20 条且前端没有分页控件 ——
+ * 第 21 件商品顾客永远看不到（ADR-037）。分页必须在服务端做：
+ * 前端本地切页等于先把全部商品拉下来，商品一多就废了。
+ */
+export async function getStoreProductsPage(query: ProductQuery = {}): Promise<StoreProductsPage> {
   if (getApiMode() !== "live") {
     const mock = await loadMockCatalog();
-    return mock.mockProducts;
+    const limit = query.limit ?? mock.mockProducts.length;
+    const offset = query.offset ?? 0;
+    return {
+      items: mock.mockProducts.slice(offset, offset + limit),
+      total: mock.mockProducts.length,
+      hasMore: offset + limit < mock.mockProducts.length,
+    };
   }
 
   const attrs: Record<string, string> = {};
@@ -135,8 +154,18 @@ export async function getStoreProducts(query: ProductQuery = {}): Promise<StoreP
     limit: query.limit,
     offset: query.offset,
     ...attrs,
-  })) as { items?: ApiProductSummary[] };
-  return (res.items ?? []).map(mapSummary);
+  })) as { items?: ApiProductSummary[]; count?: number; hasMore?: boolean };
+  const items = (res.items ?? []).map(mapSummary);
+  return {
+    items,
+    total: res.count ?? items.length,
+    hasMore: res.hasMore === true,
+  };
+}
+
+/** 只要前 N 件时用它（首页「当季主推」），分页信息用 getStoreProductsPage。 */
+export async function getStoreProducts(query: ProductQuery = {}): Promise<StoreProduct[]> {
+  return (await getStoreProductsPage(query)).items;
 }
 
 /** 商品详情（PDP）。 */
