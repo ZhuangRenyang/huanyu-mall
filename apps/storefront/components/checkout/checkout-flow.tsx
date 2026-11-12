@@ -39,12 +39,16 @@ import { OrderSummary } from './order-summary';
 import { countryLabel, guessCountry, loadCheckoutCountries } from '@/lib/countries';
 import { setCartCountry } from '@/lib/promo';
 import type { CheckoutCountry } from '@mall/sdk';
+import { getAccessToken, listAddresses, type AddressRecord } from '@/lib/account';
 import { ContactStep } from './contact-step';
 import { AddressStep } from './address-step';
+import { SavedAddressPicker } from './saved-address-picker';
 import { PaymentStep } from './payment-step';
 import { PromoCodes } from './promo-codes';
 
 const DRAFT_KEY = 'checkout:draft';
+/** 手动改这些字段 = 不再是「选中的那条地址」，卡片要取消高亮。 */
+const ADDRESS_FIELDS: Array<keyof CheckoutForm> = ['firstName', 'country', 'region', 'line1'];
 
 export function CheckoutFlow({ locale, channel }: { locale: string; channel: string }) {
   const router = useRouter();
@@ -65,6 +69,9 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const [countries, setCountries] = useState<CheckoutCountry[]>([]);
   /** 配送范围是否已配置：'none' 时挡住下单（不让顾客填完地址才发现下不了单）。 */
   const [shippingStatus, setShippingStatus] = useState<'ok' | 'none' | 'unknown'>('unknown');
+  /** 已登录顾客的地址簿：进到地址步才有值（游客留空，不打扰）。 */
+  const [savedAddresses, setSavedAddresses] = useState<AddressRecord[]>([]);
+  const [pickedAddressId, setPickedAddressId] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // mutatePromo 是 useCallback，直接依赖 form.country 会让每个按键都重建；
   // 用 ref 取最新国家，写码后重读合计时就能带上正确税率。
@@ -198,6 +205,67 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     }
   }, [form, step, draftLoaded]);
 
+  /**
+   * 已保存地址：只在「已登录 + 走到地址步」时拉一次。
+   *
+   * 游客不请求（避免无意义的 401），读失败也不挡结账 —— 表单照样能填，
+   * 地址簿只是让老顾客少填一遍。
+   */
+  useEffect(() => {
+    if (!live || step !== 2) return;
+    if (!getAccessToken()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await listAddresses();
+        if (cancelled) return;
+        setSavedAddresses(list);
+        const preferred = list.find((a) => a.isDefault) ?? list[0];
+        if (!preferred) return;
+        // 默认地址预选 + 预填，但不覆盖草稿里顾客已经填过的内容
+        setPickedAddressId((cur) => cur ?? preferred.id);
+        setForm((f) =>
+          f.firstName || f.region || f.line1
+            ? f
+            : {
+                ...f,
+                firstName: preferred.name,
+                phone: preferred.phone || f.phone,
+                country: preferred.countryCode || f.country,
+                region: preferred.region,
+                line1: preferred.line1,
+              },
+        );
+      } catch {
+        /* 地址簿不可用不影响下单 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [live, step]);
+
+  /** 选中一条已存地址：回填到表单，后续仍可临时改。 */
+  const pickSavedAddress = (a: AddressRecord) => {
+    setPickedAddressId(a.id);
+    setForm((f) => ({
+      ...f,
+      firstName: a.name,
+      phone: a.phone || f.phone,
+      country: a.countryCode || f.country,
+      region: a.region,
+      line1: a.line1,
+    }));
+    setErrors({});
+  };
+
+  const useNewAddress = () => {
+    setPickedAddressId(null);
+    // 只清地址字段，联系方式（手机号/邮箱）不动
+    setForm((f) => ({ ...f, firstName: '', region: '', line1: '' }));
+    setErrors({});
+  };
+
   // live 模式：支付方式以后端为准（前端不许硬编码）；运费与税由后端按国家自动算。
   useEffect(() => {
     if (!live) return;
@@ -235,6 +303,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const setField = <K extends keyof CheckoutForm>(key: K, value: CheckoutForm[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
     setErrors((e) => ({ ...e, [key]: undefined }));
+    // 手动改了地址字段，就不再是「选中的那条」，取消卡片高亮以免误导
+    if (ADDRESS_FIELDS.includes(key)) setPickedAddressId(null);
   };
 
   const onBlurField = (key: keyof CheckoutForm) => {
@@ -473,7 +543,20 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
           </h2>
 
           {step === 1 && <ContactStep {...stepProps} />}
-          {step === 2 && <AddressStep {...stepProps} />}
+          {step === 2 && (
+            <div className="space-y-4">
+              {/* 有保存过的地址就先让顾客选，省掉重填一遍（游客没有这一块） */}
+              {live && savedAddresses.length > 0 && (
+                <SavedAddressPicker
+                  addresses={savedAddresses}
+                  selectedId={pickedAddressId}
+                  onPick={pickSavedAddress}
+                  onUseNew={useNewAddress}
+                />
+              )}
+              <AddressStep {...stepProps} />
+            </div>
+          )}
           {step === 3 && (
             <PaymentStep
               {...stepProps}

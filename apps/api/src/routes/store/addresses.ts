@@ -10,16 +10,20 @@ import { makeAuthHelpers } from "../../plugins/auth.js";
  * 全部要求登录：地址含姓名、电话、门牌，不能像商品一样匿名可读。
  * 归属只认 token 里的 customerId —— 不接受 body/query 传 customer_id，
  * 否则改个参数就能读写别人的地址。
+ *
+ * 字段口径（ADR-026）：只强制「收件人 + 详细地址 + 国家」。
+ * 中文地址不拆姓/名，「省市区」整串放 province，city / postal_code 可省 ——
+ * 逼顾客填邮编只会得到一串假数据。
  */
 const addressBody = z.object({
   first_name: z.string().min(1).max(60),
-  last_name: z.string().min(1).max(60),
+  last_name: z.string().max(60).optional(),
   phone: z.string().max(30).optional(),
   line1: z.string().min(1).max(200),
   line2: z.string().max(200).optional(),
-  city: z.string().min(1).max(80),
+  city: z.string().max(80).optional(),
   province: z.string().max(80).optional(),
-  postal_code: z.string().min(1).max(20),
+  postal_code: z.string().max(20).optional(),
   country_code: z.string().length(2),
   is_default_shipping: z.boolean().optional(),
   is_default_billing: z.boolean().optional(),
@@ -87,6 +91,22 @@ export function storeAddressRoutes(app: FastifyInstance, deps: AppDeps): void {
         ...(b.is_default_billing !== undefined ? { isDefaultBilling: b.is_default_billing } : {}),
       });
       reply.ok(address);
+    },
+  );
+
+  /**
+   * 设为默认地址。
+   *
+   * 做成独立动作而不是 PATCH 一个布尔值：淘宝地址簿上就是一颗「设为默认」按钮，
+   * 也能挡住前端传 false 把唯一的默认地址清成「没有默认」。
+   */
+  app.post(
+    "/api/v1/store/customer/addresses/:id/default",
+    { preHandler: auth.customerAuth },
+    async (req, reply) => {
+      const customerId = requireCustomerId(req);
+      const { id } = req.params as { id: string };
+      reply.ok(await deps.services.customer.setDefaultAddress(customerId, id));
     },
   );
 

@@ -24,13 +24,15 @@ export const customerAddress = pgTable(
     id: text("id").primaryKey(),
     customerId: text("customer_id").notNull().references(() => customer.id),
     firstName: text("first_name").notNull(),
-    lastName: text("last_name").notNull(),
+    // 中国地址不拆姓/名（ADR-026）：last_name 可空
+    lastName: text("last_name"),
     phone: text("phone"),
     line1: text("line1").notNull(),
     line2: text("line2"),
-    city: text("city").notNull(),
+    // 「省市区」整串存 province；city / postal_code 对中文地址常为空
+    city: text("city"),
     province: text("province"),
-    postalCode: text("postal_code").notNull(),
+    postalCode: text("postal_code"),
     countryCode: char("country_code", { length: 2 }).notNull(),
     isDefaultShipping: boolean("is_default_shipping").notNull().default(false),
     isDefaultBilling: boolean("is_default_billing").notNull().default(false),

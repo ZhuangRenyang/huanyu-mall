@@ -308,6 +308,45 @@ export async function loginWithPhoneCode(phone: string, code: string): Promise<A
 }
 
 /**
+ * 忘记密码第一步：发重置验证码（ADR-027）。
+ *
+ * 账号是邮箱就发邮件、是手机号就发短信 —— 由后端按账号类型决定，
+ * 前端不猜也不让顾客再选一次。
+ */
+export async function requestPasswordReset(
+  identifier: string,
+): Promise<{ channel: CodeChannel; devCode?: string }> {
+  if (!LIVE) {
+    return { channel: identifier.includes("@") ? "email" : "sms", devCode: "123456" };
+  }
+  const res = await call<{ sent?: boolean; channel?: CodeChannel; dev_code?: string }>(
+    "POST",
+    "/api/v1/store/auth/password/forgot",
+    { identifier: identifier.trim() },
+  );
+  return { channel: res.channel === "email" ? "email" : "sms", devCode: res.dev_code };
+}
+
+/**
+ * 忘记密码第二步：验证码 + 新密码。
+ *
+ * 成功后**不自动登录**：让顾客用新密码登一次，既验证密码记住了，
+ * 也不给「验证码到手就能接管账号」多留一步。
+ */
+export async function resetPassword(input: {
+  identifier: string;
+  code: string;
+  newPassword: string;
+}): Promise<void> {
+  if (!LIVE) return;
+  await call("POST", "/api/v1/store/auth/password/reset", {
+    identifier: input.identifier.trim(),
+    code: input.code.trim(),
+    new_password: input.newPassword,
+  });
+}
+
+/**
  * 用 refresh_token 换新的 access_token（供 SDK 的 401 自动重试调用）。
  *
  * 失败时清本地登录态：refresh 也被拒说明会话真的失效，留着只会让后续请求一直 401。
@@ -420,21 +459,140 @@ function mockRegister(input: { email: string; password: string; phone?: string }
 }
 
 /**
- * 地址簿：暂时只有本地实现。
+ * 地址簿（ADR-026）。
  *
- * 后端 `/store/customer/addresses` 已就绪，但表单字段（收件人拆姓/名、邮编、国家）
- * 尚未改造。半接的状态更难查：地址能存但下单带不出来，不如先明确留在这里。
+ * live 走 `/store/customer/addresses`：地址跟着账号走，换设备也在，
+ * 结账时能直接选用 —— 这是和本地存储最大的区别（以前换台机器地址就没了）。
+ *
+ * 视图模型只留 5 个字段，与中文地址习惯一致：收件人、手机号、省市区、详细地址、国家。
+ * 后端把「省市区」存在 province、不填 city / postal_code，这一层做映射，
+ * 上层组件不需要知道 Shopify 那套 first/last/city/postal 的拆法。
  */
-export function listAddresses(): AddressRecord[] {
-  return read<AddressRecord[]>(MOCK_ADDRESS_KEY, [], "session");
+export interface AddressRecord {
+  id: string;
+  /** 收件人（不拆姓/名）。 */
+  name: string;
+  phone: string;
+  /** 省 / 市 / 区，整串。 */
+  region: string;
+  /** 详细地址（门牌、楼层；line2 已拼在后面）。 */
+  line1: string;
+  countryCode: string;
+  isDefault: boolean;
 }
 
-export function saveAddress(input: AddressInput, id?: string): void {
-  const list = listAddresses();
+export interface AddressInput {
+  name: string;
+  phone: string;
+  region: string;
+  line1: string;
+  countryCode: string;
+  isDefault?: boolean;
+}
+
+/** 后端地址行（只取映射用得到的字段）。 */
+interface AddressRow {
+  id: string;
+  first_name: string;
+  last_name: string | null;
+  phone: string | null;
+  line1: string;
+  line2: string | null;
+  city: string | null;
+  province: string | null;
+  country_code: string;
+  is_default_shipping: boolean;
+}
+
+function toAddressRecord(row: AddressRow): AddressRecord {
+  return {
+    id: row.id,
+    name: [row.first_name, row.last_name].filter(Boolean).join(" ") || "—",
+    phone: row.phone ?? "",
+    region: [row.province, row.city].filter(Boolean).join(" "),
+    line1: [row.line1, row.line2].filter(Boolean).join(" "),
+    countryCode: row.country_code,
+    isDefault: row.is_default_shipping,
+  };
+}
+
+/** 视图模型 → 后端字段。省市区整串放 province，city / postal_code 留空（ADR-026）。 */
+function toAddressBody(input: AddressInput) {
+  return {
+    first_name: input.name.trim(),
+    phone: input.phone.trim() || undefined,
+    line1: input.line1.trim(),
+    province: input.region.trim() || undefined,
+    country_code: input.countryCode,
+    is_default_shipping: input.isDefault,
+  };
+}
+
+export async function listAddresses(): Promise<AddressRecord[]> {
+  if (!LIVE) {
+    return read<AddressRecord[]>(MOCK_ADDRESS_KEY, [], "session");
+  }
+  const res = await call<{ items?: AddressRow[] }>("GET", "/api/v1/store/customer/addresses");
+  return (res.items ?? []).map(toAddressRecord);
+}
+
+export async function saveAddress(input: AddressInput, id?: string): Promise<void> {
+  if (!LIVE) return mockSaveAddress(input, id);
+  const body = toAddressBody(input);
+  if (id) {
+    await call("PATCH", `/api/v1/store/customer/addresses/${id}`, body);
+    // 编辑里勾了「设为默认」要走独立动作：PATCH 只改自身字段，不会清掉别人的默认标记
+    if (input.isDefault) await setDefaultAddress(id);
+    return;
+  }
+  await call("POST", "/api/v1/store/customer/addresses", body);
+}
+
+export async function deleteAddress(id: string): Promise<void> {
+  if (!LIVE) {
+    const list = read<AddressRecord[]>(MOCK_ADDRESS_KEY, [], "session");
+    write(
+      MOCK_ADDRESS_KEY,
+      list.filter((a) => a.id !== id),
+      "session",
+    );
+    return;
+  }
+  await call("DELETE", `/api/v1/store/customer/addresses/${id}`);
+}
+
+/**
+ * 设为默认地址。
+ *
+ * 独立动作（后端也是独立端点）：淘宝地址簿上就是一颗「设为默认」按钮，
+ * 语义清楚，也不会出现「前端传 false 把默认清空」。
+ */
+export async function setDefaultAddress(id: string): Promise<void> {
+  if (!LIVE) {
+    const list = read<AddressRecord[]>(MOCK_ADDRESS_KEY, [], "session");
+    for (const a of list) a.isDefault = a.id === id;
+    write(MOCK_ADDRESS_KEY, list, "session");
+    return;
+  }
+  await call("POST", `/api/v1/store/customer/addresses/${id}/default`);
+}
+
+/** 演示模式：本地数组，行为与后端一致（首条自动默认、默认唯一）。 */
+function mockSaveAddress(input: AddressInput, id?: string): void {
+  const list = read<AddressRecord[]>(MOCK_ADDRESS_KEY, [], "session");
+  const isFirst = list.length === 0;
   if (id) {
     const idx = list.findIndex((a) => a.id === id);
     if (idx >= 0) {
-      list[idx] = { ...list[idx]!, name: input.name, phone: input.phone, region: input.region, line1: input.line1 };
+      list[idx] = {
+        ...list[idx]!,
+        name: input.name,
+        phone: input.phone,
+        region: input.region,
+        line1: input.line1,
+        countryCode: input.countryCode,
+        isDefault: input.isDefault ?? list[idx]!.isDefault,
+      };
     }
   } else {
     list.push({
@@ -443,26 +601,15 @@ export function saveAddress(input: AddressInput, id?: string): void {
       phone: input.phone,
       region: input.region,
       line1: input.line1,
-      isDefault: input.isDefault ?? list.length === 0,
+      countryCode: input.countryCode,
+      isDefault: input.isDefault ?? isFirst,
     });
   }
   if (input.isDefault) {
     const targetId = id ?? list[list.length - 1]!.id;
     for (const a of list) a.isDefault = a.id === targetId;
   }
-  write(MOCK_ADDRESS_KEY, list, "session");
-}
-
-export function deleteAddress(id: string): void {
-  const list = listAddresses();
-  const wasDefault = list.find((a) => a.id === id)?.isDefault;
-  const next = list.filter((a) => a.id !== id);
-  if (wasDefault && next.length > 0) next[0]!.isDefault = true;
-  write(MOCK_ADDRESS_KEY, next, "session");
-}
-
-export function setDefaultAddress(id: string): void {
-  const list = listAddresses();
-  for (const a of list) a.isDefault = a.id === id;
+  // 首条自动默认：和后端 addAddress 的行为对齐，演示时不至于没默认地址
+  if (isFirst && list[0]) list[0].isDefault = true;
   write(MOCK_ADDRESS_KEY, list, "session");
 }

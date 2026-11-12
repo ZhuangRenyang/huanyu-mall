@@ -417,6 +417,21 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         is_default_billing: false,
       }),
       deleteAddress: async () => {},
+      setDefaultAddress: async (customerId: string, addressId: string) => ({
+        id: addressId,
+        customer_id: customerId,
+        first_name: "三",
+        last_name: null,
+        phone: "13800000000",
+        line1: "示例路 1 号",
+        line2: null,
+        city: null,
+        province: "浙江省杭州市西湖区",
+        postal_code: null,
+        country_code: "CN",
+        is_default_shipping: true,
+        is_default_billing: false,
+      }),
       listCustomers: async () => ({
         items: [
           {
@@ -534,6 +549,26 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         return { register_mode: state.registerMode };
       },
       sendVerificationCode: async () => ({ sent: true, devCode: "123456" }),
+      requestPasswordReset: async (input: { identifier: string }) => {
+        const known = input.identifier === "a@b.com" || input.identifier === "13800001111";
+        if (!known) {
+          throw new DomainError({ code: 30001, message: `该账号未注册：${input.identifier}，请先注册` });
+        }
+        return {
+          sent: true,
+          channel: input.identifier.includes("@") ? ("email" as const) : ("sms" as const),
+          devCode: "123456",
+        };
+      },
+      resetPassword: async (input: { identifier: string; code: string; newPassword: string }) => {
+        if (input.identifier !== "a@b.com" && input.identifier !== "13800001111") {
+          throw new DomainError({ code: 30001, message: `该账号未注册：${input.identifier}` });
+        }
+        if (input.code !== "123456") {
+          throw new DomainError({ code: 20001, message: "验证码不正确或已失效" });
+        }
+        return { revokedRefreshTokens: 1 };
+      },
       loginWithPhoneCode: async () => ({
         accessToken: "cust",
         refreshToken: "r",

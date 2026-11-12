@@ -13,14 +13,16 @@ export interface CustomerDTO {
 export interface AddressDTO {
   id: string;
   customer_id: string;
+  /** 收件人。中国地址不拆姓/名，last_name 通常为空。 */
   first_name: string;
-  last_name: string;
+  last_name: string | null;
   phone: string | null;
   line1: string;
   line2: string | null;
-  city: string;
+  /** 城市。中国地址把「省市区」整串存在 province，city 通常为空。 */
+  city: string | null;
   province: string | null;
-  postal_code: string;
+  postal_code: string | null;
   country_code: string;
   is_default_shipping: boolean;
   is_default_billing: boolean;
@@ -35,28 +37,28 @@ export interface CreateCustomerInput {
   metadata?: Record<string, unknown> | null;
 }
 
+/**
+ * 新增地址（ADR-026）。
+ *
+ * 只有收件人、详细地址、国家是必须的：其余字段按地区习惯可省
+ * （中国地址没有独立城市与邮编，「省市区」整串放 province）。
+ */
 export interface AddAddressInput {
   firstName: string;
-  lastName: string;
+  lastName?: string;
   phone?: string;
   line1: string;
   line2?: string;
-  city: string;
+  city?: string;
   province?: string;
-  postalCode: string;
+  postalCode?: string;
   countryCode: string;
   isDefaultShipping?: boolean;
   isDefaultBilling?: boolean;
 }
 
-export type UpdateAddressInput = Partial<Omit<AddAddressInput, "firstName" | "lastName" | "line1" | "city" | "postalCode" | "countryCode">> & {
-  firstName?: string;
-  lastName?: string;
-  line1?: string;
-  city?: string;
-  postalCode?: string;
-  countryCode?: string;
-};
+/** 更新地址：所有字段可选（必填项传空串由路由层拦住）。 */
+export type UpdateAddressInput = Partial<AddAddressInput>;
 
 export interface CustomerListQuery {
   q?: string;
@@ -74,6 +76,10 @@ export interface CustomerRepository {
   findAddress(addressId: string): Promise<AddressDTO | null>;
   insertAddress(customerId: string, input: AddAddressInput): Promise<AddressDTO>;
   updateAddress(addressId: string, patch: UpdateAddressInput): Promise<AddressDTO | null>;
+  /** 取消该客户所有地址的默认标记（exceptId 用于「改其中一条为默认」时排除自身）。 */
+  clearDefaultShipping(customerId: string, exceptId?: string): Promise<void>;
+  /** 把某条地址设为唯一默认收货地址（先清后设，同一事务）。 */
+  setDefaultShipping(customerId: string, addressId: string): Promise<AddressDTO>;
   softDeleteAddress(addressId: string): Promise<void>;
 }
 
@@ -85,6 +91,8 @@ export interface ICustomerModuleService {
   listAddresses(customerId: string): Promise<AddressDTO[]>;
   addAddress(customerId: string, input: AddAddressInput): Promise<AddressDTO>;
   updateAddress(customerId: string, addressId: string, patch: UpdateAddressInput): Promise<AddressDTO>;
+  /** 设为默认收货地址（淘宝地址簿里的「设为默认」是一个动作，不是改一个字段）。 */
+  setDefaultAddress(customerId: string, addressId: string): Promise<AddressDTO>;
   deleteAddress(customerId: string, addressId: string): Promise<void>;
   deleteCustomer(id: string): Promise<void>;
 }

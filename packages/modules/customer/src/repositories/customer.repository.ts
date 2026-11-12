@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -81,10 +81,12 @@ export class DrizzleCustomerRepository implements CustomerRepository {
   }
 
   async listAddresses(customerId: string): Promise<AddressDTO[]> {
+    // 默认地址排最前：淘宝/Shopify 的地址簿都是这个顺序，顾客不用自己找
     const rows = await this.db
       .select()
       .from(schema.customerAddress)
-      .where(and(eq(schema.customerAddress.customerId, customerId), isNull(schema.customerAddress.deletedAt)));
+      .where(and(eq(schema.customerAddress.customerId, customerId), isNull(schema.customerAddress.deletedAt)))
+      .orderBy(desc(schema.customerAddress.isDefaultShipping), desc(schema.customerAddress.createdAt));
     return rows.map(toAddressDTO);
   }
 
@@ -104,13 +106,13 @@ export class DrizzleCustomerRepository implements CustomerRepository {
         id: prefixedUlid("addr"),
         customerId,
         firstName: input.firstName,
-        lastName: input.lastName,
+        lastName: input.lastName ?? null,
         phone: input.phone ?? null,
         line1: input.line1,
         line2: input.line2 ?? null,
-        city: input.city,
+        city: input.city ?? null,
         province: input.province ?? null,
-        postalCode: input.postalCode,
+        postalCode: input.postalCode ?? null,
         countryCode: input.countryCode,
         isDefaultShipping: input.isDefaultShipping ?? false,
         isDefaultBilling: input.isDefaultBilling ?? false,
@@ -140,6 +142,44 @@ export class DrizzleCustomerRepository implements CustomerRepository {
     return rows[0] ? toAddressDTO(rows[0]) : null;
   }
 
+  /** 取消该客户所有地址的默认标记（`exceptId` 用于「把其中一条改成默认」时排除自身）。 */
+  async clearDefaultShipping(customerId: string, exceptId?: string): Promise<void> {
+    const conditions = [
+      eq(schema.customerAddress.customerId, customerId),
+      isNull(schema.customerAddress.deletedAt),
+    ];
+    if (exceptId) conditions.push(ne(schema.customerAddress.id, exceptId));
+    await this.db
+      .update(schema.customerAddress)
+      .set({ isDefaultShipping: false, updatedAt: new Date() })
+      .where(and(...conditions));
+  }
+
+  /**
+   * 设为唯一默认收货地址：先清后设在同一事务里。
+   *
+   * 不放在服务层分两步做：两个请求并发「设为默认」时会各清各的、最后两条都是默认。
+   */
+  async setDefaultShipping(customerId: string, addressId: string): Promise<AddressDTO> {
+    return this.db.transaction(async (tx) => {
+      await tx
+        .update(schema.customerAddress)
+        .set({ isDefaultShipping: false, updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.customerAddress.customerId, customerId),
+            isNull(schema.customerAddress.deletedAt),
+          ),
+        );
+      const rows = await tx
+        .update(schema.customerAddress)
+        .set({ isDefaultShipping: true, updatedAt: new Date() })
+        .where(eq(schema.customerAddress.id, addressId))
+        .returning();
+      return toAddressDTO(rows[0]!);
+    });
+  }
+
   async softDeleteAddress(addressId: string): Promise<void> {
     await this.db
       .update(schema.customerAddress)
@@ -164,13 +204,13 @@ function toAddressDTO(r: typeof schema.customerAddress.$inferSelect): AddressDTO
     id: r.id,
     customer_id: r.customerId,
     first_name: r.firstName,
-    last_name: r.lastName,
+    last_name: r.lastName ?? null,
     phone: r.phone ?? null,
     line1: r.line1,
     line2: r.line2 ?? null,
-    city: r.city,
+    city: r.city ?? null,
     province: r.province ?? null,
-    postal_code: r.postalCode,
+    postal_code: r.postalCode ?? null,
     country_code: r.countryCode,
     is_default_shipping: r.isDefaultShipping,
     is_default_billing: r.isDefaultBilling,
