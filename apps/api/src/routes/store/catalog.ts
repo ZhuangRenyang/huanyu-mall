@@ -159,6 +159,25 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
         };
       }),
       attributes: [],
+      // 所属分类：店面面包屑「全部商品 > 服饰 > 外套 > 商品」靠它，
+      // 也是分类页与商品页之间的内链（ADR-040）
+      categories: await (async () => {
+        if (detail.category_ids.length === 0) return [];
+        const all = await deps.services.product.listCategories(true);
+        const byId = new Map(all.map((c) => [c.id, c]));
+        const own = detail.category_ids
+          .map((id) => byId.get(id))
+          .filter((c): c is NonNullable<typeof c> => Boolean(c));
+        // 商品通常只挂二级分类：把父级也带上，面包屑才能显示「服饰 > 外套」
+        const withParents = [...own];
+        for (const c of own) {
+          if (c.parent_id && !withParents.some((x) => x.id === c.parent_id)) {
+            const parent = byId.get(c.parent_id);
+            if (parent) withParents.push(parent);
+          }
+        }
+        return withParents.map((c) => ({ id: c.id, name: c.name, parent_id: c.parent_id }));
+      })(),
     });
   });
 

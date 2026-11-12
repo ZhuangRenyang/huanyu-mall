@@ -37,6 +37,8 @@ interface ApiProductDetail {
   images?: Array<{ id: string; url: string; alt?: string | null }>;
   variants?: ApiVariant[];
   attributes?: Array<{ name: string; value: string }>;
+  /** 所属分类（详情接口返回，ADR-040）。 */
+  categories?: Array<{ id: string; name: string; parent_id?: string | null }>;
 }
 
 /** 真 API 返回的商品摘要（字段对齐 openapi ProductSummary）。 */
@@ -95,6 +97,11 @@ function mapDetail(d: ApiProductDetail): CatalogProduct {
     createdAt: "",
     images,
     attributes: (d.attributes ?? []).map((a) => ({ name: a.name, value: a.value })),
+    categories: (d.categories ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      parentId: c.parent_id ?? null,
+    })),
     variants,
     originalMinor: undefined,
   };

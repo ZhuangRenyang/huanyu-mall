@@ -23,13 +23,38 @@ export function ProductDetailView({
   voucherCurrency = 'CNY',
 }: ProductDetailViewProps) {
   const base = `/${locale}/${channel}`;
+  /*
+   * 面包屑最多两级：优先展示二级分类（更具体），
+   * 没有二级就展示一级。商品挂多个分类时取第一个，避免面包屑变长。
+   */
+  const categories = product.categories ?? [];
+  const leaf = categories.find((c) => c.parentId) ?? categories[0];
+  const root = leaf?.parentId ? categories.find((c) => c.id === leaf.parentId) : undefined;
+  const breadcrumbCategories = [root, leaf].filter(
+    (c): c is NonNullable<typeof c> => Boolean(c),
+  );
 
   return (
     <div className="mx-auto max-w-content px-4 py-6 md:py-8">
-      <nav aria-label="面包屑" className="mb-4 flex items-center gap-1 text-sm text-muted-foreground">
+      {/*
+        面包屑带上所属分类（ADR-040）：淘宝是「首页 > 服饰 > 外套 > 商品」。
+        分类是导航的一部分，也是商品页回分类页的内链 —— 之前只有「全部商品」一层。
+      */}
+      <nav aria-label="面包屑" className="mb-4 flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
         <a href={`${base}/products`} className="transition-colors duration-150 hover:text-foreground">
           全部商品
         </a>
+        {breadcrumbCategories.map((c) => (
+          <span key={c.id} className="flex items-center gap-1">
+            <ChevronRight className="size-4" strokeWidth={2} aria-hidden="true" />
+            <a
+              href={`${base}/products?category=${encodeURIComponent(c.id)}`}
+              className="transition-colors duration-150 hover:text-foreground"
+            >
+              {c.name}
+            </a>
+          </span>
+        ))}
         <ChevronRight className="size-4" strokeWidth={2} aria-hidden="true" />
         <span className="text-foreground">{product.title}</span>
       </nav>

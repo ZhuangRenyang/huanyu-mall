@@ -34,6 +34,8 @@ export interface CatalogProduct {
   createdAt: string;
   images: CatalogImage[];
   attributes: { name: string; value: string }[];
+  /** 所属分类（面包屑与内链用，ADR-040）。 */
+  categories?: Array<{ id: string; name: string; parentId: string | null }>;
   variants: CatalogVariant[];
   badge?: string;
   /** 列表划线原价（促销）。 */

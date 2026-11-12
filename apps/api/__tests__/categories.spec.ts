@@ -121,3 +121,18 @@ describe("商品分类（后台）", () => {
     });
   });
 });
+
+describe("商品详情的所属分类（ADR-040）", () => {
+  it("详情返回分类（含父级），供面包屑「全部商品 > 服饰 > 商品」", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/store/products/tee",
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const data = res.json().data;
+      expect(Array.isArray(data.categories)).toBe(true);
+      expect(data.categories[0]).toMatchObject({ id: "cat_1", name: "服饰" });
+    });
+  });
+});
