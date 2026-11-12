@@ -15,6 +15,7 @@
     "check:module-graph": "tsx scripts/check-module-graph.ts",
     "check:migrations": "tsx scripts/lint-migrations.ts",
     "check:icons": "tsx scripts/scan-icons.ts",
+    "check:secrets": "tsx scripts/check-secrets.ts",
     "check:visual": "tsx packages/ui/scripts/visual-snapshot.ts"
   },
   "devDependencies": {

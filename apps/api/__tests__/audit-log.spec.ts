@@ -146,7 +146,7 @@ describe("审计日志（Phase 4）", () => {
         method: "PUT",
         url: "/api/v1/admin/settings/payment-providers/pp_wechat",
         headers: adminHeaders,
-        payload: { options: { mchid: "1912345678", apiV3Key: "0123456789abcdef0123456789abcdef" } },
+        payload: { options: { mchid: "1912345678", apiV3Key: "wechat-test-key-aaaaaaaaaaaaaaaa" } },
       });
       await app.inject({
         method: "POST",
@@ -176,8 +176,8 @@ describe("审计日志（Phase 4）", () => {
       // 支付商配置落库的是掩码视图，明文密钥不进审计表
       const providerAudit = deps.auditRepo.rows.find((r) => r.action === "payment_provider.configure")!;
       const after = JSON.stringify(providerAudit.after ?? {});
-      expect(after).not.toContain("0123456789abcdef0123456789abcdef");
-      expect(after).toContain("****cdef");
+      expect(after).not.toContain("wechat-test-key-aaaaaaaaaaaaaaaa");
+      expect(after).toContain("****aaaa");
     });
   });
 

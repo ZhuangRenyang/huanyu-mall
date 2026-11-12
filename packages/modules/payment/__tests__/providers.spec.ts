@@ -41,7 +41,8 @@ describe("Payment Providers 验签（四家沙箱）", () => {
 
   it("微信 RSA + AES-GCM：正确通过 / 篡改抛错", async () => {
     const { publicKey, privateKey } = rsaKeys();
-    const apiV3Key = "0123456789abcdef0123456789abcdef"; // 32 字节
+    // 32 字节，但刻意用低熵串：十六进制假 key 会被 GitHub secret scanning 反复告警
+    const apiV3Key = "wechat-test-key-aaaaaaaaaaaaaaaa";
     const nonce = "nonce-12345"; // 12 字节
     const provider = new WechatPaymentProvider({ platformPublicKeyPem: publicKey, apiV3Key });
 

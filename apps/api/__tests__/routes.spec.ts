@@ -523,7 +523,7 @@ describe("API routes（fastify.inject）", () => {
         url: "/api/v1/admin/settings/payment-providers/pp_wechat",
         headers: { authorization: "Bearer admin", "content-type": "application/json" },
         payload: {
-          options: { mchid: "1912345678", apiV3Key: "0123456789abcdef0123456789abcdef" },
+          options: { mchid: "1912345678", apiV3Key: "wechat-test-key-aaaaaaaaaaaaaaaa" },
           enabled_channels: ["chn_cn"],
         },
       });
@@ -538,7 +538,7 @@ describe("API routes（fastify.inject）", () => {
       const masked = get.json().data.options_masked;
       expect(masked.mchid).toBe("****5678");
       expect(masked.mchid).not.toBe("1912345678");
-      expect(masked.apiV3Key).toBe("****cdef");
+      expect(masked.apiV3Key).toBe("****aaaa");
     });
   });
 });
