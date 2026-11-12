@@ -11,22 +11,37 @@ const refundRequestBody = z.object({
   reason: z.string().min(2).max(500),
 });
 
+/** 页签可含多个状态（待收货 = fulfilled + delivered），用逗号分隔。 */
 const listQuery = PaginationQuerySchema.extend({
   status: z
-    .enum([
-      "pending",
-      "awaiting_payment",
-      "paid",
-      "partially_fulfilled",
-      "fulfilled",
-      "delivered",
-      "completed",
-      "canceled",
-      "refund_pending",
-      "refunded",
-    ])
+    .string()
+    .max(160)
     .optional(),
 });
+
+const ORDER_STATUSES = [
+  "pending",
+  "awaiting_payment",
+  "paid",
+  "partially_fulfilled",
+  "fulfilled",
+  "delivered",
+  "completed",
+  "canceled",
+  "refund_pending",
+  "refunded",
+] as const;
+type StoreOrderStatus = (typeof ORDER_STATUSES)[number];
+
+/** 逗号分隔 → 状态数组；非法值忽略（不 400，老前端不会因为多传一个值就白屏）。 */
+function parseStatuses(raw: string | undefined): StoreOrderStatus[] | undefined {
+  if (!raw) return undefined;
+  const picked = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is StoreOrderStatus => (ORDER_STATUSES as readonly string[]).includes(s));
+  return picked.length > 0 ? picked : undefined;
+}
 
 /**
  * 订单归属判定（店面统一的唯一口径）。
@@ -68,9 +83,10 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         throw errors.unauthenticated("请先登录后查看订单");
       }
       const q = req.query;
+      const statuses = parseStatuses(q.status);
       const res = await deps.services.order.listOrderSummaries({
         customerId: req.auth.customerId,
-        status: q.status,
+        ...(statuses ? { statuses } : {}),
         limit: q.limit,
         offset: q.offset,
       });

@@ -5,12 +5,42 @@ import { useRouter } from 'next/navigation';
 import { PackageSearch, Search } from 'lucide-react';
 import { Badge, Button, EmptyState, Skeleton, formatMoney } from '@mall/ui';
 import { TextField } from '@/components/form-field';
-import { ORDER_STATUS_META, findOrder, findOrderByIdentity, formatDateTime, listOrders, orderRecordToView, type OrderView } from '@/lib/orders';
+import {
+  ORDER_STATUS_META,
+  findOrder,
+  findOrderByIdentity,
+  formatDateTime,
+  listOrders,
+  orderRecordToView,
+  type OrderStatusKey,
+  type OrderView,
+} from '@/lib/orders';
 import type { Order } from '@mall/sdk';
 import { getApiMode, getStoreClient, syncStoreToken } from '@/lib/api';
 import { loadLiveOrder, toOrderRecord } from '@/lib/checkout';
 import { restoreSession, type CustomerProfile } from '@/lib/account';
 import { OrderDetail } from './order-detail';
+
+type OrderFilter = 'all' | 'unpaid' | 'to_ship' | 'to_receive' | 'completed';
+
+/**
+ * 状态页签（对齐淘宝「已买到的宝贝」）。
+ *
+ * `statuses` 给服务端（逗号分隔多状态），`view` 给 mock 模式本地过滤 ——
+ * 两边口径必须一致，否则同一页在两种模式下会给出不同的分组。
+ */
+const ORDER_FILTERS: Array<{
+  key: OrderFilter;
+  label: string;
+  statuses?: string;
+  view?: OrderStatusKey[];
+}> = [
+  { key: 'all', label: '全部' },
+  { key: 'unpaid', label: '待付款', statuses: 'pending,awaiting_payment', view: ['awaiting_payment'] },
+  { key: 'to_ship', label: '待发货', statuses: 'paid,partially_fulfilled', view: ['to_ship'] },
+  { key: 'to_receive', label: '待收货', statuses: 'fulfilled,delivered', view: ['to_receive'] },
+  { key: 'completed', label: '已完成', statuses: 'completed', view: ['completed'] },
+];
 
 export function OrdersView({ orderId, locale, channel }: { orderId?: string; locale: string; channel: string }) {
   const router = useRouter();
@@ -21,6 +51,7 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
   /** 已登录顾客（live）：决定显示「我的订单」还是游客查单。 */
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [filter, setFilter] = useState<OrderFilter>('all');
   const [detail, setDetail] = useState<OrderView | null>(null);
   const [queryId, setQueryId] = useState('');
   const [identity, setIdentity] = useState('');
@@ -30,7 +61,9 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
   useEffect(() => {
     setMounted(true);
     if (!live) {
-      setOrders(listOrders());
+      const all = listOrders();
+      const view = ORDER_FILTERS.find((f) => f.key === filter)?.view;
+      setOrders(view ? all.filter((o) => view.includes(o.status)) : all);
       return;
     }
     let cancelled = false;
@@ -47,7 +80,11 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
       }
       syncStoreToken();
       try {
-        const res = (await getStoreClient().listMyOrders({ limit: 20 })) as { items?: Order[] };
+        const statuses = ORDER_FILTERS.find((f) => f.key === filter)?.statuses;
+        const res = (await getStoreClient().listMyOrders({
+          limit: 20,
+          ...(statuses ? { status: statuses } : {}),
+        })) as { items?: Order[] };
         if (!cancelled) {
           setOrders((res.items ?? []).map((o) => orderRecordToView(toOrderRecord(o))));
         }
@@ -60,7 +97,7 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
     return () => {
       cancelled = true;
     };
-  }, [live]);
+  }, [live, filter]);
 
   // 详情：按单号查（游客单号 + 后端订单号都能查到）
   useEffect(() => {
@@ -157,6 +194,24 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
         <h2 id="list-heading" className="mb-3 text-base font-semibold">
           我的订单
         </h2>
+        <div className="mb-3 flex flex-wrap gap-1" role="tablist" aria-label="订单状态">
+          {ORDER_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              role="tab"
+              aria-selected={filter === f.key}
+              onClick={() => setFilter(f.key)}
+              className={
+                filter === f.key
+                  ? 'h-8 rounded-md bg-primary-subtle px-3 text-sm font-medium text-primary-subtle-foreground'
+                  : 'h-8 rounded-md px-3 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted'
+              }
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         {!mounted || loadingOrders ? (
           <div className="space-y-3">
             {[0, 1].map((i) => (
@@ -180,8 +235,8 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
         ) : orders.length === 0 ? (
           <EmptyState
             icon={PackageSearch}
-            title="还没有订单"
-            description="下单后可以在这里查物流"
+            title={filter === 'all' ? '还没有订单' : '这个状态下没有订单'}
+            description={filter === 'all' ? '下单后可以在这里查物流' : '换个页签看看'}
             action={<Button onClick={() => router.push(`${base}/products`)}>去逛逛</Button>}
           />
         ) : (

@@ -196,3 +196,37 @@ describe("订单详情带支付渠道与配送方式（ADR-034）", () => {
     });
   });
 });
+
+describe("我的订单状态页签（ADR-036）", () => {
+  it("多状态用逗号分隔：命中与不命中都能正确筛", async () => {
+    await withApp(async (app) => {
+      const hit = await app.inject({
+        method: "GET",
+        url: "/api/v1/store/orders?status=pending,awaiting_payment",
+        headers: customer,
+      });
+      expect(hit.statusCode, hit.body).toBe(200);
+      expect(hit.json().data.count).toBe(1);
+
+      const miss = await app.inject({
+        method: "GET",
+        url: "/api/v1/store/orders?status=refunded",
+        headers: customer,
+      });
+      expect(miss.statusCode, miss.body).toBe(200);
+      expect(miss.json().data.count).toBe(0);
+    });
+  });
+
+  it("非法状态值被忽略，不报 400（老前端不会因多传一个值白屏）", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/store/orders?status=pending,not_a_status",
+        headers: customer,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().data.count).toBe(1);
+    });
+  });
+});

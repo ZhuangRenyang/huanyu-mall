@@ -1215,6 +1215,45 @@ paths:
         '409': { description: 库存不足/价格已变(30003/30004), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         '422': { description: 购物车为空(30005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
+  /store/orders:
+    get:
+      tags: [store]
+      summary: 我的订单（店铺端「已买到的宝贝」）
+      description: |
+        归属只认 token 里的 customerId，不接受 query 传 customer_id。
+        `status` 支持逗号分隔多状态（页签：待收货 = fulfilled,delivered）；
+        非法状态值被忽略而不是 400（ADR-036）。
+      security: [{ publishableKey: [], customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string }
+          example: "paid,partially_fulfilled"
+          description: 逗号分隔的订单状态
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/Order' }
+                      count: { type: integer, example: 3 }
+                      offset: { type: integer, example: 0 }
+                      limit: { type: integer, example: 20 }
+                      hasMore: { type: boolean, example: false }
+        '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
   /store/orders/{id}:
     get:
       tags: [store]
