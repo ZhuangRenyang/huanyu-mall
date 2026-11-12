@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { giftCardNotFound, voucherCodeNotFound } from "../src/errors.js";
 import { PromotionService } from "../src/services/promotion.service.js";
 import type {
+  CollectedVoucherDTO,
   CreateGiftCardInput,
   CreatePromotionInput,
   CreatePromotionRuleInput,
@@ -27,6 +28,15 @@ class InMemoryPromotionRepository implements PromotionRepository {
   promotions = new Map<string, PromotionDTO>();
   rules = new Map<string, PromotionRuleDTO>();
   vouchers = new Map<string, VoucherDTO>();
+  collections: Array<{
+    id: string;
+    voucherId: string;
+    customerId: string;
+    codeId: string;
+    status: "unused" | "used";
+    collectedAt: Date;
+    usedAt: Date | null;
+  }> = [];
   voucherCodes = new Map<string, VoucherCodeDTO>();
   giftCards = new Map<string, GiftCardDTO>();
   giftCardEvents = new Map<string, GiftCardEventDTO[]>();
@@ -155,6 +165,8 @@ class InMemoryPromotionRepository implements PromotionRepository {
       discount_value: input.discountValue,
       min_spent: input.minSpent ?? null,
       status: input.status ?? "active",
+      is_public: input.isPublic ?? false,
+      collect_limit: input.collectLimit ?? 1,
     };
     this.vouchers.set(dto.id, dto);
     return dto;
@@ -180,12 +192,75 @@ class InMemoryPromotionRepository implements PromotionRepository {
       discount_value: patch.discountValue ?? cur.discount_value,
       min_spent: patch.minSpent !== undefined ? patch.minSpent : cur.min_spent,
       status: patch.status ?? cur.status,
+      is_public: patch.isPublic !== undefined ? patch.isPublic : cur.is_public,
+      collect_limit: patch.collectLimit !== undefined ? patch.collectLimit : cur.collect_limit,
     };
     this.vouchers.set(id, next);
     return next;
   }
   async softDeleteVoucher(id: string): Promise<void> {
     this.vouchers.delete(id);
+  }
+
+  async insertVoucherCollection(input: {
+    id: string;
+    voucherId: string;
+    customerId: string;
+    codeId: string;
+  }): Promise<void> {
+    this.collections.push({
+      ...input,
+      status: "unused",
+      collectedAt: new Date(),
+      usedAt: null,
+    });
+  }
+  async countVoucherCollections(voucherId: string, customerId: string): Promise<number> {
+    return this.collections.filter((c) => c.voucherId === voucherId && c.customerId === customerId)
+      .length;
+  }
+  async listVoucherCollectionsByCustomer(customerId: string): Promise<CollectedVoucherDTO[]> {
+    return this.collections
+      .filter((c) => c.customerId === customerId)
+      .map((c) => {
+        const voucher = this.vouchers.get(c.voucherId)!;
+        const code = this.voucherCodes.get(c.codeId)!;
+        return {
+          id: c.id,
+          voucher_id: c.voucherId,
+          code: code.code,
+          name: voucher.name,
+          type: voucher.type,
+          discount_type: voucher.discount_type,
+          discount_value: voucher.discount_value,
+          min_spent: voucher.min_spent,
+          starts_at: voucher.starts_at,
+          ends_at: voucher.ends_at,
+          status: c.status,
+          collected_at: c.collectedAt,
+          used_at: c.usedAt,
+        };
+      });
+  }
+  async findVoucherCollection(voucherId: string, customerId: string): Promise<{ code: string } | null> {
+    const row = this.collections.find((c) => c.voucherId === voucherId && c.customerId === customerId);
+    if (!row) return null;
+    const code = this.voucherCodes.get(row.codeId);
+    return code ? { code: code.code } : null;
+  }
+  async markCollectionUsedByCode(codeId: string): Promise<void> {
+    const row = this.collections.find((c) => c.codeId === codeId && c.status === "unused");
+    if (row) {
+      row.status = "used";
+      row.usedAt = new Date();
+    }
+  }
+  async markCollectionUnusedByCode(codeId: string): Promise<void> {
+    const row = this.collections.find((c) => c.codeId === codeId);
+    if (row) {
+      row.status = "unused";
+      row.usedAt = null;
+    }
   }
 
   async insertVoucherCode(input: CreateVoucherCodeInput & { id: string }): Promise<VoucherCodeDTO> {
@@ -1064,5 +1139,123 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
     const events = await service.listGiftCardEvents(card.id);
     expect(events.some((e) => e.type === "deactivated")).toBe(true);
     expect(events.some((e) => e.type === "activated")).toBe(true);
+  });
+});
+
+describe("领券（ADR-029）", () => {
+  /** 建一张公开可领的券。 */
+  async function setupPublicVoucher(over: Partial<CreateVoucherInput> = {}) {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.setFeatureEnabled("voucher", true);
+    const voucher = await service.createVoucher({
+      name: "满 199 减 20",
+      discountType: "fixed",
+      discountValue: 2000n,
+      minSpent: 19900n,
+      isPublic: true,
+      collectLimit: 1,
+      ...over,
+    });
+    return { repo, service, voucher };
+  }
+
+  it("领取：生成专属券码并记账，重复领取返回原码（幂等）", async () => {
+    const { service, voucher } = await setupPublicVoucher();
+
+    const first = await service.collectVoucher(voucher.id, "cust_1");
+    expect(first.code).toMatch(/^[A-Z2-9]{10}$/);
+    expect(first.alreadyCollected).toBe(false);
+
+    const again = await service.collectVoucher(voucher.id, "cust_1");
+    expect(again.code).toBe(first.code);
+    expect(again.alreadyCollected).toBe(true);
+  });
+
+  it("每人限领 2 张：能领两次，第三张拿回已有的码", async () => {
+    const { service, voucher } = await setupPublicVoucher({ collectLimit: 2 });
+
+    const a = await service.collectVoucher(voucher.id, "cust_1");
+    const b = await service.collectVoucher(voucher.id, "cust_1");
+    expect(b.code).not.toBe(a.code); // 第二张是新码
+    expect(b.alreadyCollected).toBe(false);
+
+    const c = await service.collectVoucher(voucher.id, "cust_1");
+    expect(c.alreadyCollected).toBe(true);
+    expect([a.code, b.code]).toContain(c.code);
+  });
+
+  it("未公开的券不能领", async () => {
+    const { service } = await setupPublicVoucher({ isPublic: false });
+    const { service: s2, voucher } = await setupPublicVoucher({ isPublic: false });
+    void service;
+    await expect(s2.collectVoucher(voucher.id, "cust_1")).rejects.toThrow();
+  });
+
+  it("店面只列公开 + 启用 + 在有效期内的券", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.setFeatureEnabled("voucher", true);
+    await service.createVoucher({
+      name: "公开券",
+      discountType: "fixed",
+      discountValue: 1000n,
+      isPublic: true,
+    });
+    await service.createVoucher({
+      name: "内部券",
+      discountType: "fixed",
+      discountValue: 1000n,
+      isPublic: false,
+    });
+    await service.createVoucher({
+      name: "过期券",
+      discountType: "fixed",
+      discountValue: 1000n,
+      isPublic: true,
+      endsAt: new Date(Date.now() - 3600_000),
+    });
+
+    const list = await service.listPublicVouchers();
+    expect(list.map((v) => v.name)).toEqual(["公开券"]);
+    expect(list[0]!.collected).toBe(false);
+  });
+
+  it("已领的券在店面列表里带 collected 标记", async () => {
+    const { service, voucher } = await setupPublicVoucher();
+    await service.collectVoucher(voucher.id, "cust_1");
+
+    const mine = await service.listPublicVouchers("cust_1");
+    expect(mine[0]!.collected).toBe(true);
+    expect(mine[0]!.collected_count).toBe(1);
+
+    const guest = await service.listPublicVouchers(null);
+    expect(guest[0]!.collected).toBe(false);
+  });
+
+  it("核销把领取记录标为已用，补偿退回未用", async () => {
+    const { service, voucher } = await setupPublicVoucher();
+    const { code } = await service.collectVoucher(voucher.id, "cust_1");
+
+    await service.consumeVoucherCodes([code]);
+    let mine = await service.listCollectedVouchers("cust_1");
+    expect(mine[0]!.status).toBe("used");
+    expect(mine[0]!.used_at).toBeTruthy();
+
+    await service.releaseVoucherCodes([code]);
+    mine = await service.listCollectedVouchers("cust_1");
+    expect(mine[0]!.status).toBe("unused");
+  });
+
+  it("我的卡券：未用排在前面", async () => {
+    const { service, voucher } = await setupPublicVoucher({ collectLimit: 2 });
+    const a = await service.collectVoucher(voucher.id, "cust_1");
+    await service.collectVoucher(voucher.id, "cust_1");
+    await service.consumeVoucherCodes([a.code]);
+
+    const mine = await service.listCollectedVouchers("cust_1");
+    expect(mine).toHaveLength(2);
+    expect(mine[0]!.status).toBe("unused");
+    expect(mine[1]!.status).toBe("used");
   });
 });

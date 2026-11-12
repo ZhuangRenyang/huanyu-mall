@@ -243,6 +243,10 @@ export interface CreateVoucherRequest {
   ends_at?: string | null;
   /** 管理员指定券码；不传则后端生成 1 个高熵码。 */
   codes?: string[];
+  /** 店面公开可领（店铺券）。 */
+  is_public?: boolean;
+  /** 每人限领张数。 */
+  collect_limit?: number;
 }
 
 /** 更新优惠券。 */
@@ -255,6 +259,8 @@ export interface UpdateVoucherRequest {
   usage_limit?: number | null;
   starts_at?: string | null;
   ends_at?: string | null;
+  is_public?: boolean;
+  collect_limit?: number;
 }
 
 /** 追加券码（一券多码）。 */

@@ -199,6 +199,10 @@ export interface AdminVoucher {
   discount_value: number;
   min_spent: number | null;
   status: 'active' | 'disabled';
+  /** 店面公开可领（店铺券）；false = 只能凭码使用。 */
+  is_public?: boolean;
+  /** 每人限领张数。 */
+  collect_limit?: number;
 }
 
 /** 券码（一券多码）。 */

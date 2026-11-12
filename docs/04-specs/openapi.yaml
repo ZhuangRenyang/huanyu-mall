@@ -198,6 +198,43 @@ components:
           description: 变体级可用量（AC-03/行业交互要求）
         available_quantity: { type: integer, example: 12 }
 
+    PublicVoucher:
+      type: object
+      description: 店面可领券（ADR-029）。金额为 minor unit，币种见列表响应。
+      properties:
+        id: { type: string, example: vouch_01H }
+        name: { type: string, example: "满 199 减 20" }
+        type:
+          type: string
+          enum: [entire_order, shipping, specific_product]
+          example: entire_order
+        discount_type: { type: string, enum: [fixed, percentage], example: fixed }
+        discount_value: { type: integer, example: 2000, description: fixed=minor unit；percentage=bps }
+        min_spent: { type: integer, nullable: true, example: 19900 }
+        starts_at: { type: string, format: date-time, nullable: true }
+        ends_at: { type: string, format: date-time, nullable: true }
+        collected: { type: boolean, example: false }
+        collected_count: { type: integer, example: 0 }
+        collect_limit: { type: integer, example: 1 }
+
+    CollectedVoucher:
+      type: object
+      description: 我的卡券。status 只有 unused/used，过期由 ends_at 现算。
+      properties:
+        id: { type: string, example: vcol_01H }
+        voucher_id: { type: string, example: vouch_01H }
+        code: { type: string, example: "K7QM2XP9RT" }
+        name: { type: string, example: "满 199 减 20" }
+        type: { type: string, enum: [entire_order, shipping, specific_product] }
+        discount_type: { type: string, enum: [fixed, percentage] }
+        discount_value: { type: integer, example: 2000 }
+        min_spent: { type: integer, nullable: true }
+        starts_at: { type: string, format: date-time, nullable: true }
+        ends_at: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [unused, used], example: unused }
+        collected_at: { type: string, format: date-time }
+        used_at: { type: string, format: date-time, nullable: true }
+
     Category:
       type: object
       required: [id, name, handle]
@@ -1194,6 +1231,77 @@ paths:
                   data: { type: object, nullable: true }
                   message: { type: string, example: "" }
         '401': { description: 验签失败(40005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/vouchers:
+    get:
+      tags: [store-promotion]
+      summary: 可领取的店铺券（匿名可读）
+      description: 只返回「公开 + 启用 + 在有效期」的券；登录后每张券带 collected 标记（ADR-029）。
+      security: [{ publishableKey: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/PublicVoucher' }
+                      count: { type: integer, example: 2 }
+                      currency_code: { type: string, example: CNY }
+
+  /store/vouchers/{id}/collect:
+    post:
+      tags: [store-promotion]
+      summary: 领取一张店铺券（需登录，重复领取幂等返回原码）
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      code: { type: string, example: "K7QM2XP9RT", description: 结账时套用的券码 }
+                      already_collected: { type: boolean, example: false }
+        '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/customer/vouchers:
+    get:
+      tags: [store-promotion]
+      summary: 我的卡券（未用在前）
+      security: [{ customerJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/CollectedVoucher' }
+                      count: { type: integer, example: 1 }
+                      currency_code: { type: string, example: CNY }
+        '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
   /store/auth/settings:
     get:

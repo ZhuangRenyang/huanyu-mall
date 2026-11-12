@@ -129,7 +129,13 @@ export function VoucherTab() {
           <tbody className="divide-y divide-border">
             {items.map((v) => (
               <tr key={v.id} className="transition-colors duration-150 hover:bg-muted/50">
-                <td className="px-4 py-3 font-medium text-foreground">{v.name}</td>
+                <td className="px-4 py-3 font-medium text-foreground">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    {v.name}
+                    {/* 公开可领 = 商品页会出现「领取」按钮，列表里要一眼能认出来 */}
+                    {v.isPublic && <Badge variant="brand">店铺券</Badge>}
+                  </span>
+                </td>
                 <td className="px-4 py-3 text-muted-foreground">{TYPE_LABEL[v.type]}</td>
                 <td className="tabular px-4 py-3">{discountText(v)}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">
@@ -209,6 +215,9 @@ function VoucherEditor({
   const [startsAt, setStartsAt] = useState('');
   const [endsAt, setEndsAt] = useState('');
   const [codesText, setCodesText] = useState('');
+  /** 店铺券：公开可领 + 每人限领（ADR-029）。 */
+  const [isPublic, setIsPublic] = useState(false);
+  const [collectLimit, setCollectLimit] = useState('1');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -224,6 +233,8 @@ function VoucherEditor({
     setStartsAt(toLocalInput(voucher?.startsAt ?? null));
     setEndsAt(toLocalInput(voucher?.endsAt ?? null));
     setCodesText('');
+    setIsPublic(voucher?.isPublic ?? false);
+    setCollectLimit(String(voucher?.collectLimit ?? 1));
     setError(null);
     setSubmitting(false);
   }, [open, voucher]);
@@ -254,6 +265,8 @@ function VoucherEditor({
       usageLimit: usageLimit.trim() ? Math.max(0, Math.round(Number(usageLimit))) : null,
       startsAt: fromLocalInput(startsAt),
       endsAt: fromLocalInput(endsAt),
+      isPublic,
+      collectLimit: collectLimit.trim() ? Math.max(1, Math.round(Number(collectLimit))) : 1,
       ...(voucher ? {} : { codes: parseCodes() }),
     };
     setSubmitting(true);
@@ -358,6 +371,34 @@ function VoucherEditor({
               onChange={(e) => setUsageLimit(e.target.value)}
               className="tabular"
             />
+          </div>
+          <div className="rounded-md border border-border p-3">
+            <label className="flex items-center gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={isPublic}
+                onChange={(e) => setIsPublic(e.target.checked)}
+                className="size-4 accent-primary"
+              />
+              在店面公开领取（店铺券）
+            </label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              开启后商品页会出现「领取」按钮；顾客领取后结账时直接可选，不必输码。
+            </p>
+            {isPublic && (
+              <div className="mt-3">
+                <TextField
+                  id="v-collect-limit"
+                  label="每人限领张数"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={collectLimit}
+                  onChange={(e) => setCollectLimit(e.target.value)}
+                  className="tabular w-32"
+                />
+              </div>
+            )}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <TextField

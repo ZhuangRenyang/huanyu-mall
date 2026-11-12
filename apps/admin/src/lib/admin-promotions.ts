@@ -33,6 +33,10 @@ export interface VoucherView {
   startsAt: string | null;
   endsAt: string | null;
   status: 'active' | 'disabled';
+  /** 店面公开可领（店铺券）；false = 只能凭码使用。 */
+  isPublic: boolean;
+  /** 每人限领张数。 */
+  collectLimit: number;
 }
 
 export interface VoucherCodeView {
@@ -78,6 +82,10 @@ export interface VoucherInput {
   endsAt: string | null;
   /** 可选：管理员指定的券码列表（逗号分隔），留空则由后端生成。 */
   codes?: string[];
+  /** 店面公开可领（店铺券）。 */
+  isPublic: boolean;
+  /** 每人限领。 */
+  collectLimit: number;
 }
 
 export interface GiftCardInput {
@@ -103,6 +111,8 @@ function mapVoucher(v: AdminVoucher): VoucherView {
     startsAt: v.starts_at,
     endsAt: v.ends_at,
     status: v.status,
+    isPublic: v.is_public ?? false,
+    collectLimit: v.collect_limit ?? 1,
   };
 }
 
@@ -162,6 +172,8 @@ const SEED_VOUCHERS: VoucherView[] = [
     startsAt: null,
     endsAt: null,
     status: 'active',
+    isPublic: true,
+    collectLimit: 1,
   },
 ];
 
@@ -259,6 +271,8 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
       startsAt: input.startsAt,
       endsAt: input.endsAt,
       status: 'active',
+      isPublic: input.isPublic,
+      collectLimit: input.collectLimit,
     };
     mockSaveVoucher(v);
     return { ...v, codes: [] };
@@ -272,6 +286,8 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
     usage_limit: input.usageLimit,
     starts_at: input.startsAt,
     ends_at: input.endsAt,
+    is_public: input.isPublic,
+    collect_limit: input.collectLimit,
     ...(input.codes && input.codes.length > 0 ? { codes: input.codes } : {}),
   })) as AdminVoucher & { codes?: AdminVoucherCode[] };
   return { ...mapVoucher(res), codes: (res.codes ?? []).map(mapCode) };
@@ -290,6 +306,8 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
         usageLimit: input.usageLimit,
         startsAt: input.startsAt,
         endsAt: input.endsAt,
+        isPublic: input.isPublic,
+        collectLimit: input.collectLimit,
       });
       mockSaveVoucher(v);
     }
@@ -304,6 +322,8 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
     usage_limit: input.usageLimit,
     starts_at: input.startsAt,
     ends_at: input.endsAt,
+    is_public: input.isPublic,
+    collect_limit: input.collectLimit,
   });
 }
 

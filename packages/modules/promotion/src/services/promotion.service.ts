@@ -1,14 +1,18 @@
 import { prefixedUlid } from "@mall/core";
+import { randomBytes } from "node:crypto";
 import {
   giftCardInsufficientBalance,
   giftCardNotFound,
   promotionNotFound,
   promotionRuleNotFound,
   voucherCodeNotFound,
+  voucherCollectLimitReached,
+  voucherNotCollectable,
   voucherNotFound,
   voucherUsageLimitReached,
 } from "../errors.js";
 import type {
+  CollectedVoucherDTO,
   ComputeDiscountsInput,
   ComputeDiscountsResult,
   CreateGiftCardInput,
@@ -24,6 +28,7 @@ import type {
   PromotionDTO,
   PromotionRepository,
   PromotionRuleDTO,
+  PublicVoucherDTO,
   UpdateGiftCardInput,
   UpdatePromotionInput,
   UpdateVoucherInput,
@@ -108,6 +113,100 @@ export class PromotionService implements IPromotionModuleService {
     await this.repo.softDeleteVoucher(id);
   }
 
+  // —— 领券（ADR-029）——
+
+  /**
+   * 店面可领的店铺券。
+   *
+   * 只返回「公开 + 启用 + 在有效期」的券；已领张数按顾客算，
+   * 未登录时全部按未领处理（点了领取再让他登录）。
+   */
+  async listPublicVouchers(customerId?: string | null): Promise<PublicVoucherDTO[]> {
+    // 营销总开关关着就不该露出券条：领了也用不了（computeDiscounts 同样按开关跳过）
+    const flags = await this.getFeatureFlags();
+    if (!flags.voucher) return [];
+    const now = new Date();
+    const { items } = await this.repo.listVouchers({ limit: 100, offset: 0 });
+    const collectable = items.filter(
+      (v) => v.is_public && v.status === "active" && inWindow(v.starts_at, v.ends_at, now),
+    );
+    const counts = new Map<string, number>();
+    if (customerId) {
+      for (const c of await this.repo.listVoucherCollectionsByCustomer(customerId)) {
+        counts.set(c.voucher_id, (counts.get(c.voucher_id) ?? 0) + 1);
+      }
+    }
+    return collectable
+      .map((v) => {
+        const collected = counts.get(v.id) ?? 0;
+        return { ...v, collected: collected > 0, collected_count: collected };
+      })
+      .sort((a, b) => Number(b.discount_value) - Number(a.discount_value));
+  }
+
+  /**
+   * 领取一张店铺券。
+   *
+   * 实现方式是「自动发一条专属券码」：核销链路（consumeVoucherCodes /
+   * releaseVoucherCodes / 溢出保护）一行都不用改，领券只是把码替顾客记下来。
+   *
+   * 重复领取是幂等的：已经领过的直接返回原码，不做「你已领取」的报错 ——
+   * 顾客连点两下不该看到红字。
+   */
+  async collectVoucher(
+    voucherId: string,
+    customerId: string,
+  ): Promise<{ code: string; alreadyCollected: boolean }> {
+    const voucher = await this.repo.findVoucherById(voucherId);
+    if (!voucher) throw voucherNotFound(voucherId);
+    const flags = await this.getFeatureFlags();
+    if (!flags.voucher) throw voucherNotCollectable(voucher.name);
+    if (!voucher.is_public || voucher.status !== "active" || !inWindow(voucher.starts_at, voucher.ends_at, new Date())) {
+      throw voucherNotCollectable(voucher.name);
+    }
+
+    const count = await this.repo.countVoucherCollections(voucherId, customerId);
+    // 已领到上限：如果手里还有一张，就把原码还给他（幂等，连点两下不该报错）
+    if (count >= voucher.collect_limit) {
+      const existing = await this.repo.findVoucherCollection(voucherId, customerId);
+      if (existing) return { code: existing.code, alreadyCollected: true };
+      throw voucherCollectLimitReached(voucher.collect_limit);
+    }
+
+    const code = await this.issueUniqueCode(voucherId);
+    await this.repo.insertVoucherCollection({
+      id: prefixedUlid("vcol"),
+      voucherId,
+      customerId,
+      codeId: code.id,
+    });
+    return { code: code.code, alreadyCollected: false };
+  }
+
+  async listCollectedVouchers(customerId: string): Promise<CollectedVoucherDTO[]> {
+    const list = await this.repo.listVoucherCollectionsByCustomer(customerId);
+    // 未用在最前，其次按领取时间倒序（后端已按领取时间倒序）
+    return [...list].sort((a, b) => {
+      if (a.status === b.status) return 0;
+      return a.status === "unused" ? -1 : 1;
+    });
+  }
+
+  /** 生成一条没被占用的券码（去掉易混的 I/O/0/1，顾客手输也不会错）。 */
+  private async issueUniqueCode(voucherId: string): Promise<VoucherCodeDTO> {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const bytes = randomBytes(10);
+      let raw = "";
+      for (const b of bytes) raw += alphabet[b % alphabet.length];
+      const exists = await this.repo.findVoucherCodeByCode(raw);
+      if (exists) continue;
+      return this.repo.insertVoucherCode({ voucherId, code: raw, id: prefixedUlid("vcode") });
+    }
+    // 8 次都撞上（几乎不可能）：宁可报错也不要发出重复码
+    throw voucherCodeNotFound("could not allocate unique code");
+  }
+
   // —— voucher_code ——
   async addVoucherCode(input: CreateVoucherCodeInput): Promise<VoucherCodeDTO> {
     await this.retrieveVoucher(input.voucherId);
@@ -143,6 +242,8 @@ export class PromotionService implements IPromotionModuleService {
       if (!vc) throw voucherCodeNotFound(code);
       const res = await this.repo.incrementVoucherCodeUsed(vc.id);
       if (res.exceeded) throw voucherUsageLimitReached(code);
+      // 领取来的券：核销后标记已用，顾客的「我的卡券」不会一直显示可使用
+      await this.repo.markCollectionUsedByCode(vc.id);
     }
   }
 
@@ -151,6 +252,8 @@ export class PromotionService implements IPromotionModuleService {
       const vc = await this.repo.findVoucherCodeByCode(code);
       if (!vc) continue; // 补偿幂等：券码已删则不回退
       await this.repo.releaseVoucherCodeUsed(vc.id);
+      // 补偿：退回未用（订单失败时券要还给顾客）
+      await this.repo.markCollectionUnusedByCode(vc.id);
     }
   }
 
@@ -490,4 +593,11 @@ function computeVoucherDiscount(voucher: VoucherDTO, subtotalMinor: bigint): big
   // percentage（bps）：round half up。
   const numerator = subtotalMinor * voucher.discount_value;
   return (numerator + 5000n) / 10000n;
+}
+
+/** 券是否在有效期内（起止都可空，空 = 不限）。 */
+function inWindow(startsAt: Date | null, endsAt: Date | null, now: Date): boolean {
+  if (startsAt && now < startsAt) return false;
+  if (endsAt && now > endsAt) return false;
+  return true;
 }

@@ -45,3 +45,16 @@ export function voucherUsageLimitReached(code: string): DomainError {
 export function voucherCodeAlreadyExists(code: string): DomainError {
   return new DomainError({ code: 30005, message: `Voucher code already exists: ${code}` });
 }
+
+// ---------------------------------------------------------------- *
+// 领券（ADR-029）
+// ---------------------------------------------------------------- *
+
+/** 这张券不在可领状态（未公开 / 已停用 / 不在有效期）。 */
+export function voucherNotCollectable(name: string): DomainError {
+  return new DomainError({ code: 30002, message: `「${name}」当前不可领取` });
+}
+
+export function voucherCollectLimitReached(limit: number): DomainError {
+  return new DomainError({ code: 30002, message: `每人限领 ${limit} 张，你已领完` });
+}

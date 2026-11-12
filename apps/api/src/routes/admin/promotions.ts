@@ -49,6 +49,10 @@ const createVoucherBody = z
     ends_at: z.string().datetime().nullable().optional(),
     // 管理员指定券码；不传则后端生成 1 个高熵码。
     codes: z.array(z.string().min(1)).max(100).optional(),
+    /** 店面公开可领（店铺券）；false = 只能凭码使用。 */
+    is_public: z.boolean().optional(),
+    /** 每人限领张数。 */
+    collect_limit: z.number().int().min(1).max(99).optional(),
   })
   .refine(
     (b) => b.discount_type !== "percentage" || b.discount_value <= MAX_PERCENTAGE_BPS,
@@ -64,6 +68,8 @@ const updateVoucherBody = z.object({
   usage_limit: z.number().int().nonnegative().nullable().optional(),
   starts_at: z.string().datetime().nullable().optional(),
   ends_at: z.string().datetime().nullable().optional(),
+  is_public: z.boolean().optional(),
+  collect_limit: z.number().int().min(1).max(99).optional(),
 });
 
 const addCodesBody = z.object({ codes: z.array(z.string().min(1)).min(1).max(100) });
@@ -85,6 +91,8 @@ function mapVoucher(v: VoucherDTO) {
     discount_value: v.discount_value,
     min_spent: v.min_spent,
     status: v.status,
+    is_public: v.is_public,
+    collect_limit: v.collect_limit,
   };
 }
 
@@ -508,6 +516,8 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         usageLimit: b.usage_limit,
         startsAt: b.starts_at ? new Date(b.starts_at) : b.starts_at === null ? null : undefined,
         endsAt: b.ends_at ? new Date(b.ends_at) : b.ends_at === null ? null : undefined,
+        isPublic: b.is_public,
+        collectLimit: b.collect_limit,
       });
       const codes = b.codes && b.codes.length > 0 ? b.codes : [generateVoucherCode()];
       for (const code of codes) {
@@ -558,6 +568,8 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         usageLimit: b.usage_limit,
         startsAt: b.starts_at !== undefined ? (b.starts_at ? new Date(b.starts_at) : null) : undefined,
         endsAt: b.ends_at !== undefined ? (b.ends_at ? new Date(b.ends_at) : null) : undefined,
+        isPublic: b.is_public,
+        collectLimit: b.collect_limit,
       });
       await deps.audit.record(
         auditEntry(req, {

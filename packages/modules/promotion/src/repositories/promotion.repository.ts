@@ -1,8 +1,9 @@
-import { and, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "@mall/core";
 import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
 import type {
+  CollectedVoucherDTO,
   CreateGiftCardInput,
   CreatePromotionInput,
   CreatePromotionRuleInput,
@@ -249,6 +250,8 @@ export class DrizzlePromotionRepository implements PromotionRepository {
         discountValue: input.discountValue,
         minSpent: input.minSpent ?? null,
         status: input.status ?? "active",
+        isPublic: input.isPublic ?? false,
+        collectLimit: input.collectLimit ?? 1,
       })
       .returning();
     return toVoucherDTO(rows[0]!);
@@ -289,6 +292,8 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     if (patch.discountValue !== undefined) set.discountValue = patch.discountValue;
     if (patch.minSpent !== undefined) set.minSpent = patch.minSpent;
     if (patch.status !== undefined) set.status = patch.status;
+    if (patch.isPublic !== undefined) set.isPublic = patch.isPublic;
+    if (patch.collectLimit !== undefined) set.collectLimit = patch.collectLimit;
     const rows = await this.db
       .update(schema.voucher)
       .set(set)
@@ -302,6 +307,90 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .update(schema.voucher)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.voucher.id, id));
+  }
+
+  // —— voucher_collection（ADR-029）——
+
+  async insertVoucherCollection(input: {
+    id: string;
+    voucherId: string;
+    customerId: string;
+    codeId: string;
+  }): Promise<void> {
+    await this.db.insert(schema.voucherCollection).values({
+      id: input.id,
+      voucherId: input.voucherId,
+      customerId: input.customerId,
+      codeId: input.codeId,
+    });
+  }
+
+  async countVoucherCollections(voucherId: string, customerId: string): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.voucherCollection)
+      .where(
+        and(
+          eq(schema.voucherCollection.voucherId, voucherId),
+          eq(schema.voucherCollection.customerId, customerId),
+        ),
+      );
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  async listVoucherCollectionsByCustomer(customerId: string): Promise<CollectedVoucherDTO[]> {
+    const rows = await this.db
+      .select({
+        collection: schema.voucherCollection,
+        code: schema.voucherCode,
+        voucher: schema.voucher,
+      })
+      .from(schema.voucherCollection)
+      .innerJoin(schema.voucherCode, eq(schema.voucherCode.id, schema.voucherCollection.codeId))
+      .innerJoin(schema.voucher, eq(schema.voucher.id, schema.voucherCollection.voucherId))
+      .where(
+        and(
+          eq(schema.voucherCollection.customerId, customerId),
+          isNull(schema.voucher.deletedAt),
+        ),
+      )
+      .orderBy(desc(schema.voucherCollection.collectedAt));
+    return rows.map((r) => toCollectedVoucherDTO(r));
+  }
+
+  async findVoucherCollection(
+    voucherId: string,
+    customerId: string,
+  ): Promise<{ code: string } | null> {
+    const rows = await this.db
+      .select({ code: schema.voucherCode.code })
+      .from(schema.voucherCollection)
+      .innerJoin(schema.voucherCode, eq(schema.voucherCode.id, schema.voucherCollection.codeId))
+      .where(
+        and(
+          eq(schema.voucherCollection.voucherId, voucherId),
+          eq(schema.voucherCollection.customerId, customerId),
+        ),
+      )
+      .orderBy(desc(schema.voucherCollection.collectedAt))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async markCollectionUsedByCode(codeId: string): Promise<void> {
+    await this.db
+      .update(schema.voucherCollection)
+      .set({ status: "used", usedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(eq(schema.voucherCollection.codeId, codeId), eq(schema.voucherCollection.status, "unused")),
+      );
+  }
+
+  async markCollectionUnusedByCode(codeId: string): Promise<void> {
+    await this.db
+      .update(schema.voucherCollection)
+      .set({ status: "unused", usedAt: null, updatedAt: new Date() })
+      .where(eq(schema.voucherCollection.codeId, codeId));
   }
 
   // —— voucher_code ——
@@ -614,6 +703,8 @@ function toVoucherDTO(r: typeof schema.voucher.$inferSelect): VoucherDTO {
     discount_value: r.discountValue,
     min_spent: r.minSpent,
     status: r.status as VoucherDTO["status"],
+    is_public: r.isPublic,
+    collect_limit: r.collectLimit,
   };
 }
 
@@ -649,5 +740,27 @@ function toGiftCardEventDTO(r: typeof schema.giftCardEvent.$inferSelect): GiftCa
     order_id: r.orderId,
     parameters: (r.parameters as Record<string, unknown> | null) ?? null,
     created_at: r.createdAt,
+  };
+}
+
+function toCollectedVoucherDTO(r: {
+  collection: typeof schema.voucherCollection.$inferSelect;
+  code: typeof schema.voucherCode.$inferSelect;
+  voucher: typeof schema.voucher.$inferSelect;
+}): CollectedVoucherDTO {
+  return {
+    id: r.collection.id,
+    voucher_id: r.collection.voucherId,
+    code: r.code.code,
+    name: r.voucher.name,
+    type: r.voucher.type as CollectedVoucherDTO["type"],
+    discount_type: r.voucher.discountType as CollectedVoucherDTO["discount_type"],
+    discount_value: r.voucher.discountValue,
+    min_spent: r.voucher.minSpent,
+    starts_at: r.voucher.startsAt,
+    ends_at: r.voucher.endsAt,
+    status: r.collection.status as CollectedVoucherDTO["status"],
+    collected_at: r.collection.collectedAt,
+    used_at: r.collection.usedAt,
   };
 }

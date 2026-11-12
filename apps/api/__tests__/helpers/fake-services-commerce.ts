@@ -86,8 +86,54 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     voucher: false,
     gift_card: false,
   };
+  // —— 领券（ADR-029）：内存版，够驱动路由层契约测试 ——
+  const collections = new Map<string, { voucherId: string; customerId: string; code: string }>();
   const promotion = {
     getFeatureFlags: async () => ({ ...featureFlags }),
+    listPublicVouchers: async (customerId?: string | null) => {
+      if (!featureFlags.voucher) return []; // 与真实服务一致：开关关着不露券
+      const mine = [...collections.values()].filter((c) => c.customerId === customerId);
+      return [...vouchers.values()]
+        .filter((v) => v.is_public === true && v.status === "active")
+        .map((v) => {
+          const count = mine.filter((c) => c.voucherId === v.id).length;
+          return { ...v, collected: count > 0, collected_count: count };
+        });
+    },
+    collectVoucher: async (voucherId: string, customerId: string) => {
+      const v = vouchers.get(voucherId);
+      if (!v) throw errors.notFound("voucher not found");
+      if (!featureFlags.voucher || v.is_public !== true) {
+        throw errors.validation("该券当前不可领取");
+      }
+      const key = `${voucherId}:${customerId}`;
+      const existing = collections.get(key);
+      if (existing) return { code: existing.code, alreadyCollected: true };
+      const code = `MOCKCODE${collections.size + 1}`;
+      collections.set(key, { voucherId, customerId, code });
+      return { code, alreadyCollected: false };
+    },
+    listCollectedVouchers: async (customerId: string) =>
+      [...collections.values()]
+        .filter((c) => c.customerId === customerId)
+        .map((c) => {
+          const v = vouchers.get(c.voucherId)!;
+          return {
+            id: `vcol_${c.code}`,
+            voucher_id: c.voucherId,
+            code: c.code,
+            name: v.name,
+            type: v.type,
+            discount_type: v.discount_type,
+            discount_value: v.discount_value,
+            min_spent: v.min_spent,
+            starts_at: v.starts_at,
+            ends_at: v.ends_at,
+            status: "unused",
+            collected_at: new Date(),
+            used_at: null,
+          };
+        }),
     setFeatureEnabled: async (feature: string, enabled: boolean) => {
       featureFlags[feature] = enabled;
     },
@@ -108,6 +154,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         discount_value: input.discountValue,
         min_spent: input.minSpent ?? null,
         status: "active",
+        is_public: input.isPublic === true,
+        collect_limit: input.collectLimit ?? 1,
       };
       vouchers.set(id, v);
       return v;
@@ -130,6 +178,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       if (patch.discountValue !== undefined) next.discount_value = patch.discountValue;
       if (patch.minSpent !== undefined) next.min_spent = patch.minSpent;
       if (patch.status !== undefined) next.status = patch.status;
+      if (patch.isPublic !== undefined) next.is_public = patch.isPublic;
+      if (patch.collectLimit !== undefined) next.collect_limit = patch.collectLimit;
       vouchers.set(id, next);
       return next;
     },

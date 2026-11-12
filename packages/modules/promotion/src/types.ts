@@ -61,6 +61,10 @@ export interface VoucherDTO {
   discount_value: bigint;
   min_spent: bigint | null;
   status: VoucherStatus;
+  /** 店面是否公开可领（店铺券）；false = 只能凭码使用（ADR-029）。 */
+  is_public: boolean;
+  /** 每个顾客最多领几张。 */
+  collect_limit: number;
 }
 
 export interface VoucherCodeDTO {
@@ -69,6 +73,32 @@ export interface VoucherCodeDTO {
   code: string;
   used: number;
   is_active: boolean;
+}
+
+/** 我的卡券（领取记录 + 券信息平铺，店面列表直接渲染）。 */
+export interface CollectedVoucherDTO {
+  id: string;
+  voucher_id: string;
+  /** 领取时发出的券码：结账时把它塞进购物车即可。 */
+  code: string;
+  name: string;
+  type: VoucherType;
+  discount_type: DiscountType;
+  discount_value: bigint;
+  min_spent: bigint | null;
+  starts_at: Date | null;
+  ends_at: Date | null;
+  /** unused | used；过期由 ends_at 现算（前端展示「已过期」）。 */
+  status: "unused" | "used";
+  collected_at: Date;
+  used_at: Date | null;
+}
+
+/** 店面公开券：券信息 + 当前顾客是否已领（未登录时为 false）。 */
+export interface PublicVoucherDTO extends VoucherDTO {
+  collected: boolean;
+  /** 已领张数（配合 collect_limit 展示「还可领 N 张」）。 */
+  collected_count: number;
 }
 
 export interface GiftCardDTO {
@@ -124,6 +154,10 @@ export interface CreateVoucherInput {
   discountValue: bigint;
   minSpent?: bigint | null;
   status?: VoucherStatus;
+  /** 店面公开可领（店铺券）。 */
+  isPublic?: boolean;
+  /** 每人限领。 */
+  collectLimit?: number;
 }
 export type UpdateVoucherInput = Partial<CreateVoucherInput>;
 
@@ -219,6 +253,22 @@ export interface PromotionRepository {
   updateVoucher(id: string, patch: UpdateVoucherInput): Promise<VoucherDTO | null>;
   softDeleteVoucher(id: string): Promise<void>;
 
+  // voucher_collection（ADR-029）
+  insertVoucherCollection(input: {
+    id: string;
+    voucherId: string;
+    customerId: string;
+    codeId: string;
+  }): Promise<void>;
+  countVoucherCollections(voucherId: string, customerId: string): Promise<number>;
+  listVoucherCollectionsByCustomer(customerId: string): Promise<CollectedVoucherDTO[]>;
+  /** 幂等领取用：该顾客在这张券上已有的码。 */
+  findVoucherCollection(voucherId: string, customerId: string): Promise<{ code: string } | null>;
+  /** 核销后把领取记录标为已用（我的卡券才不会一直显示可用）。 */
+  markCollectionUsedByCode(codeId: string): Promise<void>;
+  /** 补偿：退回未用。 */
+  markCollectionUnusedByCode(codeId: string): Promise<void>;
+
   // voucher_code
   insertVoucherCode(input: CreateVoucherCodeInput & { id: string }): Promise<VoucherCodeDTO>;
   findVoucherCodeById(id: string): Promise<VoucherCodeDTO | null>;
@@ -288,6 +338,14 @@ export interface IPromotionModuleService {
   listVouchers(q: ListQuery): Promise<{ items: VoucherDTO[]; count: number }>;
   updateVoucher(id: string, patch: UpdateVoucherInput): Promise<VoucherDTO>;
   deleteVoucher(id: string): Promise<void>;
+
+  // 领券（ADR-029）
+  /** 店面可领的店铺券（含当前顾客是否已领、已领几张）。 */
+  listPublicVouchers(customerId?: string | null): Promise<PublicVoucherDTO[]>;
+  /** 领取：生成一条专属券码并记领取人。重复领取直接返回已领的码。 */
+  collectVoucher(voucherId: string, customerId: string): Promise<{ code: string; alreadyCollected: boolean }>;
+  /** 我的卡券（未用在前）。 */
+  listCollectedVouchers(customerId: string): Promise<CollectedVoucherDTO[]>;
 
   // voucher_code
   addVoucherCode(input: CreateVoucherCodeInput): Promise<VoucherCodeDTO>;

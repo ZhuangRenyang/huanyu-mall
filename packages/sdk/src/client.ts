@@ -160,6 +160,12 @@ export function createStoreClient(opts: ClientOptions) {
       put(`/api/v1/store/carts/${cartId}/voucher-codes`, b),
     /** 输礼品卡码/清码：覆盖式设置（只传卡码凭证，抵扣金额由后端算，铁律 13）。 */
     getPromotionFeatures: () => get("/api/v1/store/promotions/features"),
+    /** 可领取的店铺券（匿名可读；登录后带 collected 标记）。 */
+    listPublicVouchers: () => get("/api/v1/store/vouchers"),
+    /** 领取一张店铺券（返回专属券码，重复领取幂等）。 */
+    collectVoucher: (id: string) => post(`/api/v1/store/vouchers/${id}/collect`, {}),
+    /** 我的卡券（未用在前）。 */
+    listMyVouchers: () => get("/api/v1/store/customer/vouchers"),
     setGiftCardCodes: (cartId: string, b: SetGiftCardCodesRequest) =>
       put(`/api/v1/store/carts/${cartId}/gift-card-codes`, b),
     listPaymentProviders: (cartId: string) =>

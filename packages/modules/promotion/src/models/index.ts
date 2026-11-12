@@ -78,6 +78,10 @@ export const voucher = pgTable("voucher", {
   discountValue: bigint("discount_value", { mode: "bigint" }).notNull(), // percentage=bps，fixed=minor unit
   minSpent: bigint("min_spent", { mode: "bigint" }), // 最低消费额 minor unit
   status: text("status").notNull().default("active"), // 'active' | 'disabled'
+  /** 是否在店面公开可领（店铺券）；false = 只能凭码使用（ADR-029）。 */
+  isPublic: boolean("is_public").notNull().default(false),
+  /** 每个顾客最多领几张。 */
+  collectLimit: integer("collect_limit").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -100,6 +104,33 @@ export const voucherCode = pgTable(
   (t) => [
     uniqueIndex("uq_voucher_code_code").on(t.code),
     index("idx_voucher_code_voucher").on(t.voucherId),
+  ],
+);
+
+/** 领取记录：谁在什么时候领了哪张券、换到哪条券码（ADR-029）。 */
+export const voucherCollection = pgTable(
+  "voucher_collection",
+  {
+    id: text("id").primaryKey(),
+    voucherId: text("voucher_id")
+      .notNull()
+      .references(() => voucher.id),
+    customerId: text("customer_id").notNull(),
+    /** 领取时发出的券码：核销仍走 voucher_code，这条只负责「这张券归谁」。 */
+    codeId: text("code_id")
+      .notNull()
+      .references(() => voucherCode.id),
+    /** unused | used；过期不落库，由 voucher.ends_at 现算。 */
+    status: text("status").notNull().default("unused"),
+    collectedAt: timestamp("collected_at", { withTimezone: true }).notNull().defaultNow(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    orderId: text("order_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_voucher_collection_customer").on(t.customerId, t.status),
+    index("idx_voucher_collection_voucher").on(t.voucherId, t.customerId),
   ],
 );
 

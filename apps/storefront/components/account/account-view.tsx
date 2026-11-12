@@ -5,6 +5,7 @@ import { LogOut, User } from 'lucide-react';
 import { Button, Skeleton } from '@mall/ui';
 import { AuthForm } from './auth-form';
 import { AddressBook } from './address-book';
+import { MyVouchers } from './my-vouchers';
 import { restoreSession, logout, type CustomerProfile } from '@/lib/account';
 
 /** 账户页：未登录=登录/注册；已登录=基本信息 + 地址簿。 */
@@ -61,6 +62,8 @@ export function AccountView() {
               </Button>
             </div>
           </section>
+
+          <MyVouchers />
 
           <AddressBook />
         </div>

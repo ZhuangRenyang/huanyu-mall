@@ -1,16 +1,27 @@
 import { ChevronRight } from 'lucide-react';
 import { ProductGallery } from '@mall/ui';
 import { ProductBuyBox } from './product-buy-box';
+import { VoucherStrip } from './vouchers/voucher-strip';
 import type { CatalogProduct } from '@/lib/mock-products';
+import type { PublicVoucherView } from '@/lib/vouchers';
 
 export interface ProductDetailViewProps {
   product: CatalogProduct;
   locale: string;
   channel: string;
+  /** 可领取的店铺券（无券时传空数组，券条自动隐藏）。 */
+  vouchers?: PublicVoucherView[];
+  voucherCurrency?: string;
 }
 
 /** PDP 布局：面包屑 → [画廊 | 购买区] → 详情 → 参数表。移动单列，桌面 7:5 非对称。 */
-export function ProductDetailView({ product, locale, channel }: ProductDetailViewProps) {
+export function ProductDetailView({
+  product,
+  locale,
+  channel,
+  vouchers = [],
+  voucherCurrency = 'CNY',
+}: ProductDetailViewProps) {
   const base = `/${locale}/${channel}`;
 
   return (
@@ -29,6 +40,12 @@ export function ProductDetailView({ product, locale, channel }: ProductDetailVie
         </div>
         <div className="lg:pt-2">
           <ProductBuyBox product={product} />
+          {/* 券条紧跟购买区：淘宝也是在价格下方直接挂「领取」 */}
+          <VoucherStrip
+            vouchers={vouchers}
+            currencyCode={voucherCurrency}
+            accountHref={`${base}/account`}
+          />
         </div>
       </div>
 

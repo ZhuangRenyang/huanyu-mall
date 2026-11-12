@@ -40,6 +40,12 @@ import { countryLabel, guessCountry, loadCheckoutCountries } from '@/lib/countri
 import { setCartCountry } from '@/lib/promo';
 import type { CheckoutCountry } from '@mall/sdk';
 import { getAccessToken, listAddresses, type AddressRecord } from '@/lib/account';
+import {
+  fetchMyVouchers,
+  voucherThresholdText,
+  voucherValueText,
+  type MyVoucherView,
+} from '@/lib/vouchers';
 import { ContactStep } from './contact-step';
 import { AddressStep } from './address-step';
 import { SavedAddressPicker } from './saved-address-picker';
@@ -72,6 +78,9 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   /** 已登录顾客的地址簿：进到地址步才有值（游客留空，不打扰）。 */
   const [savedAddresses, setSavedAddresses] = useState<AddressRecord[]>([]);
   const [pickedAddressId, setPickedAddressId] = useState<string | null>(null);
+  /** 我的卡券：登录顾客结账时直接选，不用记一串码（ADR-029）。 */
+  const [myVouchers, setMyVouchers] = useState<MyVoucherView[]>([]);
+  const [voucherCurrency, setVoucherCurrency] = useState('CNY');
   const headingRef = useRef<HTMLHeadingElement>(null);
   // mutatePromo 是 useCallback，直接依赖 form.country 会让每个按键都重建；
   // 用 ref 取最新国家，写码后重读合计时就能带上正确税率。
@@ -245,6 +254,25 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     };
   }, [live, step]);
 
+  /** 我的卡券：登录后拉一次，结账页直接列出可用券。 */
+  useEffect(() => {
+    if (!live) return;
+    if (!getAccessToken()) return;
+    let cancelled = false;
+    void fetchMyVouchers()
+      .then((res) => {
+        if (cancelled) return;
+        setMyVouchers(res.items);
+        setVoucherCurrency(res.currencyCode);
+      })
+      .catch(() => {
+        /* 拉不到券不影响下单，输码入口仍在 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live]);
+
   /** 选中一条已存地址：回填到表单，后续仍可临时改。 */
   const pickSavedAddress = (a: AddressRecord) => {
     setPickedAddressId(a.id);
@@ -326,6 +354,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     : subtotal.amountMinor + shippingMinor - discountMinor;
   const discountLines = live ? buildDiscountLines(promo) : [];
   const currency = subtotal.currencyCode;
+  /** 只列「未用且未过期」的券；已用的没必要占结账页的地方。 */
+  const usableVouchers = myVouchers.filter((v) => v.status === 'unused' && !v.expired);
 
   /**
    * 提交订单并发起支付（live 模式）。
@@ -581,16 +611,64 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
 
         <div className="space-y-4">
           {live && (
-            <PromoCodes
-              voucherCodes={promo.voucherCodes}
-              giftCardCodes={promo.giftCardCodes}
-              busy={promoBusy}
-              error={promoError}
-              onApplyVoucher={applyVoucher}
-              onApplyGiftCard={applyGiftCard}
-              onRemoveVoucher={removeVoucher}
-              onRemoveGiftCard={removeGiftCard}
-            />
+            <>
+              {usableVouchers.length > 0 && (
+                <section
+                  aria-labelledby="my-vouchers-heading"
+                  className="rounded-lg border border-border bg-card p-4"
+                >
+                  <h3 id="my-vouchers-heading" className="mb-2 text-sm font-semibold text-foreground">
+                    我的优惠券
+                  </h3>
+                  <ul className="space-y-2">
+                    {usableVouchers.map((v) => {
+                      const applied = promo.voucherCodes.includes(v.code);
+                      // 门槛不满足时不禁用「选」，但先告诉顾客差多少 —— 选了也会被后端拒
+                      const eligible = !v.minSpentMinor || subtotal.amountMinor >= v.minSpentMinor;
+                      return (
+                        <li key={v.id}>
+                          <button
+                            type="button"
+                            disabled={promoBusy}
+                            onClick={() => (applied ? removeVoucher(v.code) : applyVoucher(v.code))}
+                            className={
+                              applied
+                                ? 'flex w-full items-center justify-between gap-3 rounded-md border border-primary bg-primary-subtle px-3 py-2 text-left'
+                                : 'flex w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2 text-left hover:bg-muted'
+                            }
+                          >
+                            <span className="min-w-0">
+                              <span className="text-sm font-semibold text-accent-orange-deep">
+                                {voucherValueText(v, voucherCurrency)}
+                              </span>
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {voucherThresholdText(v.minSpentMinor, voucherCurrency)}
+                              </span>
+                              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                                {v.name}
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-xs">
+                              {applied ? '已使用' : eligible ? '使用' : '未满门槛'}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
+              <PromoCodes
+                voucherCodes={promo.voucherCodes}
+                giftCardCodes={promo.giftCardCodes}
+                busy={promoBusy}
+                error={promoError}
+                onApplyVoucher={applyVoucher}
+                onApplyGiftCard={applyGiftCard}
+                onRemoveVoucher={removeVoucher}
+                onRemoveGiftCard={removeGiftCard}
+              />
+            </>
           )}
           <OrderSummary
             items={items}
