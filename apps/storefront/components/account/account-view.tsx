@@ -5,7 +5,7 @@ import { LogOut, User } from 'lucide-react';
 import { Button, Skeleton } from '@mall/ui';
 import { AuthForm } from './auth-form';
 import { AddressBook } from './address-book';
-import { getSession, logout, type CustomerProfile } from '@/lib/account';
+import { restoreSession, logout, type CustomerProfile } from '@/lib/account';
 
 /** 账户页：未登录=登录/注册；已登录=基本信息 + 地址簿。 */
 export function AccountView() {
@@ -13,8 +13,16 @@ export function AccountView() {
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
 
   useEffect(() => {
-    setProfile(getSession());
-    setMounted(true);
+    let cancelled = false;
+    // 本地缓存先当「可能的身份」，再向服务端确认一次（token 过期会自动 refresh）
+    void restoreSession().then((next) => {
+      if (cancelled) return;
+      setProfile(next);
+      setMounted(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -36,8 +44,8 @@ export function AccountView() {
                     {profile.firstName ?? '我的账户'}
                   </h2>
                   <p className="text-sm text-muted-foreground">
-                    {profile.email}
-                    {profile.phone ? ` · ${profile.phone}` : ''}
+                    {profile.email ?? profile.phone ?? '未填写联系方式'}
+                    {profile.email && profile.phone ? ` · ${profile.phone}` : ''}
                   </p>
                 </div>
               </div>
@@ -45,8 +53,7 @@ export function AccountView() {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  logout();
-                  setProfile(null);
+                  void logout().then(() => setProfile(null));
                 }}
               >
                 <LogOut className="size-4" strokeWidth={2} aria-hidden="true" />

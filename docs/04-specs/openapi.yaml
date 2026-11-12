@@ -541,12 +541,37 @@ components:
 
     RegisterRequest:
       type: object
-      required: [email, password]
+      description: 邮箱注册（ADR-025）。手机号必填并验证，验证码可发邮箱也可发短信。
+      required: [email, password, phone, channel, code]
       properties:
         email: { type: string, format: email, example: "buyer@example.com" }
         password: { type: string, minLength: 8, example: "Password123" }
+        phone: { type: string, example: "13800001111", description: 必填：注册后也可用手机号登录 }
+        channel: { type: string, enum: [email, sms], example: email, description: 验证码发到哪 }
+        code: { type: string, minLength: 6, maxLength: 6, example: "123456" }
         first_name: { type: string, nullable: true }
         last_name: { type: string, nullable: true }
+
+    VerificationCodeRequest:
+      type: object
+      description: 发验证码（ADR-025）。channel=email 时 target 是邮箱，channel=sms 时是手机号。
+      required: [channel, target]
+      properties:
+        channel: { type: string, enum: [sms, email], default: sms }
+        target: { type: string, example: "13800001111" }
+        purpose: { type: string, enum: [login, register, reset], default: login }
+
+    PhoneLoginRequest:
+      type: object
+      required: [phone, code]
+      properties:
+        phone: { type: string, example: "13800001111" }
+        code: { type: string, minLength: 6, maxLength: 6, example: "123456" }
+
+    AuthSettings:
+      type: object
+      properties:
+        register_mode: { type: string, enum: [email, phone], example: email }
 
     LoginRequest:
       type: object
@@ -1132,10 +1157,30 @@ paths:
                   message: { type: string, example: "" }
         '401': { description: 验签失败(40005), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
+  /store/auth/settings:
+    get:
+      tags: [store-auth]
+      summary: 店铺开放的注册方式（店面据此渲染注册表单）
+      security: [{ publishableKey: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      register_mode: { type: string, enum: [email, phone], example: email }
+
   /store/auth/register:
     post:
       tags: [store-auth]
-      summary: 顾客注册
+      summary: 顾客注册（邮箱 + 密码 + 手机号 + 验证码）
+      description: 仅在 register_mode=email 时开放；手机号必须填写并验证。
       security: [{ publishableKey: [] }]
       requestBody:
         required: true
@@ -1152,9 +1197,61 @@ paths:
                 required: [code, data]
                 properties:
                   code: { type: integer, example: 0 }
-                  data: { $ref: '#/components/schemas/TokenPair' }
+                  data:
+                    type: object
+                    properties:
+                      identity_id: { type: string, example: aid_01H }
+                      customer_id: { type: string, example: cus_01H }
                   message: { type: string, example: "" }
-        '409': { description: 邮箱已存在(30002), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { description: 邮箱或手机号已存在(30002), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/auth/codes:
+    post:
+      tags: [store-auth]
+      summary: 发送验证码（短信或邮件）
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerificationCodeRequest' }
+      responses:
+        '200':
+          description: OK（开发环境带 dev_code 便于自测，生产不返回）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      sent: { type: boolean, example: true }
+                      dev_code: { type: string, nullable: true, example: "123456" }
+        '429': { description: 60 秒冷却 / 每日上限(60001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/auth/login/phone:
+    post:
+      tags: [store-auth]
+      summary: 手机号 + 验证码登录（手机号不存在时自动注册）
+      description: register_mode=phone 时注册即登录；register_mode=email 时仅限已有账号登录。
+      security: [{ publishableKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhoneLoginRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/TokenPair' }
 
   /store/auth/login:
     post:
@@ -1820,6 +1917,45 @@ paths:
                   code: { type: integer, example: 0 }
                   data: { $ref: '#/components/schemas/Settings' }
                   message: { type: string, example: "" }
+
+  /admin/settings/auth:
+    get:
+      tags: [admin]
+      summary: 读顾客账号设置（注册方式）
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AuthSettings' }
+    put:
+      tags: [admin]
+      summary: 切换顾客注册方式（email / phone），写审计
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                register_mode: { type: string, enum: [email, phone] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/AuthSettings' }
+        '403': { description: 需要 settings 权限(10003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
   /admin/settings/theme:
     put:

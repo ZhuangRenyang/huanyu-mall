@@ -27,3 +27,55 @@ export function weakPassword(reason: string): DomainError {
 export function passwordUnchanged(): DomainError {
   return new DomainError({ code: 20001, message: "新口令不能与当前口令相同" });
 }
+
+// ---------------------------------------------------------------- *
+// 手机号 / 验证码
+// ---------------------------------------------------------------- *
+
+export function phoneAlreadyRegistered(phone: string): DomainError {
+  return new DomainError({ code: 30002, message: `手机号已注册：${phone}` });
+}
+
+/** 验证码不正确（不区分「码错」与「码不存在」，避免被枚举）。 */
+export function invalidVerificationCode(): DomainError {
+  return new DomainError({ code: 20001, message: "验证码不正确或已失效" });
+}
+
+export function verificationCodeExpired(): DomainError {
+  return new DomainError({ code: 20001, message: "验证码已过期，请重新获取" });
+}
+
+/** 发送太频繁（60 秒一次 / 每日上限）。 */
+export function verificationTooFrequent(message: string): DomainError {
+  return new DomainError({ code: 60001, message });
+}
+
+/** 短信通道未配置：生产环境必须配，不能静默放行。 */
+export function smsNotConfigured(): DomainError {
+  return new DomainError({ code: 50001, message: "短信通道未配置，请联系商家" });
+}
+
+export function invalidPhone(phone: string): DomainError {
+  return new DomainError({ code: 20001, message: `手机号格式不正确：${phone}` });
+}
+
+/** 邮箱通道未配置：和短信同一口径，宁可不发也不假发。 */
+export function emailNotConfigured(): DomainError {
+  return new DomainError({ code: 50001, message: "邮件通道未配置，请联系商家" });
+}
+
+export function invalidEmail(email: string): DomainError {
+  return new DomainError({ code: 20001, message: `邮箱格式不正确：${email}` });
+}
+
+/** 店铺当前未开放这种注册方式（服务端守，界面隐藏只是体验）。 */
+export function registerModeDisabled(modeLabel: string): DomainError {
+  return new DomainError({
+    code: 20001,
+    message: `本店暂未开放${modeLabel}，请使用其他方式`,
+  });
+}
+
+export function invalidRegisterMode(): DomainError {
+  return new DomainError({ code: 20001, message: "注册方式只能是 email 或 phone" });
+}

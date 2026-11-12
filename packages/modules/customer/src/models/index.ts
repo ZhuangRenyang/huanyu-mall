@@ -5,7 +5,8 @@ export const customer = pgTable(
   "customer",
   {
     id: text("id").primaryKey(),
-    email: text("email").notNull(),
+    /** 手机号注册的顾客没有邮箱。 */
+    email: text("email"),
     firstName: text("first_name"),
     lastName: text("last_name"),
     phone: text("phone"),

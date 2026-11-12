@@ -4,7 +4,16 @@
  */
 import type { OrderLineSnapshot, OrderRecord } from './checkout';
 
-export type OrderStatusKey = 'awaiting_payment' | 'to_ship' | 'to_receive' | 'completed' | 'refunded';
+export type OrderStatusKey =
+  | 'awaiting_payment'
+  | 'to_ship'
+  | 'to_receive'
+  | 'completed'
+  /** 已申请退款，商家审核中（淘宝的「退款中」）。 */
+  | 'refund_pending'
+  | 'refunded'
+  /** 已取消/已关闭（未付款取消、支付失败关闭）。 */
+  | 'canceled';
 
 export type OrderBadgeVariant = 'neutral' | 'brand' | 'success' | 'warning' | 'info';
 
@@ -13,7 +22,9 @@ export const ORDER_STATUS_META: Record<OrderStatusKey, { label: string; variant:
   to_ship: { label: '待发货', variant: 'brand' },
   to_receive: { label: '待收货', variant: 'info' },
   completed: { label: '已完成', variant: 'success' },
+  refund_pending: { label: '退款中', variant: 'warning' },
   refunded: { label: '已退款', variant: 'neutral' },
+  canceled: { label: '已关闭', variant: 'neutral' },
 };
 
 export type TimelineKey = 'placed' | 'paid' | 'shipped' | 'delivered';
@@ -59,7 +70,20 @@ function buildTimeline(status: OrderStatusKey, createdAt: number): TimelineItem[
 }
 
 function recordToView(rec: OrderRecord): OrderView {
-  const status: OrderStatusKey = rec.status === 'paid' ? 'to_ship' : 'awaiting_payment';
+  const status: OrderStatusKey =
+    rec.status === 'paid'
+      ? 'to_ship'
+      : rec.status === 'shipped'
+        ? 'to_receive'
+        : rec.status === 'delivered'
+          ? 'completed'
+          : rec.status === 'refund_pending'
+            ? 'refund_pending'
+            : rec.status === 'refunded'
+              ? 'refunded'
+              : rec.status === 'canceled' || rec.status === 'failed'
+                ? 'canceled'
+                : 'awaiting_payment';
   return {
     id: rec.id,
     status,

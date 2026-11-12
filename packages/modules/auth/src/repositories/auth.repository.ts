@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -6,15 +6,48 @@ import type {
   AuthIdentityDTO,
   AuthRepository,
   AuthScope,
+  AuthSettingsDTO,
   IdentityStatus,
   RbacRoleDTO,
   RefreshTokenDTO,
+  RegisterMode,
+  VerificationCodeRow,
 } from "../types.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
+const SETTINGS_ID = "auth_default";
+const DEFAULT_SETTINGS: AuthSettingsDTO = { register_mode: "email" };
+
 export class DrizzleAuthRepository implements AuthRepository {
   constructor(private readonly db: Db) {}
+
+  // ---- 设置 ----
+
+  async getSettings(): Promise<AuthSettingsDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.authSettings)
+      .where(eq(schema.authSettings.id, SETTINGS_ID))
+      .limit(1);
+    const row = rows[0];
+    return row ? { register_mode: row.registerMode as RegisterMode } : null;
+  }
+
+  async upsertSettings(patch: Partial<AuthSettingsDTO>): Promise<AuthSettingsDTO> {
+    const current = (await this.getSettings()) ?? DEFAULT_SETTINGS;
+    const values = {
+      id: SETTINGS_ID,
+      registerMode: patch.register_mode ?? current.register_mode,
+      updatedAt: new Date(),
+    };
+    const rows = await this.db
+      .insert(schema.authSettings)
+      .values(values)
+      .onConflictDoUpdate({ target: schema.authSettings.id, set: values })
+      .returning();
+    return { register_mode: rows[0]!.registerMode as RegisterMode };
+  }
 
   async findIdentityByEmail(email: string, scope: AuthScope): Promise<AuthIdentityDTO | null> {
     const rows = await this.db
@@ -35,7 +68,9 @@ export class DrizzleAuthRepository implements AuthRepository {
   }
 
   async insertIdentity(input: {
-    email: string;
+    email?: string | null;
+    phone?: string | null;
+    phoneVerified?: boolean;
     scope: AuthScope;
     customerId?: string | null;
     adminUserId?: string | null;
@@ -44,13 +79,115 @@ export class DrizzleAuthRepository implements AuthRepository {
       .insert(schema.authIdentity)
       .values({
         id: prefixedUlid("aid"),
-        email: input.email,
+        email: input.email ?? null,
+        phone: input.phone ?? null,
+        phoneVerifiedAt: input.phoneVerified ? new Date() : null,
         scope: input.scope,
         customerId: input.customerId ?? null,
         adminUserId: input.adminUserId ?? null,
       })
       .returning();
     return toIdentityDTO(rows[0]!);
+  }
+
+  async findIdentityByPhone(phone: string): Promise<AuthIdentityDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.authIdentity)
+      .where(
+        and(
+          eq(schema.authIdentity.phone, phone),
+          eq(schema.authIdentity.scope, "customer"),
+          isNull(schema.authIdentity.deletedAt),
+        ),
+      )
+      .limit(1);
+    return rows[0] ? toIdentityDTO(rows[0]) : null;
+  }
+
+  async bindPhone(identityId: string, phone: string): Promise<void> {
+    await this.db
+      .update(schema.authIdentity)
+      .set({ phone, phoneVerifiedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.authIdentity.id, identityId));
+  }
+
+  // ---- 验证码 ----
+
+  async insertVerificationCode(input: {
+    id: string;
+    channel: string;
+    target: string;
+    purpose: string;
+    codeHash: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    await this.db.insert(schema.verificationCode).values({
+      id: input.id,
+      channel: input.channel,
+      target: input.target,
+      purpose: input.purpose,
+      codeHash: input.codeHash,
+      expiresAt: input.expiresAt,
+    });
+  }
+
+  async findLatestVerificationCode(
+    target: string,
+    purpose: string,
+  ): Promise<VerificationCodeRow | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.verificationCode)
+      .where(
+        and(
+          eq(schema.verificationCode.target, target),
+          eq(schema.verificationCode.purpose, purpose),
+          isNull(schema.verificationCode.consumedAt),
+        ),
+      )
+      .orderBy(desc(schema.verificationCode.createdAt))
+      .limit(1);
+    return rows[0] ? toVerificationRow(rows[0]) : null;
+  }
+
+  async consumeVerificationCode(id: string): Promise<boolean> {
+    // 条件更新：并发下只有一次能抢到，避免同一验证码被用两次
+    const rows = await this.db
+      .update(schema.verificationCode)
+      .set({ consumedAt: new Date() })
+      .where(
+        and(eq(schema.verificationCode.id, id), isNull(schema.verificationCode.consumedAt)),
+      )
+      .returning({ id: schema.verificationCode.id });
+    return rows.length > 0;
+  }
+
+  async incrementVerificationAttempts(id: string): Promise<number> {
+    const rows = await this.db
+      .update(schema.verificationCode)
+      .set({ attempts: sql`(${schema.verificationCode.attempts}::int + 1)::text` })
+      .where(eq(schema.verificationCode.id, id))
+      .returning({ attempts: schema.verificationCode.attempts });
+    return Number(rows[0]?.attempts ?? 0);
+  }
+
+  async countVerificationCodesSince(
+    target: string,
+    purpose: string,
+    since: Date,
+  ): Promise<number> {
+    const rows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.verificationCode)
+      .where(
+        and(
+          eq(schema.verificationCode.target, target),
+          eq(schema.verificationCode.purpose, purpose),
+          gte(schema.verificationCode.createdAt, since),
+        ),
+      );
+    return Number(rows[0]?.count ?? 0);
   }
 
   async insertCredential(identityId: string, passwordHash: string): Promise<void> {
@@ -173,11 +310,28 @@ export class DrizzleAuthRepository implements AuthRepository {
 function toIdentityDTO(r: typeof schema.authIdentity.$inferSelect): AuthIdentityDTO {
   return {
     id: r.id,
-    email: r.email,
+    email: r.email ?? null,
+    phone: r.phone ?? null,
     scope: r.scope as AuthScope,
     customer_id: r.customerId ?? null,
     admin_user_id: r.adminUserId ?? null,
     status: r.status as IdentityStatus,
+  };
+}
+
+function toVerificationRow(
+  r: typeof schema.verificationCode.$inferSelect,
+): VerificationCodeRow {
+  return {
+    id: r.id,
+    channel: r.channel,
+    target: r.target,
+    purpose: r.purpose,
+    code_hash: r.codeHash,
+    expires_at: r.expiresAt.toISOString(),
+    attempts: Number(r.attempts),
+    consumed_at: r.consumedAt ? r.consumedAt.toISOString() : null,
+    created_at: r.createdAt.toISOString(),
   };
 }
 

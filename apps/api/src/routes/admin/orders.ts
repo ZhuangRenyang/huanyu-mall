@@ -1,13 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PaginationQuerySchema } from "@mall/types";
+import { errors } from "@mall/core";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { mapAdminOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
-import { refundOrderWorkflow } from "@mall/workflows";
 
-const refundBody = z.object({ amount_minor: z.number().int().positive(), reason: z.string().optional() });
+/**
+ * 商家发起退款只需要理由：金额一律取订单实付。
+ * 让客户端传金额，等于给「退多退少」开了口子。
+ */
+const refundBody = z.object({ reason: z.string().min(2).max(500) });
 const createFulfillmentBody = z.object({
   items: z.array(z.object({ order_line_item_id: z.string(), quantity: z.number().int().min(1) })).min(1),
   reservation_ids: z.array(z.string()).optional(),
@@ -164,11 +168,13 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
   });
 
   /**
-   * 商家主动退款（订单详情里的「退款」按钮）。
+   * 商家在订单详情发起退款（建申请单，不直接打款）。
    *
-   * 走的是和「退款管理」同一条链路：建申请单（source=merchant）→ 立刻执行打款。
-   * 之前这里**只把订单标成 refunded，没有任何打款动作** —— 钱没退、账已平，
-   * 属于最危险的那种「看起来做完了」。
+   * **所有退款都必须经过后台人工审核**：这里只把单据放进「退款管理 → 待处理」，
+   * 订单同时转「退款中」并冻结发货。真正打款只发生在
+   * `POST /admin/refund-requests/:id/approve`。
+   *
+   * 订单详情也直接退的话，等于给「退款」开了两条路，审核就成了可选步骤。
    */
   app.post(
     "/api/v1/admin/orders/:id/refunds",
@@ -179,36 +185,22 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
       const before = await deps.services.order.retrieveOrder(id);
 
       const request = await deps.services.order.createRefundRequest(id, {
-        amountMinor: BigInt(b.amount_minor),
-        reason: b.reason ?? "admin refund",
+        // 金额取订单实付，不接受客户端传值
+        amountMinor: before.total_minor,
+        reason: b.reason,
         source: "merchant",
       });
-      const { result } = await deps.workflow.run(
-        refundOrderWorkflow,
-        {
-          orderId: id,
-          refundRequestId: request.id,
-          amountMinor: Number(request.amount_minor),
-          reason: request.reason,
-        },
-        { idempotencyKey: `refund-approve:${request.id}` },
-      );
-      const settled = await deps.services.order.approveRefundRequest(
-        request.id,
-        (result as { refundId: string }).refundId,
-        null,
-      );
       const after = await deps.services.order.retrieveOrder(id);
       await deps.audit.record(
         auditEntry(req, {
-          action: "order.refund",
+          action: "order.refund.request",
           entityType: "order",
           entityId: id,
           before,
-          after: { refund: settled, order: after },
+          after: { refund: request, order: after },
         }),
       );
-      reply.ok({ refund: settled, order: mapAdminOrder(after) });
+      reply.code(201).ok({ refund: request, order: mapAdminOrder(after) });
     },
   );
 
@@ -237,6 +229,19 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof createFulfillmentBody>;
+
+      /*
+       * 退款审核中禁止发货。
+       * 只把订单标成「退款中」却在别处照常发货，等于审核没生效 —— 货发了、钱也退了。
+       */
+      const order = await deps.services.order.retrieveOrder(id);
+      if (order.status === "refund_pending") {
+        throw errors.invalidState("订单正在退款审核中，不能发货。请先在「退款管理」处理退款申请");
+      }
+      if (order.status === "refunded") {
+        throw errors.invalidState("订单已退款，不能发货");
+      }
+
       const fulfillment = await deps.services.fulfillment.createFulfillment({
         orderId: id,
         stockLocationId: b.stock_location_id,
@@ -261,6 +266,19 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof addShipmentBody>;
+
+      // 发货单可能在建单时已存在（那时还没申请退款），填运单号才是真正发货 —— 同样要拦
+      const fulfillment = await deps.services.fulfillment.findFulfillment(id);
+      if (fulfillment) {
+        const order = await deps.services.order.retrieveOrder(fulfillment.order_id);
+        if (order.status === "refund_pending") {
+          throw errors.invalidState("订单正在退款审核中，不能发货。请先在「退款管理」处理退款申请");
+        }
+        if (order.status === "refunded") {
+          throw errors.invalidState("订单已退款，不能发货");
+        }
+      }
+
       const shipment = await deps.services.fulfillment.addShipment(id, {
         carrierName: b.carrier_name,
         trackingNumber: b.tracking_number,

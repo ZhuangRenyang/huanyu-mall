@@ -283,6 +283,8 @@ export interface IFulfillmentModuleService {
 
   /** 按订单列出发货单（后台展示「已发哪些仓」）。 */
   listByOrder(orderId: string): Promise<FulfillmentDTO[]>;
+  /** 查单个发货单（发货前反查所属订单，判断是否在退款审核中）。 */
+  findFulfillment(id: string): Promise<FulfillmentDTO | null>;
   calculateShippingPrice(
     optionId: string,
     ctx: ShippingPriceContext,

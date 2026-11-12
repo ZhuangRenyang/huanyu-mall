@@ -134,8 +134,13 @@ export interface PutPricesRequest {
 }
 
 /** 全额退款（一期只全额）。 */
+/**
+ * 发起退款申请（商家主动）。
+ *
+ * 不含金额：金额由服务端按订单实付取（铁律 13），客户端传金额等于给「退多退少」开口子。
+ * 提交后进入「退款管理 → 待处理」，审核通过才真正打款。
+ */
 export interface CreateRefundRequest {
-  amount_minor: number;
   reason: string;
 }
 

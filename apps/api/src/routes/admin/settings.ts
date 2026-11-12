@@ -21,6 +21,17 @@ const providerConfigBody = z.object({
   enabled_channels: z.array(z.string()).optional(),
 });
 
+/**
+ * 顾客账号设置（ADR-025）。
+ *
+ * register_mode = email：邮箱 + 密码注册（Shopify 路线，独立站常用）
+ * register_mode = phone：手机号 + 验证码，注册即登录（淘宝路线）
+ * 两种都是成熟做法，面国内还是面海外由商家自己定 —— 所以是店铺设置，不是代码常量。
+ */
+const authSettingsBody = z.object({
+  register_mode: z.enum(["email", "phone"]).optional(),
+});
+
 /** Admin 设置（openapi 1664/1703/1726）+ provider 配置读写。settings 需 admin 权限（staff → 403）。 */
 export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
   const auth = makeAuthHelpers(deps);
@@ -65,6 +76,31 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
         }),
       );
       reply.ok({ theme });
+    },
+  );
+
+  app.get("/api/v1/admin/settings/auth", { preHandler: guard }, async (_req, reply) => {
+    reply.ok(await deps.services.auth.getSettings());
+  });
+
+  app.put(
+    "/api/v1/admin/settings/auth",
+    { preHandler: guard, schema: { body: authSettingsBody } },
+    async (req, reply) => {
+      const before = await deps.services.auth.getSettings();
+      const after = await deps.services.auth.updateSettings(
+        req.body as z.infer<typeof authSettingsBody>,
+      );
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "auth.settings.update",
+          entityType: "auth_settings",
+          entityId: "auth_default",
+          before,
+          after,
+        }),
+      );
+      reply.ok(after);
     },
   );
 

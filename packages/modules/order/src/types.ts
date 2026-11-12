@@ -9,6 +9,8 @@ export type OrderStatus =
   | "delivered"
   | "completed"
   | "canceled"
+  /** 退款审核中：买家已申请，等待商家同意/拒绝（淘宝的「退款中」）。 */
+  | "refund_pending"
   | "refunded";
 
 export type PaymentStatus = "unpaid" | "authorized" | "captured" | "refunded";
@@ -147,6 +149,8 @@ export interface RefundRequestDTO {
   reviewed_at: string | null;
   /** 资金流水 id；未执行退款时为空。 */
   refund_id: string | null;
+  /** 申请时的订单状态：拒绝/撤销时据此精确恢复。 */
+  order_status_before: OrderStatus | null;
   created_at: string;
   /** 列表展示用：下单邮箱（join 出来，省得前端再查一次）。 */
   order_email?: string | null;
@@ -154,8 +158,25 @@ export interface RefundRequestDTO {
 
 export interface RefundRequestQuery {
   status?: RefundRequestStatus;
+  /** 只看某张订单的申请（店面顾客查自己的进度用）。 */
+  orderId?: string;
   limit?: number;
   offset?: number;
+}
+
+/**
+ * 客户维度的订单汇总（后台客户列表）。
+ *
+ * 口径：只算**已付款且未退款**的订单（paid / partially_fulfilled / fulfilled / delivered / completed）。
+ * 把已取消、退款中、已退款算进「累计消费」，商家会以为客户花了很多钱，
+ * 实际那些钱要么没付、要么已经退回去了。
+ */
+export interface CustomerOrderSummaryDTO {
+  customer_id: string;
+  order_count: number;
+  total_spent_minor: bigint;
+  /** 最近一次下单时间（ISO），没下过单为 null。 */
+  last_order_at: string | null;
 }
 
 export interface OrderQuery {
@@ -164,6 +185,8 @@ export interface OrderQuery {
   status?: OrderStatus;
   /** 按购物车反查订单（支付侧复用 workflow 建好的支付集合时用）。 */
   cartId?: string;
+  /** 只看某个顾客的订单（店面「我的订单」）。 */
+  customerId?: string;
 }
 
 export interface OrderRepository {
@@ -179,11 +202,14 @@ export interface OrderRepository {
     currencyCode: string;
     reason: string;
     source: RefundRequestSource;
+    orderStatusBefore: OrderStatus;
   }): Promise<RefundRequestDTO>;
   findRefundRequest(id: string): Promise<RefundRequestDTO | null>;
   /** 该订单是否已有待处理申请（唯一索引也拦，但先给友好错误）。 */
   findPendingRefundRequest(orderId: string): Promise<RefundRequestDTO | null>;
   listRefundRequests(q: RefundRequestQuery): Promise<{ items: RefundRequestDTO[]; count: number }>;
+  /** 各状态单据数（退款管理页签角标，一次 GROUP BY）。 */
+  countRefundRequestsByStatus(): Promise<Record<string, number>>;
   updateRefundRequest(
     id: string,
     patch: { status: RefundRequestStatus; reviewNote?: string | null; refundId?: string | null },
@@ -243,6 +269,10 @@ export interface OrderRepository {
   listLineItems(orderId: string): Promise<OrderLineItemDTO[]>;
   findShippingMethod(orderId: string): Promise<OrderShippingMethodDTO | null>;
   list(q: OrderQuery): Promise<{ items: OrderDTO[]; count: number }>;
+  /** 批量取行项（列表页要显示商品，禁 N+1）。 */
+  listLineItemsByOrderIds(orderIds: string[]): Promise<OrderLineItemDTO[]>;
+  /** 按客户聚合订单数与消费额（一次 GROUP BY，禁 N+1）。 */
+  summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]>;
   updateStatus(id: string, status: OrderStatus): Promise<void>;
   updatePaymentStatus(id: string, paymentStatus: PaymentStatus): Promise<void>;
 }
@@ -253,14 +283,22 @@ export interface IOrderModuleService {
   /** 写商家备注（仅后台可见）；传 null/空串即清空。 */
   setMerchantNote(id: string, note: string | null): Promise<OrderDetailDTO>;
   listOrders(q: OrderQuery): Promise<{ items: OrderDTO[]; count: number }>;
+  /** 按客户聚合订单数与消费额（后台客户列表）。 */
+  summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]>;
+  /** 列表 + 行项（店面「我的订单」要显示商品；一次批量取，不做 N+1）。 */
+  listOrderSummaries(
+    q: OrderQuery,
+  ): Promise<{ items: Array<OrderDTO & { items: OrderLineItemDTO[] }>; count: number }>;
   transition(id: string, to: OrderStatus, meta: { actor: Actor; reason?: string }): Promise<OrderDTO>;
   /** 创建退款申请单（买家申请或商家主动），落库为 pending。 */
   createRefundRequest(
     orderId: string,
     input: { amountMinor: bigint; reason: string; source: RefundRequestSource; customerId?: string | null },
   ): Promise<RefundRequestDTO>;
-  /** 后台退款列表（按状态筛选，分页）。 */
-  listRefundRequests(q: RefundRequestQuery): Promise<{ items: RefundRequestDTO[]; count: number }>;
+  /** 后台退款列表（按状态筛选，分页），附各状态计数供页签角标使用。 */
+  listRefundRequests(
+    q: RefundRequestQuery,
+  ): Promise<{ items: RefundRequestDTO[]; count: number; counts: Record<string, number> }>;
   findRefundRequest(id: string): Promise<RefundRequestDTO | null>;
   /** 同意退款：退款执行成功后回写资金流水 id 与状态。 */
   approveRefundRequest(id: string, refundId: string, reviewNote?: string | null): Promise<RefundRequestDTO>;

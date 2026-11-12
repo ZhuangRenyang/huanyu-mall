@@ -4,6 +4,13 @@ import { defineStep, defineWorkflow, StepResponse, type WorkflowRegistry } from 
 export interface CartCompleteInput {
   cartId: string;
   email: string;
+  /**
+   * 下单顾客（登录后才有）。
+   *
+   * 之前这里根本没有这个字段：顾客登录了，订单也是游客单，
+   * 「我的订单」永远查不到东西。归属靠 token 里的 customerId，不信客户端传值。
+   */
+  customerId?: string | null;
   currencyCode: string;
   channelId: string;
   regionId: string;

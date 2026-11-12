@@ -5,6 +5,7 @@ import {
   SEED_ORDERS,
   SEED_PRODUCTS,
   type AdminOrder,
+  type AdminRefundRequest,
   type AdminSession,
   type ProductDraft,
   type ProviderConfig,
@@ -15,6 +16,7 @@ const KEYS = {
   session: 'admin:session',
   products: 'admin:products',
   orders: 'admin:orders',
+  refunds: 'admin:refund-requests',
   theme: 'admin:theme',
   providers: 'admin:providers',
   password: 'admin:password',
@@ -217,10 +219,72 @@ export function shipOrder(
   });
 }
 
-export function refundOrder(id: string): void {
-  updateOrder(id, (o) => {
+/**
+ * mock：发起退款**申请**（不是直接退款）。
+ *
+ * 演示模式也必须走「申请 → 待处理 → 审核」这条路，
+ * 否则界面上点一下钱就退了，和真实流程说的不是一回事。
+ */
+export function requestRefund(
+  orderId: string,
+  reason: string,
+  source: 'customer' | 'merchant',
+): AdminRefundRequest {
+  const order = getOrder(orderId);
+  const before = order?.orderStatus ?? 'paid';
+  const req: AdminRefundRequest = {
+    id: `rfr_${Date.now().toString(36)}`,
+    orderId,
+    customerEmail: order?.customerEmail ?? null,
+    amountMinor: order?.totalMinor ?? 0,
+    currencyCode: order?.currency ?? 'CNY',
+    reason,
+    source,
+    status: 'pending',
+    reviewNote: null,
+    createdAt: new Date().toISOString(),
+    refundId: null,
+    orderStatusBefore: before,
+  };
+  const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  write(KEYS.refunds, [req, ...list]);
+  updateOrder(orderId, (o) => {
+    o.orderStatus = 'refund_pending';
+  });
+  return req;
+}
+
+/** mock：同意退款 → 单据通过、订单已退款。 */
+export function approveRefund(id: string): void {
+  const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  const req = list.find((r) => r.id === id);
+  if (!req || req.status !== 'pending') return;
+  req.status = 'approved';
+  req.refundId = `rfd_${Date.now().toString(36)}`;
+  write(KEYS.refunds, list);
+  updateOrder(req.orderId, (o) => {
+    o.orderStatus = 'refunded';
     o.paymentStatus = 'refunded';
   });
+}
+
+/** mock：拒绝退款 → 订单回到申请前的状态。 */
+export function rejectRefund(id: string, note: string): void {
+  const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  const req = list.find((r) => r.id === id);
+  if (!req || req.status !== 'pending') return;
+  req.status = 'rejected';
+  req.reviewNote = note.trim();
+  write(KEYS.refunds, list);
+  updateOrder(req.orderId, (o) => {
+    o.orderStatus = req.orderStatusBefore ?? 'paid';
+  });
+}
+
+/** mock：退款单列表（按状态过滤，倒序）。 */
+export function listRefunds(status?: string): AdminRefundRequest[] {
+  const all = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  return status ? all.filter((r) => r.status === status) : all;
 }
 
 // ---- 主题 ----

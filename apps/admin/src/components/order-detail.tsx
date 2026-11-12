@@ -17,7 +17,7 @@ import {
   getFulfillmentPlan,
   listOrderFulfillments,
   listStockLocations,
-  refundOrder,
+  requestOrderRefund,
   shipOrder,
   setOrderNote,
   listOrderLogs,
@@ -102,6 +102,7 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const [shipError, setShipError] = useState<string | null>(null);
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundInput, setRefundInput] = useState('');
+  const [refundReason, setRefundReason] = useState('');
   const [refundError, setRefundError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   /** 商家备注：draft 与已存值分开，避免一边打字一边被刷新覆盖。 */
@@ -119,7 +120,11 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const idTail = order.id.slice(-4);
 
   // 后端按预留算出「每个仓发哪些行、各几件」；前端不再选仓、不再分行。
-  const canShip = order.paymentStatus === 'paid' && (!planLoaded || plans.length > 0);
+  /** 退款审核中 / 已退款：两个状态都不能发货。 */
+  const refundPending = order.orderStatus === 'refund_pending';
+  const refunded = order.orderStatus === 'refunded' || order.paymentStatus === 'refunded';
+  const canShip =
+    order.paymentStatus === 'paid' && !refundPending && !refunded && (!planLoaded || plans.length > 0);
   const locationName = (id: string) => locations.find((l) => l.id === id)?.name ?? id;
 
   // 备注跟着订单走：切换订单要重置输入，否则会把上一单的备注写到这一单
@@ -223,16 +228,26 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
       .join('、');
 
   const doRefund = async () => {
+    if (refundReason.trim().length < 2) {
+      setRefundError('请填写退款原因（至少 2 个字），顾客会在店面看到');
+      return;
+    }
     if (refundInput.trim() !== idTail) {
       setRefundError(`请输入订单号后四位「${idTail}」以确认`);
       return;
     }
-    await refundOrder(order.id);
-    setRefundOpen(false);
-    setRefundInput('');
-    setRefundError(null);
-    flash('已发起全额退款');
-    onUpdated();
+    try {
+      await requestOrderRefund(order.id, refundReason.trim());
+      setRefundOpen(false);
+      setRefundInput('');
+      setRefundReason('');
+      setRefundError(null);
+      // 不写「已退款」：钱还没动，要商家去退款管理审核通过才退
+      flash('已提交退款申请，请到「退款管理」审核');
+      onUpdated();
+    } catch (err) {
+      setRefundError(err instanceof Error ? err.message : '提交失败');
+    }
   };
 
   return (
@@ -241,6 +256,7 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Badge variant={pay.variant}>{pay.label}</Badge>
           <Badge variant={ful.variant}>{ful.label}</Badge>
+          {refundPending && <Badge variant="warning">退款审核中</Badge>}
           {toast && (
             <span className="text-xs text-success" role="status">
               {toast}
@@ -333,22 +349,38 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
         </section>
       )}
 
-      <div className="flex flex-wrap gap-2 border-t border-border pt-4">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
         {canShip ? (
           <Button size="sm" onClick={() => void openShip()}>
             <Truck className="size-4" strokeWidth={2} aria-hidden="true" />
             发货
           </Button>
+        ) : refundPending ? (
+          <span className="self-center text-xs text-warning" role="status">
+            退款审核中，暂停发货
+          </span>
+        ) : refunded ? (
+          <span className="self-center text-xs text-muted-foreground" role="status">
+            已退款
+          </span>
         ) : (
           <span className="self-center text-xs text-muted-foreground" role="status">
             已全部发货
           </span>
         )}
-        {order.paymentStatus === 'paid' && (
+
+        {/* 有退款在审时不再给「发起退款」：同订单只允许一条待处理申请 */}
+        {order.paymentStatus === 'paid' && !refundPending && !refunded && (
           <Button size="sm" variant="destructive" onClick={() => setRefundOpen(true)}>
             <RotateCcw className="size-4" strokeWidth={2} aria-hidden="true" />
-            全额退款
+            发起退款
           </Button>
+        )}
+
+        {refundPending && (
+          <span className="text-xs text-muted-foreground">
+            是否退款请在「订单 → 退款管理」审核（同意后才打款）
+          </span>
         )}
       </div>
 
@@ -416,29 +448,43 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
       >
         <DialogContent>
           <DialogHeader className="mb-3">
-            <DialogTitle>确认全额退款</DialogTitle>
+            <DialogTitle>发起退款申请</DialogTitle>
           </DialogHeader>
-          <p className="mb-3 text-sm text-muted-foreground">一期仅支持全额退款，退款将原路返回至顾客支付账户。</p>
-          <TextField
-            id="refund-confirm"
-            label={`输入订单号后四位「${idTail}」以确认`}
-            value={refundInput}
-            onChange={(e) => setRefundInput(e.target.value)}
-            error={refundError ?? undefined}
-          />
+          <p className="mb-3 text-sm text-muted-foreground">
+            提交后订单进入「退款审核中」并暂停发货，需在「退款管理」审核通过才会打款
+            {formatMoney(order.totalMinor, order.currency)} 给顾客。一期仅支持全额退款。
+          </p>
+          <div className="space-y-3">
+            <TextAreaField
+              id="refund-reason"
+              label="退款原因（顾客可见）"
+              required
+              placeholder="如：商品缺货 / 与顾客协商一致"
+              value={refundReason}
+              onChange={(e) => setRefundReason(e.target.value)}
+            />
+            <TextField
+              id="refund-confirm"
+              label={`输入订单号后四位「${idTail}」以确认`}
+              value={refundInput}
+              onChange={(e) => setRefundInput(e.target.value)}
+              error={refundError ?? undefined}
+            />
+          </div>
           <DialogFooter>
             <Button
               variant="ghost"
               onClick={() => {
                 setRefundOpen(false);
                 setRefundInput('');
+                setRefundReason('');
                 setRefundError(null);
               }}
             >
               取消
             </Button>
             <Button variant="destructive" onClick={doRefund}>
-              确认退款 {formatMoney(order.totalMinor, order.currency)}
+              提交申请
             </Button>
           </DialogFooter>
         </DialogContent>

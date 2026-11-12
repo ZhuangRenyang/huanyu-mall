@@ -3,10 +3,12 @@ import type {
   AuthIdentityDTO,
   AuthRepository,
   AuthScope,
+  AuthSettingsDTO,
   CustomerPort,
   RbacRoleDTO,
   RefreshTokenDTO,
   TokenBlacklist,
+  VerificationCodeRow,
 } from "../../src/types.js";
 
 /** 内存版 AuthRepository：覆盖 credential 更新与按 identity 批量撤销 refresh_token。 */
@@ -17,7 +19,21 @@ export class InMemoryAuthRepository implements AuthRepository {
   readonly roles = new Map<string, RbacRoleDTO>();
   readonly userRoles: Array<{ adminUserId: string; roleId: string }> = [];
   readonly refreshTokens = new Map<string, RefreshTokenDTO>();
+  /** 验证码：按插入顺序存，校验时取最新一条。 */
+  readonly codes: VerificationCodeRow[] = [];
+  /** 店铺级设置：内存里就是一条，null 表示从未写过（走默认值）。 */
+  settings: AuthSettingsDTO | null = null;
   private counter = 0;
+
+  async getSettings(): Promise<AuthSettingsDTO | null> {
+    return this.settings;
+  }
+
+  async upsertSettings(patch: Partial<AuthSettingsDTO>): Promise<AuthSettingsDTO> {
+    const current = this.settings ?? { register_mode: "email" };
+    this.settings = { register_mode: patch.register_mode ?? current.register_mode };
+    return this.settings;
+  }
 
   async findIdentityByEmail(email: string, scope: AuthScope): Promise<AuthIdentityDTO | null> {
     return [...this.identities.values()].find((i) => i.email === email && i.scope === scope) ?? null;
@@ -26,14 +42,17 @@ export class InMemoryAuthRepository implements AuthRepository {
     return this.identities.get(id) ?? null;
   }
   async insertIdentity(input: {
-    email: string;
+    email?: string | null;
+    phone?: string | null;
+    phoneVerified?: boolean;
     scope: AuthScope;
     customerId?: string | null;
     adminUserId?: string | null;
   }): Promise<AuthIdentityDTO> {
     const dto: AuthIdentityDTO = {
       id: `aid_${++this.counter}`,
-      email: input.email,
+      email: input.email ?? null,
+      phone: input.phone ?? null,
       scope: input.scope,
       customer_id: input.customerId ?? null,
       admin_user_id: input.adminUserId ?? null,
@@ -41,6 +60,80 @@ export class InMemoryAuthRepository implements AuthRepository {
     };
     this.identities.set(dto.id, dto);
     return dto;
+  }
+
+  async findIdentityByPhone(phone: string): Promise<AuthIdentityDTO | null> {
+    return (
+      [...this.identities.values()].find(
+        (i) => i.phone === phone && i.scope === "customer",
+      ) ?? null
+    );
+  }
+
+  async bindPhone(identityId: string, phone: string): Promise<void> {
+    const identity = this.identities.get(identityId);
+    if (identity) identity.phone = phone;
+  }
+
+  // ---- 验证码 ----
+
+  async insertVerificationCode(input: {
+    id: string;
+    channel: string;
+    target: string;
+    purpose: string;
+    codeHash: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    this.codes.push({
+      id: input.id,
+      channel: input.channel,
+      target: input.target,
+      purpose: input.purpose,
+      code_hash: input.codeHash,
+      expires_at: input.expiresAt.toISOString(),
+      attempts: 0,
+      consumed_at: null,
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  async findLatestVerificationCode(
+    target: string,
+    purpose: string,
+  ): Promise<VerificationCodeRow | null> {
+    const rows = this.codes
+      .filter((c) => c.target === target && c.purpose === purpose && !c.consumed_at)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return rows[0] ?? null;
+  }
+
+  async consumeVerificationCode(id: string): Promise<boolean> {
+    const row = this.codes.find((c) => c.id === id);
+    if (!row || row.consumed_at) return false;
+    row.consumed_at = new Date().toISOString();
+    return true;
+  }
+
+  async incrementVerificationAttempts(id: string): Promise<number> {
+    const row = this.codes.find((c) => c.id === id);
+    if (!row) return 0;
+    row.attempts += 1;
+    return row.attempts;
+  }
+
+  async countVerificationCodesSince(
+    target: string,
+    purpose: string,
+    since: Date,
+  ): Promise<number> {
+    const from = since.getTime();
+    return this.codes.filter(
+      (c) =>
+        c.target === target &&
+        c.purpose === purpose &&
+        new Date(c.created_at).getTime() >= from,
+    ).length;
   }
   async insertCredential(identityId: string, passwordHash: string): Promise<void> {
     this.credentials.set(identityId, passwordHash);
@@ -118,16 +211,59 @@ export class InMemoryAuthRepository implements AuthRepository {
     }
     return revoked;
   }
+  /** 测试用：把已发出的验证码时间往前挪，模拟 60 秒冷却期已过。 */
+  rewindCodeCooldown(ms = 61_000): void {
+    const past = new Date(Date.now() - ms).toISOString();
+    for (const c of this.codes) c.created_at = past;
+  }
+
   roleByName(name: string): RbacRoleDTO | null {
     return [...this.roles.values()].find((r) => r.name === name) ?? null;
   }
 }
 
+/** 顾客端口替身：记住建过谁，测试才能断言「手机号确实落进了客户档案」。 */
 export class FakeCustomerPort implements CustomerPort {
+  readonly created: Array<{
+    email?: string | null;
+    phone?: string;
+    firstName?: string;
+    lastName?: string;
+  }> = [];
   private counter = 0;
-  async createCustomer(): Promise<{ customerId: string }> {
+  async createCustomer(input: {
+    email?: string | null;
+    phone?: string;
+    firstName?: string;
+    lastName?: string;
+  }): Promise<{ customerId: string }> {
+    this.created.push(input);
     return { customerId: `cust_${++this.counter}` };
   }
+}
+
+/** 短信/邮件通道替身：把发出去的码留在内存里，测试可以断言通道选对了。 */
+export class FakeSmsPort {
+  readonly sent: Array<{ phone: string; code: string; purpose: string }> = [];
+  async send(input: { phone: string; code: string; purpose: string }): Promise<void> {
+    this.sent.push(input);
+  }
+}
+
+export class FakeEmailPort {
+  readonly sent: Array<{ email: string; code: string; purpose: string }> = [];
+  async send(input: { email: string; code: string; purpose: string }): Promise<void> {
+    this.sent.push(input);
+  }
+}
+
+/** 把「最后发出的验证码」当明文取出来用（生产里只有哈希，测试里换到明文更直观）。 */
+export function lastCodeOf(
+  port: FakeSmsPort | FakeEmailPort | undefined,
+): string {
+  const last = port?.sent.at(-1);
+  if (!last) throw new Error("没有发出任何验证码");
+  return last.code;
 }
 
 export class InMemoryBlacklist implements TokenBlacklist {

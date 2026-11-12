@@ -12,4 +12,6 @@ export interface FakeServicesState {
   revokedRefreshTokens: number;
   /** 购物车 cart_1 是否已下单（模拟一车一单的幂等重放）。 */
   orderCreated: boolean;
+  /** 顾客注册方式（auth 设置，默认邮箱注册）。 */
+  registerMode: "email" | "phone";
 }

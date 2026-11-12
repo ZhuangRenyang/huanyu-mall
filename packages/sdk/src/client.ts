@@ -187,6 +187,44 @@ export function createStoreClient(opts: ClientOptions) {
       request("POST", `/api/v1/store/carts/${cartId}/complete`, base, body ?? {}, undefined, {
         ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
       }),
+    // —— 顾客认证 ——
+    /** 店铺开放的注册方式（店面据此渲染邮箱表单还是手机号表单）。 */
+    getCustomerAuthSettings: () => get("/api/v1/store/auth/settings"),
+    /**
+     * 邮箱注册：邮箱 + 密码 + 手机号（必填）+ 验证码。
+     * 返回 identity_id + customer_id，token 需再调 login。
+     */
+    registerCustomer: (b: {
+      email: string;
+      password: string;
+      phone: string;
+      /** 验证码发到哪：邮箱还是短信。 */
+      channel: "sms" | "email";
+      code: string;
+      first_name?: string;
+      last_name?: string;
+    }) => post("/api/v1/store/auth/register", b),
+    /** 密码登录：identifier 可以是邮箱或手机号。 */
+    loginCustomer: (b: { identifier: string; password: string }) =>
+      post("/api/v1/store/auth/login", b),
+    /** 发验证码（短信或邮件）。开发环境响应带 dev_code 便于自测。 */
+    sendCustomerCode: (b: {
+      channel?: "sms" | "email";
+      target: string;
+      purpose?: "login" | "register" | "reset";
+    }) => post("/api/v1/store/auth/codes", { channel: "sms", ...b }),
+    /** 手机号 + 验证码登录（手机号不存在时自动注册）。 */
+    loginCustomerWithPhone: (b: { phone: string; code: string }) =>
+      post("/api/v1/store/auth/login/phone", b),
+    refreshCustomer: (b: { refresh_token: string }) =>
+      post("/api/v1/store/auth/refresh", b),
+    logoutCustomer: (b: { refresh_token: string }) =>
+      post("/api/v1/store/auth/logout", b),
+    /** 当前登录顾客资料（刷新页面后恢复「我是谁」）。 */
+    getCustomerMe: () => get("/api/v1/store/customer/me"),
+    // —— 我的订单 ——
+    /** 我的订单列表：只看 token 里的 customerId，不接受 query 传顾客 id。 */
+    listMyOrders: (q?: Query) => get("/api/v1/store/orders", q),
     getOrder: (id: string) => get(`/api/v1/store/orders/${id}`),
     /** 顾客申请退款：只传原因，金额由服务端按订单实付取。 */
     requestOrderRefund: (id: string, b: { reason: string }) =>
@@ -269,6 +307,8 @@ export function createAdminClient(opts: ClientOptions) {
     createShipment: (fulfillmentId: string, b: CreateShipmentRequest) =>
       post(`/api/v1/admin/fulfillments/${fulfillmentId}/shipments`, b),
     listCustomers: (q?: Query) => get("/api/v1/admin/customers", q),
+    /** 客户详情：资料 + 地址 + 最近订单。 */
+    getCustomer: (id: string) => get(`/api/v1/admin/customers/${id}`),
     listInventoryItems: (q?: Query) => get("/api/v1/admin/inventory-items", q),
     updateInventoryLevel: (levelId: string, b: UpdateInventoryLevelRequest) =>
       put(`/api/v1/admin/inventory-levels/${levelId}`, b),
@@ -297,6 +337,10 @@ export function createAdminClient(opts: ClientOptions) {
     updateSettings: (b: UpdateSettingsRequest) => patch("/api/v1/admin/settings", b),
     getTheme: () => get("/api/v1/admin/settings/theme"),
     updateTheme: (b: UpdateThemeRequest) => put("/api/v1/admin/settings/theme", b),
+    /** 顾客账号设置（注册方式）。 */
+    getAuthSettings: () => get("/api/v1/admin/settings/auth"),
+    updateAuthSettings: (b: { register_mode?: "email" | "phone" }) =>
+      put("/api/v1/admin/settings/auth", b),
     getPaymentProviders: () => get("/api/v1/admin/settings/payment-providers"),
     updatePaymentProvider: (id: string, b: UpdatePaymentProviderRequest) =>
       put(`/api/v1/admin/settings/payment-providers/${id}`, b),

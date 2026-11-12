@@ -2,7 +2,8 @@
 
 export interface CustomerDTO {
   id: string;
-  email: string;
+  /** 手机号注册的顾客没有邮箱。 */
+  email: string | null;
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
@@ -26,7 +27,8 @@ export interface AddressDTO {
 }
 
 export interface CreateCustomerInput {
-  email: string;
+  /** 手机号注册时为空。 */
+  email?: string | null;
   firstName?: string;
   lastName?: string;
   phone?: string;

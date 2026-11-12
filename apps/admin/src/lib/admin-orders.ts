@@ -3,6 +3,7 @@ import { adminClient, getAdminApiMode } from './admin-client';
 import {
   listOrders as mockListOrders,
   listShippedLocations,
+  requestRefund as mockRequestRefund,
   setOrderNote as mockSetOrderNote,
   shipOrder as mockShipOrder,
 } from './admin-store';
@@ -97,6 +98,7 @@ function mapOrder(o: ApiOrder): AdminOrder {
     shippingAddress: addressText(o.shipping_address),
     carrier: o.shipping_method?.carrier_name ?? undefined,
     merchantNote: o.merchant_note ?? null,
+    orderStatus: o.status,
   };
 }
 
@@ -286,17 +288,16 @@ export async function listOrderFulfillments(orderId: string): Promise<OrderFulfi
   }));
 }
 
-export async function refundOrder(id: string): Promise<void> {
+/**
+ * 商家在订单详情发起退款**申请**。
+ *
+ * 不直接打款：单据进「退款管理 → 待处理」，必须在那边审核通过才退钱。
+ * 金额由服务端按订单实付取，前端不传。
+ */
+export async function requestOrderRefund(id: string, reason: string): Promise<void> {
   if (getAdminApiMode() !== 'live') {
-    const list = mockListOrders();
-    const o = list.find((x) => x.id === id);
-    if (o) o.paymentStatus = 'refunded';
+    mockRequestRefund(id, reason, 'merchant');
     return;
   }
-  const client = adminClient();
-  const order = (await client.getOrder(id)) as ApiOrder;
-  await client.refundOrder(id, {
-    amount_minor: order.total_minor,
-    reason: '后台发起全额退款',
-  });
+  await adminClient().refundOrder(id, { reason });
 }

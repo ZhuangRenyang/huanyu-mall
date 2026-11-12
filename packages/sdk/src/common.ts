@@ -31,8 +31,11 @@ export type OrderStatus =
   | 'paid'
   | 'partially_fulfilled'
   | 'fulfilled'
+  | 'delivered'
   | 'completed'
   | 'canceled'
+  /** 退款审核中（商家还没同意，钱没动）。 */
+  | 'refund_pending'
   | 'refunded';
 export type PaymentStatus = 'unpaid' | 'authorized' | 'captured' | 'refunded';
 export type AuthScope = 'customer' | 'admin';

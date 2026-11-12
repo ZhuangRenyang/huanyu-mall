@@ -353,15 +353,70 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   return {
     promotion,
     customer: {
-      retrieveCustomer: async () => ({
-        id: "cust_1",
-        email: "a@b.com",
-        first_name: null,
-        last_name: null,
-        phone: null,
-        metadata: null,
+      retrieveCustomer: async (id: string) => {
+        if (id !== "cust_1") {
+          throw new DomainError({ code: 30001, message: `客户不存在：${id}` });
+        }
+        return {
+          id: "cust_1",
+          email: "a@b.com",
+          first_name: null,
+          last_name: null,
+          phone: null,
+          metadata: null,
+        };
+      },
+      listAddresses: async (customerId: string) =>
+        customerId === "cust_1"
+          ? [
+              {
+                id: "addr_1",
+                customer_id: "cust_1",
+                first_name: "三",
+                last_name: "张",
+                phone: "13800000000",
+                line1: "示例路 1 号",
+                line2: null,
+                city: "杭州",
+                province: "浙江",
+                postal_code: "310000",
+                country_code: "CN",
+                is_default_shipping: true,
+                is_default_billing: false,
+              },
+            ]
+          : [],
+      addAddress: async (customerId: string, input: Record<string, unknown>) => ({
+        id: "addr_new",
+        customer_id: customerId,
+        first_name: String(input.firstName ?? ""),
+        last_name: String(input.lastName ?? ""),
+        phone: (input.phone as string | null) ?? null,
+        line1: String(input.line1 ?? ""),
+        line2: (input.line2 as string | null) ?? null,
+        city: String(input.city ?? ""),
+        province: (input.province as string | null) ?? null,
+        postal_code: String(input.postalCode ?? ""),
+        country_code: String(input.countryCode ?? "CN"),
+        is_default_shipping: input.isDefaultShipping === true,
+        is_default_billing: input.isDefaultBilling === true,
       }),
-      listAddresses: async () => [],
+      updateAddress: async (customerId: string, addressId: string, input: Record<string, unknown>) => ({
+        id: addressId,
+        customer_id: customerId,
+        first_name: String(input.firstName ?? "三"),
+        last_name: String(input.lastName ?? "张"),
+        phone: (input.phone as string | null) ?? null,
+        line1: String(input.line1 ?? "示例路 1 号"),
+        line2: null,
+        city: String(input.city ?? "杭州"),
+        province: null,
+        postal_code: "310000",
+        country_code: "CN",
+        is_default_shipping: false,
+        is_default_billing: false,
+      }),
+      deleteAddress: async () => {},
       listCustomers: async () => ({
         items: [
           {
@@ -395,12 +450,29 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     auth: {
       verifyAccessToken: async (token: string) => {
         if (token === "admin") {
-          return { sub: "adm_1", scope: "admin", roles: ["admin"], permissions: "all" };
+          return {
+            sub: "adm_1",
+            scope: "admin",
+            customerId: null,
+            roles: ["admin"],
+            permissions: "all",
+          };
+        }
+        // 顾客 token：sub 是 identity id，customerId 才是订单归属（两者不能混用）
+        if (token === "customer") {
+          return {
+            sub: "ident_cust_1",
+            scope: "customer",
+            customerId: "cust_1",
+            roles: [],
+            permissions: [],
+          };
         }
         if (token === "staff") {
           return {
             sub: "adm_2",
             scope: "admin",
+            customerId: null,
             roles: ["staff"],
             // 与真实 seedRoles 对齐：staff 持有 products/orders/customers/inventory/files，无 settings。
             permissions: ["products", "orders", "customers", "inventory", "files"],
@@ -455,6 +527,20 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       }),
       logout: async () => {},
       register: async () => ({ identityId: "aid", customerId: "cust_1" }),
+      /** 顾客账号设置：默认邮箱注册，测试里可改 state 后验证开关。 */
+      getSettings: async () => ({ register_mode: state.registerMode }),
+      updateSettings: async (patch: { register_mode?: "email" | "phone" }) => {
+        if (patch.register_mode) state.registerMode = patch.register_mode;
+        return { register_mode: state.registerMode };
+      },
+      sendVerificationCode: async () => ({ sent: true, devCode: "123456" }),
+      loginWithPhoneCode: async () => ({
+        accessToken: "cust",
+        refreshToken: "r",
+        accessExpiresIn: 900,
+        identityId: "aid",
+        scope: "customer",
+      }),
       seedRoles: async () => {},
     },
     inventory: {
@@ -658,11 +744,35 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         review_note: string | null;
         reviewed_at: string | null;
         refund_id: string | null;
+        order_status_before: string | null;
         created_at: string;
         order_email: string | null;
       }> = [];
       return {
-      retrieveOrder: async () => order,
+      retrieveOrder: async (id?: string) =>
+        // ord_other 属于别的顾客：用来验「知道单号也看不到别人的订单」
+        id === "ord_other" ? { ...order, id: "ord_other", customer_id: "cust_2" } : order,
+      /*
+       * 我的订单：只按传入的 customerId 过滤（路由从 token 取，不接受 query 覆盖）。
+       * 行项直接复用 retrieveOrder 的 items，够验「列表能显示商品」。
+       */
+      /** 客户维度汇总：只算已付款未退款（与真实 SQL 口径一致）。 */
+      summarizeByCustomerIds: async (customerIds: string[]) => {
+        if (!customerIds.includes("cust_1")) return [];
+        return [
+          {
+            customer_id: "cust_1",
+            order_count: 2,
+            total_spent_minor: 21400n,
+            last_order_at: "2026-11-01T10:00:00.000Z",
+          },
+        ];
+      },
+      listOrderSummaries: async (q: { customerId?: string; limit?: number; offset?: number }) => {
+        if (q.customerId !== "cust_1") return { items: [], count: 0 };
+        const item = { ...order, customer_id: "cust_1", items: [{ ...order.items[0] }] };
+        return { items: [item], count: 1 };
+      },
       setMerchantNote: async (_id: string, note: string | null) => {
         // 与真实服务同语义：trim 后为空即清空（null），不是存一串空格
         const trimmed = note?.trim() ?? "";
@@ -699,21 +809,33 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           review_note: null,
           reviewed_at: null,
           refund_id: null,
+          order_status_before: order.status,
           created_at: new Date().toISOString(),
           order_email: "a@b.com",
         };
         refundRequests.push(req);
+        // 申请即冻结（与真实服务同语义）：退款中不能发货
+        order.status = "refund_pending";
         return req;
       },
       listRefundRequests: async (q: {
         status?: string;
+        orderId?: string;
         limit?: number;
         offset?: number;
       }) => {
-        const all = q.status ? refundRequests.filter((r) => r.status === q.status) : refundRequests;
+        let all = q.status ? refundRequests.filter((r) => r.status === q.status) : refundRequests;
+        if (q.orderId) all = all.filter((r) => r.order_id === q.orderId);
         const offset = q.offset ?? 0;
         const limit = q.limit ?? all.length;
-        return { items: all.slice(offset, offset + limit), count: all.length };
+        const counts: Record<string, number> = {};
+        for (const r of refundRequests) counts[r.status] = (counts[r.status] ?? 0) + 1;
+        return { items: all.slice(offset, offset + limit), count: all.length, counts };
+      },
+      countRefundRequestsByStatus: async () => {
+        const counts: Record<string, number> = {};
+        for (const r of refundRequests) counts[r.status] = (counts[r.status] ?? 0) + 1;
+        return counts;
       },
       findRefundRequest: async (id: string) => refundRequests.find((r) => r.id === id) ?? null,
       approveRefundRequest: async (id: string, refundId: string, note?: string | null) => {
@@ -721,20 +843,26 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         req.status = "approved";
         req.refund_id = refundId;
         req.review_note = note ?? null;
+        order.status = "refunded";
         return req;
       },
       rejectRefundRequest: async (id: string, note: string) => {
         const req = refundRequests.find((r) => r.id === id)!;
         req.status = "rejected";
         req.review_note = note;
+        order.status = req.order_status_before ?? "paid";
         return req;
       },
       cancelRefundRequest: async (id: string) => {
         const req = refundRequests.find((r) => r.id === id)!;
         req.status = "canceled";
+        order.status = req.order_status_before ?? "paid";
         return req;
       },
-      markRefundSettled: async () => order,
+      markRefundSettled: async () => {
+        order.status = "refunded";
+        return order;
+      },
       };
     })(),
     /*
@@ -825,6 +953,14 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
             tracking_links: [{ carrier: "顺丰", number: "SF1" }],
           },
         ],
+        findFulfillment: async (id: string) => ({
+          id,
+          order_id: "ord_1",
+          stock_location_id: "loc_1",
+          status: "fulfilled" as const,
+          reservation_ids: [],
+          tracking_links: null,
+        }),
         addShipment: async () => ({
           id: "ship_1",
           fulfillment_id: "fulf_1",

@@ -1,7 +1,11 @@
 import { defineStep, defineWorkflow, StepResponse, type WorkflowRegistry } from "@mall/core";
 
 /**
- * 退款执行工作流（同意退款后真正打款）。
+ * 退款执行工作流（商家**人工审核通过后**真正打款）。
+ *
+ * ⚠️ 只允许由人工审核触发（`POST /admin/refund-requests/:id/approve`）。
+ * 禁止接入定时任务、事件订阅者、超时策略或任何自动补偿链路 ——
+ * 项目明确不做自动退款（ADR-023 §7），无人值守的打款出错就没人拦。
  *
  * 之前后台的「退款」按钮**只把订单标成 refunded，根本没有调支付退款** ——
  * 钱没退，账已经平了。这个 workflow 就是补上那段：先打款，再改订单状态。

@@ -7,6 +7,7 @@ import {
   Package,
   Settings,
   Tag,
+  Users,
   Truck,
   TicketPercent,
   Warehouse,
@@ -44,6 +45,12 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
       // 退款是独立单据（有自己的状态与时效），必须能单独筛出待处理
       { to: '/refunds', label: '退款管理', icon: Banknote },
     ],
+  },
+  {
+    // 客户单独一组（淘宝「客户运营」/ Shopify「Customers」）：
+    // 挂在订单下会变成「订单的附属物」，而客户资料、地址、消费是独立维度
+    label: '客户',
+    items: [{ to: '/customers', label: '客户列表', icon: Users }],
   },
   {
     label: '营销',

@@ -24,7 +24,7 @@ export {
   listOrders,
   getOrder,
   shipOrder,
-  refundOrder,
+  requestOrderRefund,
   listOrderReservations,
   listOrderFulfillments,
   getFulfillmentPlan,

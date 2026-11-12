@@ -126,6 +126,8 @@ export const refundRequest = pgTable(
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     /** 资金流水 id（payment.refund.id）。 */
     refundId: text("refund_id"),
+    /** 申请时的订单状态，拒绝/撤销时据此恢复。 */
+    orderStatusBefore: text("order_status_before"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

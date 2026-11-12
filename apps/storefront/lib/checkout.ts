@@ -143,7 +143,15 @@ export interface OrderLineSnapshot {
   imageUrl?: string;
 }
 
-export type OrderStatus = 'processing' | 'paid' | 'failed';
+export type OrderStatus =
+  | 'processing'
+  | 'paid'
+  | 'shipped'
+  | 'delivered'
+  | 'canceled'
+  | 'refund_pending'
+  | 'refunded'
+  | 'failed';
 
 export interface OrderRecord {
   id: string;
@@ -494,16 +502,24 @@ export interface LivePaymentSession {
 
 /** live 订单 → 统一展示模型（结果页三态与 mock 共用一套渲染）。 */
 export function toOrderRecord(order: Order): OrderRecord {
+  /*
+   * 按订单原始状态映射，不要「只要付过款就一律 paid」——
+   * 那样已发货、已退款、退款中在店面全显示成「待发货」，顾客会以为还能改地址。
+   */
   const status: OrderStatus =
-    order.payment_status === 'captured' ||
-    order.status === 'paid' ||
-    order.status === 'partially_fulfilled' ||
-    order.status === 'fulfilled' ||
-    order.status === 'completed'
-      ? 'paid'
-      : order.status === 'canceled' || order.payment_status === 'refunded'
-        ? 'failed'
-        : 'processing';
+    order.status === 'refund_pending'
+      ? 'refund_pending'
+      : order.status === 'refunded' || order.payment_status === 'refunded'
+        ? 'refunded'
+        : order.status === 'canceled'
+          ? 'failed'
+          : order.status === 'completed' || order.status === 'delivered'
+            ? 'delivered'
+            : order.status === 'fulfilled' || order.status === 'partially_fulfilled'
+              ? 'shipped'
+              : order.status === 'paid' || order.payment_status === 'captured'
+                ? 'paid'
+                : 'processing';
   const address = order.shipping_address;
   return {
     id: order.id,

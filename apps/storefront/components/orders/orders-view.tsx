@@ -6,8 +6,10 @@ import { PackageSearch, Search } from 'lucide-react';
 import { Badge, Button, EmptyState, Skeleton, formatMoney } from '@mall/ui';
 import { TextField } from '@/components/form-field';
 import { ORDER_STATUS_META, findOrder, findOrderByIdentity, formatDateTime, listOrders, orderRecordToView, type OrderView } from '@/lib/orders';
-import { getApiMode } from '@/lib/api';
-import { loadLiveOrder } from '@/lib/checkout';
+import type { Order } from '@mall/sdk';
+import { getApiMode, getStoreClient, syncStoreToken } from '@/lib/api';
+import { loadLiveOrder, toOrderRecord } from '@/lib/checkout';
+import { restoreSession, type CustomerProfile } from '@/lib/account';
 import { OrderDetail } from './order-detail';
 
 export function OrdersView({ orderId, locale, channel }: { orderId?: string; locale: string; channel: string }) {
@@ -16,14 +18,52 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
   const live = getApiMode() === 'live';
   const [mounted, setMounted] = useState(false);
   const [orders, setOrders] = useState<OrderView[]>([]);
+  /** 已登录顾客（live）：决定显示「我的订单」还是游客查单。 */
+  const [profile, setProfile] = useState<CustomerProfile | null>(null);
+  const [loadingOrders, setLoadingOrders] = useState(false);
   const [detail, setDetail] = useState<OrderView | null>(null);
   const [queryId, setQueryId] = useState('');
   const [identity, setIdentity] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // 订单列表：mock 读本地；live 先恢复登录态，再拉「我的订单」
   useEffect(() => {
     setMounted(true);
-    setOrders(listOrders());
+    if (!live) {
+      setOrders(listOrders());
+      return;
+    }
+    let cancelled = false;
+    setLoadingOrders(true);
+    void (async () => {
+      // 登录态以服务端为准：本地缓存可能已过期（token 会在这里自动 refresh）
+      const next = await restoreSession();
+      if (cancelled) return;
+      setProfile(next);
+      if (!next) {
+        setOrders([]);
+        setLoadingOrders(false);
+        return;
+      }
+      syncStoreToken();
+      try {
+        const res = (await getStoreClient().listMyOrders({ limit: 20 })) as { items?: Order[] };
+        if (!cancelled) {
+          setOrders((res.items ?? []).map((o) => orderRecordToView(toOrderRecord(o))));
+        }
+      } catch {
+        if (!cancelled) setOrders([]);
+      } finally {
+        if (!cancelled) setLoadingOrders(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [live]);
+
+  // 详情：按单号查（游客单号 + 后端订单号都能查到）
+  useEffect(() => {
     if (!orderId) {
       setDetail(null);
       return;
@@ -32,10 +72,13 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
       setDetail(findOrder(orderId));
       return;
     }
-    // live 模式：订单在后端，按单号查（游客单号 + 后端订单号都能查到）。
+    let cancelled = false;
     void loadLiveOrder(orderId).then((record) => {
-      setDetail(record ? orderRecordToView(record) : null);
+      if (!cancelled) setDetail(record ? orderRecordToView(record) : null);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [orderId, live]);
 
   const onQuery = () => {
@@ -114,11 +157,25 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
         <h2 id="list-heading" className="mb-3 text-base font-semibold">
           我的订单
         </h2>
-        {!mounted ? (
+        {!mounted || loadingOrders ? (
           <div className="space-y-3">
             {[0, 1].map((i) => (
               <Skeleton key={i} className="h-28 w-full" />
             ))}
+          </div>
+        ) : live && !profile ? (
+          /*
+           * 未登录不显示空列表：空态会让顾客以为订单丢了。
+           * 明确告诉他登录后能看到全部订单，游客仍可用上面的单号查询。
+           */
+          <div className="rounded-lg border border-border bg-card p-6 text-center">
+            <p className="text-sm text-foreground">登录后查看全部订单</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              包括物流进度、退款状态，换设备也能看到
+            </p>
+            <Button className="mt-3" onClick={() => router.push(`${base}/account`)}>
+              去登录
+            </Button>
           </div>
         ) : orders.length === 0 ? (
           <EmptyState

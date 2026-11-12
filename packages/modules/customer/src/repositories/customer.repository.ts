@@ -20,7 +20,7 @@ export class DrizzleCustomerRepository implements CustomerRepository {
       .insert(schema.customer)
       .values({
         id: input.id,
-        email: input.email,
+        email: input.email ?? null,
         firstName: input.firstName ?? null,
         lastName: input.lastName ?? null,
         phone: input.phone ?? null,
@@ -50,7 +50,15 @@ export class DrizzleCustomerRepository implements CustomerRepository {
 
   async list(q: { q?: string; limit: number; offset: number }): Promise<{ items: CustomerDTO[]; count: number }> {
     const conditions = [isNull(schema.customer.deletedAt)];
-    if (q.q) conditions.push(sql`${schema.customer.email} ILIKE ${"%" + q.q + "%"}`);
+    if (q.q) {
+      // 邮箱或姓名都能搜：商家手上通常只有其中一个
+      const like = `%${q.q}%`;
+      conditions.push(
+        sql`(${schema.customer.email} ILIKE ${like}
+          OR coalesce(${schema.customer.firstName}, '') ILIKE ${like}
+          OR coalesce(${schema.customer.lastName}, '') ILIKE ${like})`,
+      );
+    }
     const where = and(...conditions);
     const rows = await this.db
       .select()
@@ -143,7 +151,7 @@ export class DrizzleCustomerRepository implements CustomerRepository {
 function toCustomerDTO(r: typeof schema.customer.$inferSelect): CustomerDTO {
   return {
     id: r.id,
-    email: r.email,
+    email: r.email ?? null,
     first_name: r.firstName ?? null,
     last_name: r.lastName ?? null,
     phone: r.phone ?? null,

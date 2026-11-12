@@ -4,36 +4,42 @@
  * 单据与资金分开：这里读的是 `refund_request`（业务单据），
  * 真正打款记录在 payment.refund，页面不直接碰。
  *
- * mock 模式没有真实退款单：返回空列表并在页面说明「接后端后显示」，
- * **不编造假数据** —— 假退款单会让商家以为真有人申请。
+ * mock 模式下，本页操作产生的单据存在 localStorage（不预置假单据）：
+ * 点「发起退款」→ 出现在待处理 → 同意/拒绝都生效，能完整走一遍流程。
  */
 import { adminClient, getAdminApiMode } from './admin-client';
+import {
+  approveRefund as mockApproveRefund,
+  listRefunds as mockListRefunds,
+  rejectRefund as mockRejectRefund,
+} from './admin-store';
+import type { AdminRefundRequest } from './admin-data';
 
 export type RefundStatus = 'pending' | 'approved' | 'rejected' | 'canceled';
 export type RefundSource = 'customer' | 'merchant';
 
-export interface RefundRequestView {
-  id: string;
-  orderId: string;
-  /** 下单邮箱，列表里当顾客标识。 */
-  customerEmail: string | null;
-  amountMinor: number;
-  currencyCode: string;
-  reason: string;
-  source: RefundSource;
-  status: RefundStatus;
-  reviewNote: string | null;
-  createdAt: string;
-  /** 资金流水 id；未执行退款时为空。 */
-  refundId: string | null;
+export type RefundRequestView = AdminRefundRequest;
+
+export interface RefundCounts {
+  pending: number;
+  approved: number;
+  rejected: number;
+  canceled: number;
+  all: number;
 }
 
 export interface RefundListResult {
   items: RefundRequestView[];
   total: number;
+  /** 各状态数量（页签角标）；后端未返回时按当前页兜底。 */
+  counts: RefundCounts;
 }
 
-const EMPTY: RefundListResult = { items: [], total: 0 };
+const EMPTY: RefundListResult = {
+  items: [],
+  total: 0,
+  counts: { pending: 0, approved: 0, rejected: 0, canceled: 0, all: 0 },
+};
 
 function mapRefund(r: Record<string, unknown>): RefundRequestView {
   return {
@@ -48,6 +54,7 @@ function mapRefund(r: Record<string, unknown>): RefundRequestView {
     reviewNote: (r.review_note as string | null) ?? null,
     createdAt: String(r.created_at ?? ''),
     refundId: (r.refund_id as string | null) ?? null,
+    orderStatusBefore: (r.order_status_before as string | null) ?? null,
   };
 }
 
@@ -56,26 +63,53 @@ export async function listRefundRequests(q: {
   limit?: number;
   offset?: number;
 } = {}): Promise<RefundListResult> {
-  if (getAdminApiMode() !== 'live') return EMPTY;
+  if (getAdminApiMode() !== 'live') {
+    const all = mockListRefunds(q.status);
+    const limit = q.limit ?? 20;
+    const offset = q.offset ?? 0;
+    const count = (s: RefundStatus) => mockListRefunds(s).length;
+    return {
+      items: all.slice(offset, offset + limit),
+      total: all.length,
+      counts: {
+        pending: count('pending'),
+        approved: count('approved'),
+        rejected: count('rejected'),
+        canceled: count('canceled'),
+        all: mockListRefunds().length,
+      },
+    };
+  }
   const res = (await adminClient().listRefundRequests({
     limit: q.limit ?? 20,
     offset: q.offset ?? 0,
     ...(q.status ? { status: q.status } : {}),
-  })) as { items?: Array<Record<string, unknown>>; count?: number };
+  })) as {
+    items?: Array<Record<string, unknown>>;
+    count?: number;
+    counts?: Partial<RefundCounts>;
+  };
   return {
     items: (res.items ?? []).map(mapRefund),
     total: res.count ?? 0,
+    counts: { ...EMPTY.counts, ...(res.counts ?? {}) },
   };
 }
 
 /** 同意退款：会真正打款，调用前必须让商家确认过。 */
 export async function approveRefundRequest(id: string, note?: string): Promise<void> {
-  if (getAdminApiMode() !== 'live') return;
+  if (getAdminApiMode() !== 'live') {
+    mockApproveRefund(id);
+    return;
+  }
   await adminClient().approveRefundRequest(id, note ? { note } : {});
 }
 
 /** 拒绝退款：理由必填（顾客要看到为什么被拒）。 */
 export async function rejectRefundRequest(id: string, note: string): Promise<void> {
-  if (getAdminApiMode() !== 'live') return;
+  if (getAdminApiMode() !== 'live') {
+    mockRejectRefund(id, note);
+    return;
+  }
   await adminClient().rejectRefundRequest(id, { note });
 }

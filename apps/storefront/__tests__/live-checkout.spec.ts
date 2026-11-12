@@ -300,9 +300,14 @@ describe("live 模式：订单状态映射", () => {
     expect(toOrderRecord(ORDER).status).toBe("processing");
   });
 
-  it("订单取消 / 已退款 → 失败", () => {
+  it("订单取消 → 失败；已退款 / 退款中各自有独立状态", () => {
     expect(toOrderRecord({ ...ORDER, status: "canceled" }).status).toBe("failed");
-    expect(toOrderRecord({ ...ORDER, payment_status: "refunded" }).status).toBe("failed");
+    // 退款不是「支付失败」：顾客要看到「已退款」而不是「失败」
+    expect(toOrderRecord({ ...ORDER, payment_status: "refunded" }).status).toBe("refunded");
+    expect(toOrderRecord({ ...ORDER, status: "refund_pending" }).status).toBe("refund_pending");
+    // 已发货不能显示成「待发货」，否则顾客以为还能改地址
+    expect(toOrderRecord({ ...ORDER, status: "fulfilled" }).status).toBe("shipped");
+    expect(toOrderRecord({ ...ORDER, status: "completed" }).status).toBe("delivered");
   });
 });
 

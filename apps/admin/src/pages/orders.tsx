@@ -17,12 +17,14 @@ import { listOrders } from '@/lib/admin-api';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
 
-type Filter = 'all' | 'unfulfilled' | 'partial' | 'shipped' | 'refunded';
+type Filter = 'all' | 'unfulfilled' | 'partial' | 'shipped' | 'refunding' | 'refunded';
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'all', label: '全部' },
   { value: 'unfulfilled', label: '待发货' },
   { value: 'partial', label: '部分发货' },
   { value: 'shipped', label: '已发货' },
+  // 淘宝的「退款中」独立一栏：待审核的退款要能被单独筛出来，不能混在全部里
+  { value: 'refunding', label: '退款中' },
   { value: 'refunded', label: '已退款' },
 ];
 
@@ -41,10 +43,14 @@ export function OrdersPage() {
   };
 
   const filtered = orders.filter((o) => {
-    if (filter === 'unfulfilled' && o.fulfillmentStatus !== 'unfulfilled') return false;
+    // 待发货里不能混入退款中的单：商家照着这个列表发货，混进去就会「货发了、钱也退了」
+    if (filter === 'unfulfilled' && (o.fulfillmentStatus !== 'unfulfilled' || o.orderStatus === 'refund_pending'))
+      return false;
     if (filter === 'partial' && o.fulfillmentStatus !== 'partial') return false;
     if (filter === 'shipped' && o.fulfillmentStatus !== 'shipped') return false;
-    if (filter === 'refunded' && o.paymentStatus !== 'refunded') return false;
+    if (filter === 'refunding' && o.orderStatus !== 'refund_pending') return false;
+    if (filter === 'refunded' && o.orderStatus !== 'refunded' && o.paymentStatus !== 'refunded')
+      return false;
     const q = query.trim().toLowerCase();
     return !q || o.id.toLowerCase().includes(q) || o.customerName.toLowerCase().includes(q);
   });
@@ -117,7 +123,13 @@ export function OrdersPage() {
                     <td className="px-4 py-3 text-muted-foreground">{qty} 件</td>
                     <td className="tabular px-4 py-3 font-medium">{formatMoney(o.totalMinor, o.currency)}</td>
                     <td className="px-4 py-3">
-                      <Badge variant={pay.variant}>{pay.label}</Badge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge variant={pay.variant}>{pay.label}</Badge>
+                        {/* 退款中必须在列表就能看见：否则商家以为还能发货 */}
+                        {o.orderStatus === 'refund_pending' && (
+                          <Badge variant="warning">退款中</Badge>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={ful.variant}>{ful.label}</Badge>

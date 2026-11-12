@@ -134,12 +134,13 @@ describe("管理员改密（AuthService.changeAdminPassword）", () => {
 
   it("6. 非管理员身份不能走改密", async () => {
     const ctx = setup();
-    await ctx.service.register({ email: "a@b.com", password: "cust123456" });
-    const identity = await ctx.repo.findIdentityByEmail("a@b.com", "customer");
+    // 直接落库建顾客身份：注册现在要验证码，这里测的是改密的身份校验，不走注册流程
+    const identity = await ctx.repo.insertIdentity({ email: "a@b.com", scope: "customer" });
+    await ctx.repo.insertCredential(identity.id, await ctx.hasher.hash("cust123456"));
 
     await expect(
       ctx.service.changeAdminPassword({
-        identityId: identity!.id,
+        identityId: identity.id,
         currentPassword: "cust123456",
         newPassword: NEW_PASSWORD,
       }),

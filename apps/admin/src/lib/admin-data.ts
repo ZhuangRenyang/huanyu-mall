@@ -71,6 +71,29 @@ export interface AdminOrder {
   trackingNumber?: string;
   /** 商家内部备注（仅后台可见）。 */
   merchantNote?: string | null;
+  /**
+   * 后端原始订单状态（paid / refund_pending / refunded …）。
+   * paymentStatus 只看钱、fulfillmentStatus 只看货，退款审核中两者都看不出来。
+   */
+  orderStatus?: string;
+}
+
+/** 退款申请单（后台列表用；与后端 refund_request 同构）。 */
+export interface AdminRefundRequest {
+  id: string;
+  orderId: string;
+  customerEmail: string | null;
+  amountMinor: number;
+  currencyCode: string;
+  reason: string;
+  source: 'customer' | 'merchant';
+  status: 'pending' | 'approved' | 'rejected' | 'canceled';
+  reviewNote: string | null;
+  createdAt: string;
+  /** 资金流水 id；未执行退款时为空。 */
+  refundId: string | null;
+  /** 申请时的订单状态：拒绝/撤销后恢复用。 */
+  orderStatusBefore: string | null;
 }
 
 /** 订单操作日志条目（来自审计流水）。 */

@@ -8,12 +8,14 @@ import {
   refundRequestNotFound,
   refundReviewNoteRequired,
 } from "../errors.js";
-import { assertTransition, isRefundable } from "./state-machine.js";
+import { assertTransition, canTransition, isRefundable } from "./state-machine.js";
 import type {
   Actor,
   CreateOrderInput,
+  CustomerOrderSummaryDTO,
   IOrderModuleService,
   OrderDTO,
+  OrderLineItemDTO,
   OrderDetailDTO,
   OrderQuery,
   OrderRepository,
@@ -125,6 +127,33 @@ export class OrderService implements IOrderModuleService {
     return this.repo.list(q);
   }
 
+  async summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]> {
+    return this.repo.summarizeByCustomerIds(customerIds);
+  }
+
+  /**
+   * 列表 + 行项。
+   *
+   * 店面订单列表要显示「买了什么」，但 OrderDTO 不含行项；逐单 retrieveOrder 就是 N+1。
+   * 这里一次批量取回当前页的行项再按订单分组。
+   */
+  async listOrderSummaries(
+    q: OrderQuery,
+  ): Promise<{ items: Array<OrderDTO & { items: OrderLineItemDTO[] }>; count: number }> {
+    const res = await this.repo.list(q);
+    const lines = await this.repo.listLineItemsByOrderIds(res.items.map((o) => o.id));
+    const byOrder = new Map<string, OrderLineItemDTO[]>();
+    for (const line of lines) {
+      const list = byOrder.get(line.order_id) ?? [];
+      list.push(line);
+      byOrder.set(line.order_id, list);
+    }
+    return {
+      items: res.items.map((o) => ({ ...o, items: byOrder.get(o.id) ?? [] })),
+      count: res.count,
+    };
+  }
+
   async transition(id: string, to: OrderStatus, meta: { actor: Actor; reason?: string }): Promise<OrderDTO> {
     const order = await this.repo.findById(id);
     if (!order) throw orderNotFound(id);
@@ -161,7 +190,11 @@ export class OrderService implements IOrderModuleService {
     if (input.amountMinor !== order.total_minor) throw partialRefundNotSupported();
     if (await this.repo.findPendingRefundRequest(orderId)) throw refundAlreadyPending(orderId);
 
-    return this.repo.insertRefundRequest({
+    /*
+     * 申请即冻结：订单转「退款中」，商家在此期间不能发货。
+     * 淘宝同做法 —— 只把申请放进列表、订单还能发货，等于没拦。
+     */
+    const request = await this.repo.insertRefundRequest({
       id: prefixedUlid("rfr"),
       orderId,
       customerId: input.customerId ?? order.customer_id,
@@ -169,20 +202,46 @@ export class OrderService implements IOrderModuleService {
       currencyCode: order.currency_code,
       reason: input.reason,
       source: input.source,
+      orderStatusBefore: order.status,
     });
+
+    try {
+      await this.repo.updateStatus(orderId, "refund_pending");
+      await this.repo.insertStatusHistory(
+        orderId,
+        order.status,
+        "refund_pending",
+        input.source === "customer" ? "customer" : "admin",
+        "refund requested",
+      );
+    } catch (err) {
+      // 状态没冻上就不能留下待处理单据（否则商家会去审一张已不存在的申请）
+      await this.repo.updateRefundRequest(request.id, { status: "canceled" });
+      throw err;
+    }
+    return request;
   }
 
   async listRefundRequests(
     q: RefundRequestQuery,
-  ): Promise<{ items: RefundRequestDTO[]; count: number }> {
-    return this.repo.listRefundRequests(q);
+  ): Promise<{ items: RefundRequestDTO[]; count: number; counts: Record<string, number> }> {
+    const [res, counts] = await Promise.all([
+      this.repo.listRefundRequests(q),
+      this.repo.countRefundRequestsByStatus(),
+    ]);
+    return { ...res, counts };
   }
 
   async findRefundRequest(id: string): Promise<RefundRequestDTO | null> {
     return this.repo.findRefundRequest(id);
   }
 
-  /** 同意退款：workflow 执行打款成功后回写（refund_id 即资金流水）。 */
+  /**
+   * 同意退款：workflow 执行打款成功后回写（refund_id 即资金流水）。
+   *
+   * 订单状态由 workflow 的第 2 步（markRefundSettled）推进为 refunded，
+   * 这里只负责单据落定 —— 两边都改会出现「单据已同意、订单没变」的不一致。
+   */
   async approveRefundRequest(
     id: string,
     refundId: string,
@@ -206,6 +265,8 @@ export class OrderService implements IOrderModuleService {
     const note = reviewNote.trim();
     if (note === "") throw refundReviewNoteRequired();
     const updated = await this.repo.updateRefundRequest(id, { status: "rejected", reviewNote: note });
+    // 拒绝后订单回到申请前的状态（已发货的回「已发货」，不是一律回待发货）
+    await this.restoreOrderAfterRefund(req);
     return updated!;
   }
 
@@ -214,7 +275,29 @@ export class OrderService implements IOrderModuleService {
     if (!req) throw refundRequestNotFound(id);
     if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
     const updated = await this.repo.updateRefundRequest(id, { status: "canceled" });
+    await this.restoreOrderAfterRefund(req);
     return updated!;
+  }
+
+  /**
+   * 退款被拒/撤销后恢复订单状态。
+   *
+   * 只从 refund_pending 回退：若订单已被别的路径推进（手工改状态、支付回调），
+   * 盲目写回会覆盖真实状态。没有 order_status_before 的历史单据退回 paid。
+   */
+  private async restoreOrderAfterRefund(req: RefundRequestDTO): Promise<void> {
+    const order = await this.repo.findById(req.order_id);
+    if (!order || order.status !== "refund_pending") return;
+    const target = req.order_status_before ?? "paid";
+    if (!canTransition("refund_pending", target)) return;
+    await this.repo.updateStatus(req.order_id, target);
+    await this.repo.insertStatusHistory(
+      req.order_id,
+      "refund_pending",
+      target,
+      "admin",
+      "refund rejected",
+    );
   }
 
   async markRefundSettled(orderId: string, _refundRequestId: string): Promise<OrderDTO> {

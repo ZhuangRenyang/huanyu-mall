@@ -1,10 +1,22 @@
 import {
   emailAlreadyRegistered,
+  emailNotConfigured,
   forbidden,
   invalidCredentials,
+  invalidEmail,
+  invalidPhone,
+  invalidRegisterMode,
   invalidToken,
+  invalidVerificationCode,
+  phoneAlreadyRegistered,
+  registerModeDisabled,
+  smsNotConfigured,
+  verificationCodeExpired,
+  verificationTooFrequent,
 } from "../errors.js";
+import { randomInt, createHash } from "node:crypto";
 import { changeAdminPassword } from "./change-password.js";
+import { prefixedUlid } from "@mall/core";
 import { signJwt, verifyJwt } from "./jwt.js";
 import { hashToken, randomToken } from "./tokens.js";
 import type {
@@ -13,10 +25,16 @@ import type {
   AuthIdentityDTO,
   AuthRepository,
   AuthScope,
+  AuthSettingsDTO,
   CustomerPort,
+  EmailPort,
   IAuthModuleService,
   PasswordHasher,
   RegisterInput,
+  RegisterMode,
+  SmsPort,
+  VerificationChannel,
+  VerificationPurpose,
   TokenBlacklist,
   TokenPair,
 } from "../types.js";
@@ -27,6 +45,38 @@ export interface AuthServiceDeps {
   customer: CustomerPort;
   config: AuthConfig;
   blacklist?: TokenBlacklist;
+  /** 短信通道；未配置时发码直接报错，不静默放行。 */
+  sms?: SmsPort;
+  /** 邮件通道（复用通知模块 SMTP）；未配置时发邮件码直接报错。 */
+  email?: EmailPort;
+}
+
+/** 验证码策略：5 分钟有效、60 秒冷却、每天 10 条、错 5 次作废。 */
+const CODE_TTL_MS = 5 * 60 * 1000;
+const CODE_COOLDOWN_MS = 60 * 1000;
+const CODE_DAILY_LIMIT = 10;
+const CODE_MAX_ATTEMPTS = 5;
+
+const DEFAULT_SETTINGS: AuthSettingsDTO = { register_mode: "email" };
+
+/** 报错文案用的中文名（服务端拒绝时要说人话）。 */
+const MODE_LABEL: Record<RegisterMode, string> = {
+  email: "邮箱注册",
+  phone: "手机号注册",
+};
+
+/** 中国大陆手机号（淘宝/京东口径）；不合法直接拒绝，避免脏号码进库。 */
+function normalizePhone(input: string): string {
+  const phone = input.replace(/[\s-]/g, "");
+  if (!/^1[3-9]\d{9}$/.test(phone)) throw invalidPhone(input);
+  return phone;
+}
+
+/** 邮箱统一小写：否则 A@b.com 与 a@b.com 会变成两个账号（验证码按 target 查也是同理）。 */
+function normalizeEmail(input: string): string {
+  const email = input.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw invalidEmail(input);
+  return email;
 }
 
 interface IssuedPair extends TokenPair {
@@ -44,23 +94,68 @@ const NO_CLAIMS: ExtraClaims = { roles: [], permissions: [] };
  * M11 对外门面。ADR-007：access JWT 15min 无状态；refresh 轮换 30d/7d + DB revoked_at +
  * Redis 黑名单端口；**refresh 单飞**（同 token 并发刷新只发一对新 token）。
  */
+/** 验证码哈希：绑目标（手机号/邮箱）+ 用途 + 服务端密钥，库被拖走也推不出明文码。 */
+function hashVerificationCode(
+  target: string,
+  purpose: string,
+  code: string,
+  secret: string,
+): string {
+  return createHash("sha256").update(`${target}:${purpose}:${code}:${secret}`).digest("hex");
+}
+
 export class AuthService implements IAuthModuleService {
   private readonly inflight = new Map<string, Promise<TokenPair>>();
 
   constructor(private readonly deps: AuthServiceDeps) {}
 
+  // —— 顾客账号设置 ——
+
+  async getSettings(): Promise<AuthSettingsDTO> {
+    return (await this.deps.repo.getSettings()) ?? DEFAULT_SETTINGS;
+  }
+
+  async updateSettings(patch: Partial<AuthSettingsDTO>): Promise<AuthSettingsDTO> {
+    if (patch.register_mode !== undefined && !["email", "phone"].includes(patch.register_mode)) {
+      throw invalidRegisterMode();
+    }
+    return this.deps.repo.upsertSettings(patch);
+  }
+
+  /**
+   * 邮箱注册（ADR-025）：邮箱 + 密码 + 手机号（必填）+ 验证码。
+   *
+   * 验证码可以发到邮箱，也可以发到手机 —— 顾客自己选哪条通道能收到。
+   * 手机号必须真实存在且验证通过：它是后续「手机号 + 验证码登录」的主体，
+   * 不是选填资料。
+   */
   async register(input: RegisterInput): Promise<{ identityId: string; customerId: string }> {
-    const existing = await this.deps.repo.findIdentityByEmail(input.email, "customer");
-    if (existing) throw emailAlreadyRegistered(input.email);
+    const settings = await this.getSettings();
+    // 服务端守：店铺关掉邮箱注册后，绕过前端直接打接口也必须被拒
+    if (settings.register_mode !== "email") throw registerModeDisabled(MODE_LABEL.email);
+
+    const email = normalizeEmail(input.email);
+    const phone = normalizePhone(input.phone);
+
+    // 查重先于验码：不消耗顾客的验证码就能告诉他换个邮箱/手机号
+    if (await this.deps.repo.findIdentityByEmail(email, "customer")) {
+      throw emailAlreadyRegistered(email);
+    }
+    if (await this.deps.repo.findIdentityByPhone(phone)) throw phoneAlreadyRegistered(phone);
+
+    const target = input.channel === "email" ? email : phone;
+    await this.verifyCode(target, "register", input.code);
 
     const customer = await this.deps.customer.createCustomer({
-      email: input.email,
+      email,
+      phone,
       firstName: input.profile?.firstName,
       lastName: input.profile?.lastName,
-      phone: input.profile?.phone,
     });
     const identity = await this.deps.repo.insertIdentity({
-      email: input.email,
+      email,
+      phone,
+      phoneVerified: true,
       scope: "customer",
       customerId: customer.customerId,
     });
@@ -69,8 +164,115 @@ export class AuthService implements IAuthModuleService {
     return { identityId: identity.id, customerId: customer.customerId };
   }
 
-  async login(input: { email: string; password: string }): Promise<TokenPair> {
-    return this.authenticate(input.email, input.password, "customer");
+  async login(input: { identifier: string; password: string }): Promise<TokenPair> {
+    return this.authenticate(input.identifier, input.password, "customer");
+  }
+
+  /**
+   * 发验证码（短信 / 邮件两条通道）。
+   *
+   * 限频两层：60 秒冷却（防连点）+ 每目标每天 10 条（防被打成短信轰炸机）。
+   * 验证码只存哈希；开发环境可回传 devCode 便于自测，生产必须关闭。
+   *
+   * 通道未配置时先报错、再落码：否则「发不出去」的码会占掉 60 秒冷却。
+   */
+  async sendVerificationCode(input: {
+    channel: VerificationChannel;
+    target: string;
+    purpose: VerificationPurpose;
+  }): Promise<{ sent: boolean; devCode?: string }> {
+    const target =
+      input.channel === "email" ? normalizeEmail(input.target) : normalizePhone(input.target);
+
+    if (input.channel === "email") {
+      if (!this.deps.email) throw emailNotConfigured();
+    } else if (!this.deps.sms) {
+      throw smsNotConfigured();
+    }
+
+    const cooldown = await this.deps.repo.countVerificationCodesSince(
+      target,
+      input.purpose,
+      new Date(Date.now() - CODE_COOLDOWN_MS),
+    );
+    if (cooldown > 0) throw verificationTooFrequent("发送太频繁，请 60 秒后再试");
+
+    const daily = await this.deps.repo.countVerificationCodesSince(
+      target,
+      input.purpose,
+      new Date(Date.now() - 24 * 60 * 60 * 1000),
+    );
+    if (daily >= CODE_DAILY_LIMIT) {
+      throw verificationTooFrequent("今日获取次数过多，请明天再试");
+    }
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    await this.deps.repo.insertVerificationCode({
+      id: prefixedUlid("vcode"),
+      channel: input.channel,
+      target,
+      purpose: input.purpose,
+      codeHash: hashVerificationCode(target, input.purpose, code, this.deps.config.jwtSecret),
+      expiresAt: new Date(Date.now() + CODE_TTL_MS),
+    });
+
+    if (input.channel === "email") {
+      await this.deps.email!.send({ email: target, code, purpose: input.purpose });
+    } else {
+      await this.deps.sms!.send({ phone: target, code, purpose: input.purpose });
+    }
+    return {
+      sent: true,
+      ...(this.deps.config.exposeDevCode ? { devCode: code } : {}),
+    };
+  }
+
+  /**
+   * 手机号 + 验证码登录（淘宝：注册即登录）。
+   *
+   * 手机号不存在时自动建客户与身份：顾客不需要先「注册」再「登录」两步，
+   * 这是手机号体系成熟做法；邮箱体系才需要独立的注册流程。
+   */
+  async loginWithPhoneCode(input: { phone: string; code: string }): Promise<TokenPair> {
+    const phone = normalizePhone(input.phone);
+    await this.verifyCode(phone, "login", input.code);
+
+    let identity = await this.deps.repo.findIdentityByPhone(phone);
+    if (!identity) {
+      const settings = await this.getSettings();
+      // 店铺只开放邮箱注册时，验证码不能变成「绕过注册方式」的后门
+      if (settings.register_mode !== "phone") throw registerModeDisabled(MODE_LABEL.phone);
+      const customer = await this.deps.customer.createCustomer({ phone });
+      identity = await this.deps.repo.insertIdentity({
+        phone,
+        phoneVerified: true,
+        scope: "customer",
+        customerId: customer.customerId,
+      });
+    }
+    if (identity.status !== "active") throw invalidCredentials();
+    return this.toTokenPair(await this.issuePair(identity, "customer", NO_CLAIMS));
+  }
+
+  /** 校验并消费验证码：错一次记一次，超限作废，成功后不可复用。 */
+  private async verifyCode(
+    target: string,
+    purpose: VerificationPurpose,
+    code: string,
+  ): Promise<void> {
+    const row = await this.deps.repo.findLatestVerificationCode(target, purpose);
+    if (!row) throw invalidVerificationCode();
+    if (new Date(row.expires_at).getTime() <= Date.now()) throw verificationCodeExpired();
+    if (row.attempts >= CODE_MAX_ATTEMPTS) throw invalidVerificationCode();
+
+    const expected = hashVerificationCode(target, purpose, code, this.deps.config.jwtSecret);
+    if (row.code_hash !== expected) {
+      await this.deps.repo.incrementVerificationAttempts(row.id);
+      throw invalidVerificationCode();
+    }
+    // 条件消费：并发两次提交同一验证码时只有一次能成功
+    const consumed = await this.deps.repo.consumeVerificationCode(row.id);
+    if (!consumed) throw invalidVerificationCode();
   }
 
   async adminLogin(input: { email: string; password: string }): Promise<TokenPair> {
@@ -95,14 +297,18 @@ export class AuthService implements IAuthModuleService {
   }
 
   async verifyAccessToken(token: string): Promise<AuthContext> {
-    const payload = verifyJwt<{ sub: string; scope: AuthScope; roles?: string[]; permissions?: string[] | "all" }>(
-      token,
-      this.deps.config.jwtSecret,
-    );
+    const payload = verifyJwt<{
+      sub: string;
+      scope: AuthScope;
+      roles?: string[];
+      permissions?: string[] | "all";
+      customer_id?: string | null;
+    }>(token, this.deps.config.jwtSecret);
     if (!payload) throw invalidToken();
     return {
       sub: payload.sub,
       scope: payload.scope,
+      customerId: payload.customer_id ?? null,
       roles: payload.roles ?? [],
       permissions: payload.permissions ?? [],
     };
@@ -174,8 +380,21 @@ export class AuthService implements IAuthModuleService {
     );
   }
 
-  private async authenticate(email: string, password: string, scope: AuthScope): Promise<TokenPair> {
-    const identity = await this.deps.repo.findIdentityByEmail(email, scope);
+  /**
+   * 密码登录。
+   *
+   * identifier 先按邮箱查（兼容管理员的 "admin" 这种非邮箱登录名），
+   * 查不到且是顾客时再按手机号查 —— 顾客可以用手机号 + 密码登录。
+   */
+  private async authenticate(
+    identifier: string,
+    password: string,
+    scope: AuthScope,
+  ): Promise<TokenPair> {
+    let identity = await this.deps.repo.findIdentityByEmail(identifier, scope);
+    if (!identity && scope === "customer") {
+      identity = await this.deps.repo.findIdentityByPhone(identifier);
+    }
     if (!identity || identity.status !== "active") throw invalidCredentials();
     const hash = await this.deps.repo.findCredentialHash(identity.id);
     if (!hash || !(await this.deps.hasher.verify(hash, password))) throw invalidCredentials();
@@ -209,7 +428,14 @@ export class AuthService implements IAuthModuleService {
 
   private async issuePair(identity: AuthIdentityDTO, scope: AuthScope, extra: ExtraClaims): Promise<IssuedPair> {
     const accessToken = signJwt(
-      { sub: identity.id, scope, roles: extra.roles, permissions: extra.permissions },
+      {
+        sub: identity.id,
+        scope,
+        roles: extra.roles,
+        permissions: extra.permissions,
+        // 顾客身份才有：订单归属、地址簿都用它，别让下游拿 sub 去猜
+        customer_id: identity.customer_id,
+      },
       this.deps.config.jwtSecret,
       this.deps.config.accessTtlSec,
     );

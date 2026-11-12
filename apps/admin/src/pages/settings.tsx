@@ -1,4 +1,4 @@
-import { CreditCard, Mail, Palette, Percent, ShieldCheck, Wrench } from 'lucide-react';
+import { CreditCard, Mail, Palette, Percent, ShieldCheck, UserRound, Wrench } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@mall/ui';
 import { ThemeSettings } from '@/components/settings-theme';
 import { PaymentSettings } from '@/components/settings-payments';
@@ -6,6 +6,7 @@ import { AccountSettings } from '@/components/settings-account';
 import { NotificationSettings } from '@/components/settings-notifications';
 import { SystemSettings } from '@/components/settings-system';
 import { TaxSettings } from '@/components/settings-tax';
+import { CustomerAccountSettings } from '@/components/settings-customer-accounts';
 
 /**
  * 设置页：三个分组用 `@mall/ui` 的 Tabs（Radix 原语）。
@@ -22,6 +23,8 @@ const TABS = [
   { id: 'payments', label: '支付方式', icon: CreditCard, panel: <PaymentSettings /> },
   { id: 'notifications', label: '通知', icon: Mail, panel: <NotificationSettings /> },
   { id: 'tax', label: '税务', icon: Percent, panel: <TaxSettings /> },
+  // 顾客注册方式属于「店铺怎么接待顾客」，和税务同级；不是系统参数
+  { id: 'customers', label: '顾客账号', icon: UserRound, panel: <CustomerAccountSettings /> },
   { id: 'system', label: '系统', icon: Wrench, panel: <SystemSettings /> },
   { id: 'account', label: '账号安全', icon: ShieldCheck, panel: <AccountSettings /> },
 ];

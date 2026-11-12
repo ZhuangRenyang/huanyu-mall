@@ -5,6 +5,7 @@ import { cartCompleteWorkflow } from "@mall/workflows";
 import type { AppDeps } from "../../deps.js";
 import { mapOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
+import { makeAuthHelpers } from "../../plugins/auth.js";
 
 /**
  * 收货地址：下单时必须带上（ADR-018 的税率按其中的国家解析）。
@@ -64,9 +65,11 @@ export function checkoutMetadataRoutes(app: FastifyInstance, deps: AppDeps): voi
 
 /** POST /store/carts/{id}/complete — 走 cart-complete workflow + 幂等键（openapi 969）。 */
 export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
+  const auth = makeAuthHelpers(deps);
   app.post(
     "/api/v1/store/carts/:id/complete",
-    { schema: { body: completeBody } },
+    // 可选解析：登录了订单归到顾客名下，未登录仍允许游客下单
+    { preHandler: auth.customerAuth, schema: { body: completeBody } },
     async (req, reply) => {
     const { id } = req.params as { id: string };
     const idempotencyKey = (req.headers["idempotency-key"] as string | undefined) ?? `auto_${id}`;
@@ -112,6 +115,8 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
     const input = {
       cartId: id,
       email: cart.email ?? "guest@example.com",
+      // 归属取 token 里的 customerId（不是 body）：客户端传谁就是谁，等于没有归属
+      customerId: req.auth?.customerId ?? null,
       currencyCode: cart.currency_code,
       channelId: cart.channel_id,
       regionId: cart.region_id,

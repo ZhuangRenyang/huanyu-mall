@@ -173,6 +173,7 @@ export function makeDeps(): AppDeps & { seen: Set<string>; auditRepo: InMemoryAu
     adminPassword: "pw123456",
     revokedRefreshTokens: 0,
     orderCreated: false,
+    registerMode: "email",
   };
   const auditFixture = makeAuditFixture();
   const services = makeFakeServices(state);

@@ -1,9 +1,10 @@
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
   Actor,
   CreateOrderDiscountInput,
+  CustomerOrderSummaryDTO,
   OrderDiscountDTO,
   OrderDiscountType,
   OrderDTO,
@@ -181,6 +182,7 @@ export class DrizzleOrderRepository implements OrderRepository {
     currencyCode: string;
     reason: string;
     source: RefundRequestSource;
+    orderStatusBefore: OrderStatus;
   }): Promise<RefundRequestDTO> {
     const rows = await this.db
       .insert(schema.refundRequest)
@@ -192,6 +194,7 @@ export class DrizzleOrderRepository implements OrderRepository {
         currencyCode: input.currencyCode,
         reason: input.reason,
         source: input.source,
+        orderStatusBefore: input.orderStatusBefore,
       })
       .returning();
     return toRefundRequestDTO(rows[0]!);
@@ -223,7 +226,11 @@ export class DrizzleOrderRepository implements OrderRepository {
   }
 
   async listRefundRequests(q: RefundRequestQuery): Promise<{ items: RefundRequestDTO[]; count: number }> {
-    const where = q.status ? eq(schema.refundRequest.status, q.status) : undefined;
+    const conds = [
+      ...(q.status ? [eq(schema.refundRequest.status, q.status)] : []),
+      ...(q.orderId ? [eq(schema.refundRequest.orderId, q.orderId)] : []),
+    ];
+    const where = conds.length > 0 ? and(...conds) : undefined;
     const limit = q.limit ?? 20;
     const offset = q.offset ?? 0;
     const rows = await this.db
@@ -242,6 +249,16 @@ export class DrizzleOrderRepository implements OrderRepository {
       items: rows.map((r) => toRefundRequestDTO(r.req, r.email)),
       count: totalRows.length,
     };
+  }
+
+  async countRefundRequestsByStatus(): Promise<Record<string, number>> {
+    const rows = await this.db
+      .select({ status: schema.refundRequest.status, n: sql<number>`count(*)::int` })
+      .from(schema.refundRequest)
+      .groupBy(schema.refundRequest.status);
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.status] = Number(r.n);
+    return out;
   }
 
   async updateRefundRequest(
@@ -284,6 +301,48 @@ export class DrizzleOrderRepository implements OrderRepository {
     return rows.map(toLineItemDTO);
   }
 
+  async listLineItemsByOrderIds(orderIds: string[]): Promise<OrderLineItemDTO[]> {
+    if (orderIds.length === 0) return [];
+    const rows = await this.db
+      .select()
+      .from(schema.orderLineItem)
+      .where(inArray(schema.orderLineItem.orderId, orderIds));
+    return rows.map(toLineItemDTO);
+  }
+
+  async summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]> {
+    const ids = [...new Set(customerIds.filter(Boolean))];
+    if (ids.length === 0) return [];
+    const rows = await this.db
+      .select({
+        customerId: schema.order.customerId,
+        orderCount: sql<number>`count(*)::int`,
+        totalSpent: sql<string>`coalesce(sum(${schema.order.totalMinor}), 0)::text`,
+        lastOrderAt: sql<string | null>`max(${schema.order.createdAt})`,
+      })
+      .from(schema.order)
+      .where(
+        and(
+          inArray(schema.order.customerId, ids),
+          // 只算已付款且未退款：否则「消费额」会把取消和退款的钱也算进去
+          inArray(schema.order.status, [
+            "paid",
+            "partially_fulfilled",
+            "fulfilled",
+            "delivered",
+            "completed",
+          ]),
+        ),
+      )
+      .groupBy(schema.order.customerId);
+    return rows.map((r) => ({
+      customer_id: String(r.customerId),
+      order_count: Number(r.orderCount),
+      total_spent_minor: BigInt(r.totalSpent ?? "0"),
+      last_order_at: r.lastOrderAt ? new Date(r.lastOrderAt).toISOString() : null,
+    }));
+  }
+
   async findShippingMethod(orderId: string): Promise<OrderShippingMethodDTO | null> {
     const rows = await this.db
       .select()
@@ -297,6 +356,8 @@ export class DrizzleOrderRepository implements OrderRepository {
     const conditions = [
       q.status ? eq(schema.order.status, q.status) : null,
       q.cartId ? eq(schema.order.cartId, q.cartId) : null,
+      // 顾客列表必须带这个条件：漏了会把全店订单返回给任意顾客
+      q.customerId ? eq(schema.order.customerId, q.customerId) : null,
     ].filter((c): c is SQL => c !== null);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const rows = await this.db
@@ -347,6 +408,7 @@ function toRefundRequestDTO(
     review_note: r.reviewNote ?? null,
     reviewed_at: r.reviewedAt ? r.reviewedAt.toISOString() : null,
     refund_id: r.refundId ?? null,
+    order_status_before: (r.orderStatusBefore as RefundRequestDTO["order_status_before"]) ?? null,
     created_at: r.createdAt.toISOString(),
     order_email: orderEmail ?? null,
   };

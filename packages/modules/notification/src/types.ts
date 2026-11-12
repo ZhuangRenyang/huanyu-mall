@@ -144,6 +144,13 @@ export interface INotificationModuleService {
   ): Promise<void>;
   /** 管理后台「测试发送」：失败抛可读业务错误。 */
   sendTest(to: string): Promise<void>;
+  /**
+   * 通用发信（验证码等一次性邮件）：同步发送，失败抛可读错误。
+   *
+   * 与订单邮件共用同一份 SMTP 配置，但**不落 notification 表** ——
+   * 验证码是 5 分钟就作废的短命内容，留档只会让派发表塞满噪声。
+   */
+  sendMail(input: EmailMessage): Promise<void>;
   list(q: {
     limit: number;
     offset: number;

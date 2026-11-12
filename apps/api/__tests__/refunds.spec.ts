@@ -171,3 +171,132 @@ describe("退款管理", () => {
     });
   });
 });
+
+/**
+ * 人工审核闸门（对齐淘宝）。
+ *
+ * 这里守的不是「接口能不能调」，而是**有没有绕过审核的路径**：
+ * 订单详情直接退款、退款中照常发货 —— 任何一个漏了，人工审核就成了摆设。
+ */
+describe("退款必须人工审核", () => {
+  it("订单详情发起退款：只建单不打款，订单转「退款中」", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/refunds",
+        headers: adminJson,
+        payload: { reason: "商品缺货，与顾客协商退款" },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const data = res.json().data;
+      expect(data.refund.status).toBe("pending");
+      // 关键：没打款。有 refund_id 才说明钱动了
+      expect(data.refund.refund_id).toBeNull();
+      // 订单被冻结，避免审核期间继续发货
+      expect(data.order.status).toBe("refund_pending");
+    });
+  });
+
+  it("退款审核中禁止发货（货发了钱也退了，就是资损）", async () => {
+    await withApp(async (app) => {
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/refunds",
+        headers: adminJson,
+        payload: { reason: "不想要了" },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/fulfillments",
+        headers: adminJson,
+        payload: {
+          items: [{ order_line_item_id: "oli_1", quantity: 1 }],
+        },
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json().message).toContain("退款");
+    });
+  });
+
+  it("退款审核中禁止填运单号（发货单可能早就建好了）", async () => {
+    await withApp(async (app) => {
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/refunds",
+        headers: adminJson,
+        payload: { reason: "不想要了" },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/fulfillments/fulf_1/shipments",
+        headers: adminJson,
+        payload: { carrier_name: "顺丰", tracking_number: "SF123" },
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json().message).toContain("退款");
+    });
+  });
+
+  it("同意退款后订单变「已退款」，单据带资金流水号", async () => {
+    await withApp(async (app) => {
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/refunds",
+        headers: adminJson,
+        payload: { reason: "不想要了" },
+      });
+      const id = created.json().data.refund.id as string;
+
+      const approved = await app.inject({
+        method: "POST",
+        url: `/api/v1/admin/refund-requests/${id}/approve`,
+        headers: adminJson,
+        payload: {},
+      });
+      expect(approved.statusCode, approved.body).toBe(200);
+      expect(approved.json().data.refund_id).toBe("rfd_1");
+
+      const order = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/orders/ord_1",
+        headers: admin,
+      });
+      expect(order.json().data.status).toBe("refunded");
+    });
+  });
+
+  it("退款列表带各状态计数（页签角标不用前端自己数）", async () => {
+    await withApp(async (app) => {
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/refunds",
+        headers: adminJson,
+        payload: { reason: "不想要了" },
+      });
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/refund-requests?status=pending",
+        headers: admin,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json().data.counts.pending).toBe(1);
+      expect(res.json().data.counts.all).toBe(1);
+    });
+  });
+
+  it("客户端传的金额会被忽略：退款额一律取订单实付", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/refunds",
+        headers: adminJson,
+        // 想只退 1 分：schema 会剥掉这个字段，落库金额仍应是订单实付 10700
+        payload: { reason: "不想要了", amount_minor: 1 },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      expect(res.json().data.refund.amount_minor).toBe(10700);
+    });
+  });
+});

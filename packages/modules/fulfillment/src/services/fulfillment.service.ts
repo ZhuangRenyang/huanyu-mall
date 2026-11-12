@@ -374,6 +374,10 @@ export class FulfillmentService implements IFulfillmentModuleService {
     return { ...fulfillment, items: input.items };
   }
 
+  async findFulfillment(id: string): Promise<FulfillmentDTO | null> {
+    return this.deps.repo.findFulfillment(id);
+  }
+
   async listByOrder(orderId: string): Promise<FulfillmentDTO[]> {
     return this.deps.repo.listByOrder(orderId);
   }

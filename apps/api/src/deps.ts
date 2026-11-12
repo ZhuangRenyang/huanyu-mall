@@ -10,6 +10,8 @@ import {
   type ModuleDefinition,
 } from "@mall/core";
 import type { Pool } from "pg";
+import { resolveSmsProvider } from "./infra/sms-transport.js";
+import { createEmailProvider } from "./infra/email-transport.js";
 import regionChannelModule from "@mall/region-channel";
 import productModule from "@mall/product";
 import pricingModule from "@mall/pricing";
@@ -107,6 +109,22 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
   const container = new Container();
   container.register("pool", () => pool);
   for (const mod of MODULES) container.register(mod.name, mod.service);
+
+  /*
+   * 短信通道（可选端口）：生产未配置时不注册，发码接口会明确报「未配置」，
+   * 不会静默降级成日志发送（那等于验证码根本没发出去）。
+   */
+  const sms = resolveSmsProvider();
+  if (sms) container.register("sms", () => ({ send: sms.send }));
+
+  /*
+   * 邮件验证码通道：复用通知模块的 SMTP 配置（商家只配一次）。
+   * 始终注册 —— 是否真能发由通道内部判断：生产未配 SMTP 会明确报错，
+   * 开发降级为日志（配合 AUTH_EXPOSE_DEV_CODE 自测）。
+   */
+  container.register("email", () =>
+    createEmailProvider(container.resolve<INotificationModuleService>("notification")),
+  );
 
   // Event Bus（正式版）：subscriber 注册 + 事件持久化
   const subscriberRegistry = new SubscriberRegistry();

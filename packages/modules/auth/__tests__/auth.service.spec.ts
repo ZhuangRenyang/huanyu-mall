@@ -5,35 +5,202 @@ import { Argon2PasswordHasher } from "../src/services/password.js";
 import {
   CONFIG,
   FakeCustomerPort,
+  FakeEmailPort,
+  FakeSmsPort,
   InMemoryAuthRepository,
   InMemoryBlacklist,
+  lastCodeOf,
 } from "./helpers/in-memory-auth.js";
 
-function setup() {
+const PHONE = "13800001111";
+
+function setup(settings?: { register_mode: "email" | "phone" }) {
   const repo = new InMemoryAuthRepository();
+  if (settings) repo.settings = settings;
   const blacklist = new InMemoryBlacklist();
   const hasher = new Argon2PasswordHasher();
-  const service = new AuthService({ repo, hasher, customer: new FakeCustomerPort(), config: CONFIG, blacklist });
-  return { repo, blacklist, hasher, service };
+  const sms = new FakeSmsPort();
+  const mailer = new FakeEmailPort();
+  const customer = new FakeCustomerPort();
+  const service = new AuthService({
+    repo,
+    hasher,
+    customer,
+    config: CONFIG,
+    blacklist,
+    sms,
+    email: mailer,
+  });
+  return { repo, blacklist, hasher, service, sms, mailer, customer };
+}
+
+/** 走一遍「发码 → 取明文码」，邮箱注册用。 */
+async function emailCodeFor(
+  service: AuthService,
+  mailer: FakeEmailPort,
+  email: string,
+): Promise<string> {
+  await service.sendVerificationCode({ channel: "email", target: email, purpose: "register" });
+  return lastCodeOf(mailer);
 }
 
 describe("AuthService（M11，JWT + refresh 轮换单飞 + RBAC）", () => {
-  it("注册 → 登录 → 校验 access token", async () => {
-    const { service } = setup();
-    const reg = await service.register({ email: "a@b.com", password: "pw123456" });
-    expect(reg.customerId).toMatch(/^cust_/);
+  it("邮箱注册（邮箱验证码）→ 登录 → 校验 access token", async () => {
+    const { service, mailer, customer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
 
-    const pair = await service.login({ email: "a@b.com", password: "pw123456" });
+    const reg = await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    expect(reg.customerId).toMatch(/^cust_/);
+    // 手机号必须落进客户档案：它是后续手机号登录的主体
+    expect(customer.created.at(-1)).toMatchObject({ email: "a@b.com", phone: PHONE });
+
+    const pair = await service.login({ identifier: "a@b.com", password: "pw123456" });
     expect(pair.accessToken.split(".")).toHaveLength(3);
     const ctx = await service.verifyAccessToken(pair.accessToken);
     expect(ctx.scope).toBe("customer");
     expect(ctx.sub).toBe(reg.identityId);
+    expect(ctx.customerId).toBe(reg.customerId);
+  });
+
+  it("邮箱注册后可以用手机号 + 密码登录（同一身份两条入口）", async () => {
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+
+    const pair = await service.login({ identifier: PHONE, password: "pw123456" });
+    await expect(service.verifyAccessToken(pair.accessToken)).resolves.toMatchObject({
+      scope: "customer",
+    });
+  });
+
+  it("手机号验证码也能完成邮箱注册（两条验证通道等价）", async () => {
+    const { service, sms } = setup();
+    await service.sendVerificationCode({ channel: "sms", target: PHONE, purpose: "register" });
+    const code = lastCodeOf(sms);
+
+    const reg = await service.register({
+      email: "c@d.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "sms",
+      code,
+    });
+    expect(reg.identityId).toMatch(/^aid_/);
+  });
+
+  it("注册必须带手机号：空号或格式不对直接拒绝", async () => {
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+
+    await expect(
+      service.register({
+        email: "a@b.com",
+        password: "pw123456",
+        phone: "",
+        channel: "email",
+        code,
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("验证码错/复用被拒（一次一码）", async () => {
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+
+    await expect(
+      service.register({
+        email: "a@b.com",
+        password: "pw123456",
+        phone: PHONE,
+        channel: "email",
+        code: "000000",
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+
+    await expect(
+      service.register({
+        email: "a@b.com",
+        password: "pw123456",
+        phone: PHONE,
+        channel: "email",
+        code,
+      }),
+    ).resolves.toMatchObject({ identityId: expect.stringMatching(/^aid_/) });
+  });
+
+  it("后台切到手机号注册后，邮箱注册接口被拒（服务端守，不靠界面隐藏）", async () => {
+    const { service, mailer } = setup({ register_mode: "phone" });
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+
+    await expect(
+      service.register({
+        email: "a@b.com",
+        password: "pw123456",
+        phone: PHONE,
+        channel: "email",
+        code,
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("手机号验证码登录：新号自动注册，旧号直接登录", async () => {
+    const { repo, service, sms, customer } = setup({ register_mode: "phone" });
+
+    await service.sendVerificationCode({ channel: "sms", target: PHONE, purpose: "login" });
+    const first = await service.loginWithPhoneCode({ phone: PHONE, code: lastCodeOf(sms) });
+    expect(first.scope).toBe("customer");
+    expect(customer.created).toHaveLength(1);
+
+    repo.rewindCodeCooldown();
+    await service.sendVerificationCode({ channel: "sms", target: PHONE, purpose: "login" });
+    const second = await service.loginWithPhoneCode({ phone: PHONE, code: lastCodeOf(sms) });
+    // 第二次不该再建客户 —— 只是登录
+    expect(customer.created).toHaveLength(1);
+    expect(second.identityId).toBe(first.identityId);
+  });
+
+  it("邮箱注册模式下，陌生手机号不能用验证码「绕过」注册方式", async () => {
+    const { service, sms } = setup();
+    await service.sendVerificationCode({ channel: "sms", target: PHONE, purpose: "login" });
+
+    await expect(
+      service.loginWithPhoneCode({ phone: PHONE, code: lastCodeOf(sms) }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("发码 60 秒冷却：连发第二次被拒", async () => {
+    const { service, sms } = setup();
+    await service.sendVerificationCode({ channel: "sms", target: PHONE, purpose: "login" });
+    expect(sms.sent).toHaveLength(1);
+
+    await expect(
+      service.sendVerificationCode({ channel: "sms", target: PHONE, purpose: "login" }),
+    ).rejects.toBeInstanceOf(DomainError);
   });
 
   it("refresh 轮换：旧 token 立即失效", async () => {
-    const { service } = setup();
-    await service.register({ email: "a@b.com", password: "pw123456" });
-    const pair = await service.login({ email: "a@b.com", password: "pw123456" });
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    const pair = await service.login({ identifier: "a@b.com", password: "pw123456" });
 
     const next = await service.refresh(pair.refreshToken);
     expect(next.refreshToken).not.toBe(pair.refreshToken);
@@ -42,9 +209,16 @@ describe("AuthService（M11，JWT + refresh 轮换单飞 + RBAC）", () => {
   });
 
   it("并发刷新只发一次新 token（单飞）", async () => {
-    const { repo, service } = setup();
-    await service.register({ email: "a@b.com", password: "pw123456" });
-    const pair = await service.login({ email: "a@b.com", password: "pw123456" });
+    const { repo, service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    const pair = await service.login({ identifier: "a@b.com", password: "pw123456" });
 
     const [r1, r2] = await Promise.all([
       service.refresh(pair.refreshToken),
@@ -56,9 +230,16 @@ describe("AuthService（M11，JWT + refresh 轮换单飞 + RBAC）", () => {
   });
 
   it("登出后 refresh 失效（黑名单/撤销生效）", async () => {
-    const { blacklist, service } = setup();
-    await service.register({ email: "a@b.com", password: "pw123456" });
-    const pair = await service.login({ email: "a@b.com", password: "pw123456" });
+    const { blacklist, service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    const pair = await service.login({ identifier: "a@b.com", password: "pw123456" });
 
     await service.logout(pair.refreshToken);
     await expect(service.refresh(pair.refreshToken)).rejects.toBeInstanceOf(DomainError);
@@ -66,10 +247,17 @@ describe("AuthService（M11，JWT + refresh 轮换单飞 + RBAC）", () => {
   });
 
   it("非法密码被拒（不区分邮箱/密码）", async () => {
-    const { service } = setup();
-    await service.register({ email: "a@b.com", password: "pw123456" });
-    await expect(service.login({ email: "a@b.com", password: "wrong" })).rejects.toBeInstanceOf(DomainError);
-    await expect(service.login({ email: "none@b.com", password: "pw123456" })).rejects.toBeInstanceOf(DomainError);
+    const { service, mailer } = setup();
+    const code = await emailCodeFor(service, mailer, "a@b.com");
+    await service.register({
+      email: "a@b.com",
+      password: "pw123456",
+      phone: PHONE,
+      channel: "email",
+      code,
+    });
+    await expect(service.login({ identifier: "a@b.com", password: "wrong" })).rejects.toBeInstanceOf(DomainError);
+    await expect(service.login({ identifier: "none@b.com", password: "pw123456" })).rejects.toBeInstanceOf(DomainError);
   });
 
   it("admin RBAC 两档：admin 全权限，staff 受限", async () => {
@@ -96,5 +284,25 @@ describe("AuthService（M11，JWT + refresh 轮换单飞 + RBAC）", () => {
     expect(staffCtx.roles).toContain("staff");
     expect(() => service.assertPermission(staffCtx, "products")).not.toThrow();
     expect(() => service.assertPermission(staffCtx, "settings")).toThrow(DomainError);
+  });
+});
+
+describe("顾客账号设置（注册方式切换）", () => {
+  it("默认邮箱注册", async () => {
+    const { service } = setup();
+    await expect(service.getSettings()).resolves.toEqual({ register_mode: "email" });
+  });
+
+  it("切到手机号注册后读回来是 phone", async () => {
+    const { service } = setup();
+    await service.updateSettings({ register_mode: "phone" });
+    await expect(service.getSettings()).resolves.toEqual({ register_mode: "phone" });
+  });
+
+  it("非法注册方式被拒", async () => {
+    const { service } = setup();
+    await expect(
+      service.updateSettings({ register_mode: "sms" as never }),
+    ).rejects.toBeInstanceOf(DomainError);
   });
 });

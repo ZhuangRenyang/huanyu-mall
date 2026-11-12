@@ -157,6 +157,7 @@ class InMemoryOrderRepository implements OrderRepository {
     currencyCode: string;
     reason: string;
     source: RefundRequestDTO["source"];
+    orderStatusBefore: RefundRequestDTO["order_status_before"];
   }): Promise<RefundRequestDTO> {
     const dto: RefundRequestDTO = {
       id: input.id,
@@ -170,6 +171,7 @@ class InMemoryOrderRepository implements OrderRepository {
       review_note: null,
       reviewed_at: null,
       refund_id: null,
+      order_status_before: input.orderStatusBefore,
       created_at: new Date().toISOString(),
     };
     this.refundRequests.push(dto);
@@ -401,5 +403,102 @@ describe("OrderService（M05，状态机 + 行快照冻结 + 全额退款）", (
     await service.cancelOrder(order.id);
     const detail = await service.retrieveOrder(order.id);
     expect(detail.status).toBe("canceled");
+  });
+});
+
+/**
+ * 退款审核（对齐淘宝：申请后订单「退款中」，商家审核通过才打款）。
+ *
+ * 这一组守的是**审核是不是真的生效**，而不是「单据状态字段有没有变」：
+ * 申请后订单必须立刻冻结（不能再发货、不能取消），拒绝要精确回到申请前的状态，
+ * 否则会出现「货发了、钱也退了」或者「拒绝退款后订单变回待发货」这种账实不符。
+ */
+describe("退款审核：申请即冻结", () => {
+  async function paidOrder(status: "paid" | "fulfilled" = "paid") {
+    const { repo, service } = setup();
+    const order = await service.createOrder(makeInput());
+    await service.transition(order.id, "awaiting_payment", { actor: "workflow" });
+    await service.transition(order.id, "paid", { actor: "workflow" });
+    if (status === "fulfilled") {
+      await service.transition(order.id, "fulfilled", { actor: "admin" });
+    }
+    return { repo, service, order };
+  }
+
+  it("买家申请退款后，订单立刻转「退款中」并记下原状态", async () => {
+    const { service, order } = await paidOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "不想要了",
+      source: "customer",
+    });
+    expect(req.status).toBe("pending");
+    expect(req.order_status_before).toBe("paid");
+
+    const after = await service.retrieveOrder(order.id);
+    expect(after.status).toBe("refund_pending");
+  });
+
+  it("退款审核中不能再申请一次（避免两张单同时退）", async () => {
+    const { service, order } = await paidOrder();
+    await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "不想要了",
+      source: "customer",
+    });
+    await expect(
+      service.createRefundRequest(order.id, {
+        amountMinor: 20600n,
+        reason: "再申请一次",
+        source: "customer",
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("退款审核中不能取消订单（两条路会打架）", async () => {
+    const { service, order } = await paidOrder();
+    await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "不想要了",
+      source: "customer",
+    });
+    await expect(service.cancelOrder(order.id)).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("拒绝退款：订单回到申请前的状态（已发货的仍回已发货）", async () => {
+    const { service, order } = await paidOrder("fulfilled");
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "不想要了",
+      source: "customer",
+    });
+    expect((await service.retrieveOrder(order.id)).status).toBe("refund_pending");
+
+    await service.rejectRefundRequest(req.id, "商品已发出，请收到后再申请");
+    const after = await service.retrieveOrder(order.id);
+    // 不能一律回 paid：这单已经发过货了
+    expect(after.status).toBe("fulfilled");
+  });
+
+  it("撤销退款：订单同样恢复原状态", async () => {
+    const { service, order } = await paidOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "拍错了",
+      source: "customer",
+    });
+    await service.cancelRefundRequest(req.id);
+    expect((await service.retrieveOrder(order.id)).status).toBe("paid");
+  });
+
+  it("同意退款：订单转已退款（由 workflow 的 markRefundSettled 推进）", async () => {
+    const { service, order } = await paidOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "不想要了",
+      source: "customer",
+    });
+    await service.markRefundSettled(order.id, req.id);
+    expect((await service.retrieveOrder(order.id)).status).toBe("refunded");
   });
 });

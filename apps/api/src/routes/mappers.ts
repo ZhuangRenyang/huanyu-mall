@@ -1,6 +1,13 @@
-import type { OrderDetailDTO } from "@mall/order";
+import type { OrderDetailDTO, OrderDTO, OrderLineItemDTO } from "@mall/order";
 
-export function mapOrder(order: OrderDetailDTO) {
+/**
+ * 订单 → 店面视图。
+ *
+ * 只依赖「订单 + 行项」，不要求完整 OrderDetailDTO：
+ * 列表页用批量取回的行项组装的摘要也能直接用同一个 mapper，
+ * 不然列表和详情会各写一份映射，字段迟早漂移。
+ */
+export function mapOrder(order: OrderDTO & { items: OrderLineItemDTO[] }) {
   return {
     id: order.id,
     status: order.status,

@@ -130,17 +130,18 @@ describe("审计日志（Phase 4）", () => {
   it("5. 订单流转/退款/发货/支付商配置/支付扣款均留痕", async () => {
     await withApp(async (app, deps) => {
       await app.inject({ method: "POST", url: "/api/v1/admin/orders/ord_1/cancel", headers: adminAuthOnly });
-      await app.inject({
-        method: "POST",
-        url: "/api/v1/admin/orders/ord_1/refunds",
-        headers: adminHeaders,
-        payload: { amount_minor: 10700, reason: "客户申请退款" },
-      });
+      // 先发货再申请退款：退款中会禁止发货（这正是审核生效的表现）
       await app.inject({
         method: "POST",
         url: "/api/v1/admin/fulfillments/fulf_1/shipments",
         headers: adminHeaders,
         payload: { carrier_name: "顺丰", tracking_number: "SF1234567" },
+      });
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/admin/orders/ord_1/refunds",
+        headers: adminHeaders,
+        payload: { reason: "客户申请退款" },
       });
       await app.inject({
         method: "PUT",
@@ -165,7 +166,7 @@ describe("审计日志（Phase 4）", () => {
       expect(actions).toEqual(
         expect.arrayContaining([
           "order.cancel",
-          "order.refund",
+          "order.refund.request",
           "shipment.create",
           "payment_provider.configure",
           "payment_session.create",

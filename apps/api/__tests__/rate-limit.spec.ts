@@ -30,6 +30,14 @@ async function withLimitedApp(
 }
 
 const loginPayload = { email: "admin@x.com", password: "pw123456" };
+/** 邮箱注册现在必须带手机号 + 验证码（ADR-025）。 */
+const registerPayload = {
+  email: "a@b.com",
+  password: "password123",
+  phone: "13800001111",
+  channel: "email",
+  code: "123456",
+};
 
 describe("限流防刷（Phase 4）", () => {
   it("1. 登录端点超过阈值后第 N+1 次被拒：429 + 统一信封 + 中文提示", async () => {
@@ -102,7 +110,7 @@ describe("限流防刷（Phase 4）", () => {
         method: "POST",
         url: "/api/v1/store/auth/register",
         headers: { "content-type": "application/json" },
-        payload: { email: "a@b.com", password: "password123" },
+        payload: registerPayload,
         remoteAddress: "203.0.113.30",
       });
       expect(first.statusCode).toBe(201);
@@ -111,7 +119,7 @@ describe("限流防刷（Phase 4）", () => {
         method: "POST",
         url: "/api/v1/store/auth/register",
         headers: { "content-type": "application/json" },
-        payload: { email: "a@b.com", password: "password123" },
+        payload: registerPayload,
         remoteAddress: "203.0.113.30",
       });
       expect(second.statusCode).toBe(429);
@@ -121,7 +129,7 @@ describe("限流防刷（Phase 4）", () => {
         method: "POST",
         url: "/api/v1/store/auth/register",
         headers: { "content-type": "application/json" },
-        payload: { email: "a@b.com", password: "password123" },
+        payload: registerPayload,
         remoteAddress: "203.0.113.30",
       });
       expect(third.statusCode).toBe(201);
@@ -141,7 +149,7 @@ describe("限流防刷（Phase 4）", () => {
 
       expect((await send("/api/v1/store/auth/login", { email: "a@b.com", password: "pw" })).statusCode).toBe(200);
       expect((await send("/api/v1/admin/auth/login", loginPayload)).statusCode).toBe(200);
-      expect((await send("/api/v1/store/auth/register", { email: "a@b.com", password: "password123" })).statusCode).toBe(201);
+      expect((await send("/api/v1/store/auth/register", registerPayload)).statusCode).toBe(201);
 
       // 三个端点共用 auth 桶 → 计数应为 3，且第 4 次（任意端点）被拒
       const authKeys = [...counters.keys()].filter((k) => k.startsWith("auth:"));

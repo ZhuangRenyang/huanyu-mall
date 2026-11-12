@@ -126,6 +126,13 @@ export class NotificationService implements INotificationModuleService {
     });
   }
 
+  /** 通用发信：验证码等一次性邮件，不落库（短命内容，留档只是噪声）。 */
+  async sendMail(input: EmailMessage): Promise<void> {
+    const settings = await this.repo.getSettings();
+    if (!settings) throw notificationConfigInvalid("尚未保存过通知配置");
+    await this.sender(smtpConfig(settings), input);
+  }
+
   async list(q: {
     limit: number;
     offset: number;

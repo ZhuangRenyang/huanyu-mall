@@ -49,11 +49,22 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
       offset: q.offset,
       limit: q.limit,
       hasMore: q.offset + res.items.length < res.count,
+      // 页签角标：待处理优先，商家一眼知道还有几单要审
+      counts: {
+        pending: res.counts.pending ?? 0,
+        approved: res.counts.approved ?? 0,
+        rejected: res.counts.rejected ?? 0,
+        canceled: res.counts.canceled ?? 0,
+        all: Object.values(res.counts).reduce((n, v) => n + v, 0),
+      },
     });
   });
 
   /**
    * 同意退款：执行打款 + 订单转已退款 + 回写申请单。
+   *
+   * 这是全仓**唯一**的退款触发点，且必须人工点击（ADR-023 §7「不做自动退款」）。
+   * 不要把它接到定时任务、订阅者或超时策略上。
    *
    * 幂等：workflow 的幂等键绑申请单 id，重复点击不会退两次；
    * 申请单状态非 pending 时服务层直接拒绝。

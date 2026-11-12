@@ -13,6 +13,6 @@ export { CustomerService } from "./services/customer.service.js";
 export default Module("customer", {
   service: (ctx) =>
     new CustomerService(new DrizzleCustomerRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_phone_signup.sql"],
   linkable,
 });
