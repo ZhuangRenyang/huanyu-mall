@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { Printer, ArrowLeft } from 'lucide-react';
 import { Button, Skeleton, formatMoney } from '@mall/ui';
 import { getOrder } from '@/lib/admin-api';
+import { getStoreProfile, type StoreProfileView } from '@/lib/admin-store-profile';
 import type { AdminOrder } from '@/lib/admin-data';
 
 /**
@@ -17,13 +18,16 @@ import type { AdminOrder } from '@/lib/admin-data';
 export function PackingSlipPage() {
   const { id = '' } = useParams<{ id: string }>();
   const [order, setOrder] = useState<AdminOrder | null>(null);
+  const [profile, setProfile] = useState<StoreProfileView | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    void getOrder(id)
-      .then((o) => {
-        if (!cancelled) setOrder(o);
+    void Promise.all([getOrder(id), getStoreProfile()])
+      .then(([o, p]) => {
+        if (cancelled) return;
+        setOrder(o);
+        setProfile(p);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -74,7 +78,9 @@ export function PackingSlipPage() {
       <article className="mx-auto w-full max-w-[210mm] bg-card p-8 text-foreground print:max-w-none print:bg-white print:p-0">
         <header className="flex items-start justify-between gap-4 border-b border-border pb-4">
           <div>
-            <h1 className="text-xl font-semibold">发货单</h1>
+            {/* 店名来自店铺设置：留空时退回默认名，不印一行空白 */}
+            <p className="text-sm font-medium text-muted-foreground">{profile?.storeName ?? '全球商城'}</p>
+            <h1 className="mt-1 text-xl font-semibold">发货单</h1>
             <p className="mt-1 tabular font-mono text-sm text-muted-foreground">{order.id}</p>
           </div>
           <div className="text-right text-sm text-muted-foreground">
@@ -150,7 +156,9 @@ export function PackingSlipPage() {
 
         <footer className="mt-8 flex justify-between border-t border-border pt-3 text-xs text-muted-foreground">
           <span>请核对商品与数量后再签收</span>
-          <span>客服联系：本店铺在线客服</span>
+          <span>
+            {profile?.supportPhone ? `客服电话：${profile.supportPhone}` : '客服联系：本店铺在线客服'}
+          </span>
         </footer>
       </article>
     </div>

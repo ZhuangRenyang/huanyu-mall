@@ -74,7 +74,10 @@ export interface ThemeSettings {
 
 /** 店铺设置。 */
 export interface Settings {
-  site_name?: string;
+  /** 店铺名称（店头、页脚、发货单）。旧字段 site_name 从未落库，已由它取代。 */
+  store_name?: string;
+  /** 客服电话（可空）。 */
+  support_phone?: string | null;
   channel_slug?: string;
   default_locale?: string;
   currency_code?: string;

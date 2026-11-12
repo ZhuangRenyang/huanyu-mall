@@ -1,5 +1,6 @@
-import { CreditCard, Mail, Palette, Percent, ShieldCheck, UserRound, Wrench } from 'lucide-react';
+import { CreditCard, Mail, Palette, Percent, ShieldCheck, Store, UserRound, Wrench } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@mall/ui';
+import { StoreProfileSettings } from '@/components/settings-store';
 import { ThemeSettings } from '@/components/settings-theme';
 import { PaymentSettings } from '@/components/settings-payments';
 import { AccountSettings } from '@/components/settings-account';
@@ -19,6 +20,8 @@ import { CustomerAccountSettings } from '@/components/settings-customer-accounts
  * 这里显式归零以保持视觉一致。
  */
 const TABS = [
+  // 店名是最基础的店铺身份，排在外观之前：先定「我是谁」，再定「长什么样」
+  { id: 'store', label: '店铺', icon: Store, panel: <StoreProfileSettings /> },
   { id: 'theme', label: '外观', icon: Palette, panel: <ThemeSettings /> },
   { id: 'payments', label: '支付方式', icon: CreditCard, panel: <PaymentSettings /> },
   { id: 'notifications', label: '通知', icon: Mail, panel: <NotificationSettings /> },
@@ -34,7 +37,7 @@ export function SettingsPage() {
     <div className="space-y-4">
       <h1 className="text-lg font-semibold text-foreground">设置</h1>
 
-      <Tabs defaultValue="theme" className="gap-0">
+      <Tabs defaultValue="store" className="gap-0">
         <TabsList aria-label="设置分组">
           {TABS.map(({ id, label, icon: Icon }) => (
             <TabsTrigger key={id} value={id}>

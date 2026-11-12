@@ -11,6 +11,10 @@ export const themeSettings = pgTable("theme_settings", {
   shadow: text("shadow").notNull(),
   logoFileId: text("logo_file_id"),
   productImageRatio: text("product_image_ratio").notNull(),
+  /** 店铺名称（店头、发货单页眉都用它）。 */
+  storeName: text("store_name").notNull().default("全球商城"),
+  /** 客服电话（发货单与页脚展示，可为空）。 */
+  supportPhone: text("support_phone"),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

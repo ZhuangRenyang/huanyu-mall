@@ -523,6 +523,15 @@ components:
         border_radius: { type: string, example: "8px" }
         shadow: { type: string, example: "none" }
         product_image_ratio: { type: string, example: "1:1" }
+        store_name:
+          type: string
+          example: 全球商城
+          description: 店铺名称（店头、页脚、发货单页眉都读它，ADR-045）
+        support_phone:
+          type: string
+          nullable: true
+          example: "400-800-1234"
+          description: 客服电话；为空时页脚与发货单不显示这一行
 
     FileInfo:
       type: object

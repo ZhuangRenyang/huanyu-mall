@@ -13,6 +13,6 @@ export { ThemeService } from "./services/theme.service.js";
 export default Module("theme", {
   service: (ctx) =>
     new ThemeService(new DrizzleThemeRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_store_profile.sql"],
   linkable,
 });

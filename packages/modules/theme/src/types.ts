@@ -10,6 +10,10 @@ export interface ThemeSettingsDTO {
   shadow: string;
   logo_file_id: string | null;
   product_image_ratio: string;
+  /** 店铺名称：店头、发货单页眉、页脚都用它（ADR-045）。 */
+  store_name: string;
+  /** 客服电话（可空）：发货单与页脚展示。 */
+  support_phone: string | null;
   metadata: Record<string, unknown> | null;
 }
 
@@ -23,6 +27,8 @@ export const DEFAULT_THEME: ThemeSettingsDTO = {
   shadow: "none",
   logo_file_id: null,
   product_image_ratio: "4:5",
+  store_name: "全球商城",
+  support_phone: null,
   metadata: null,
 };
 

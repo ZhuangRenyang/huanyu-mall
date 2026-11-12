@@ -211,7 +211,10 @@ export interface CreateInventoryTransferRequest {
 
 /** 更新设置。 */
 export interface UpdateSettingsRequest {
-  site_name?: string;
+  /** 店铺名称（店头、页脚、发货单）。旧字段 site_name 从未落库，已由它取代。 */
+  store_name?: string;
+  /** 客服电话（可空）。 */
+  support_phone?: string | null;
 }
 
 /** 更新设计变量（换肤）。 */

@@ -127,6 +127,35 @@ function mapSummary(p: ApiProductSummary): StoreProduct {
   };
 }
 
+export interface StoreProfile {
+  name: string;
+  /** 客服电话（可空）：页脚与订单页展示。 */
+  supportPhone: string | null;
+}
+
+const DEFAULT_PROFILE: StoreProfile = { name: '全球商城', supportPhone: null };
+
+/**
+ * 店铺资料（店名 / 客服电话，ADR-045）。
+ *
+ * 店名之前写死在页头与页脚两处；现在统一从店铺设置读，读不到就退回默认名 ——
+ * 店名读失败不该让整页 500。
+ */
+export async function getStoreProfile(): Promise<StoreProfile> {
+  if (getApiMode() !== 'live') return DEFAULT_PROFILE;
+  try {
+    const raw = (await getStoreClient().bootstrap()) as {
+      theme?: { store_name?: string; support_phone?: string | null } | null;
+    };
+    return {
+      name: raw.theme?.store_name?.trim() || DEFAULT_PROFILE.name,
+      supportPhone: raw.theme?.support_phone ?? null,
+    };
+  } catch {
+    return DEFAULT_PROFILE;
+  }
+}
+
 export interface StoreProductsPage {
   items: StoreProduct[];
   /** 满足筛选条件的总条数（服务端分页用）。 */

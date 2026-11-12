@@ -162,6 +162,8 @@ const INITIAL_THEME: Record<string, unknown> = {
   shadow: "none",
   logo_file_id: null,
   product_image_ratio: "4:5",
+  store_name: "全球商城",
+  support_phone: null,
   metadata: null,
 };
 

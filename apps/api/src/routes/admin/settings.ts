@@ -5,7 +5,6 @@ import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { auditEntry } from "../audit-context.js";
 
-const patchSettingsBody = z.record(z.string(), z.unknown());
 const themeBody = z.object({
   primary_color: z.string().optional(),
   gradient_color: z.string().optional(),
@@ -16,6 +15,27 @@ const themeBody = z.object({
   logo_file_id: z.string().nullable().optional(),
   product_image_ratio: z.string().optional(),
 });
+
+/**
+ * 通用设置 PATCH：外观变量 + 店铺资料（ADR-045）。
+ *
+ * 不再用 z.record(unknown) 全放开：设置是低频但高影响的写入口，
+ * 放开任意键等于让拼错的字段静默落库（读的时候才发现没生效）。
+ */
+const patchSettingsBody = themeBody
+  .extend({
+    store_name: z.string().trim().min(1).max(40).optional(),
+    // 空串按「没填」处理：null 与 "" 两种空值混着存，读的时候要判两次
+    support_phone: z
+      .string()
+      .max(30)
+      .nullable()
+      .optional()
+      .transform((v) => (v && v.trim() ? v.trim() : null)),
+    metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  })
+  // strict：拼错的键要报错，不能静默落库（设置是低频高影响的写入口）
+  .strict();
 const providerConfigBody = z.object({
   options: z.record(z.string(), z.unknown()),
   enabled_channels: z.array(z.string()).optional(),

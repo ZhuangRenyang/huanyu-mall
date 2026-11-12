@@ -8,10 +8,12 @@ import { useCart } from '@/lib/cart-store';
 export interface HeaderProps {
   locale: string;
   channel: string;
+  /** 店铺名称（来自店铺设置，ADR-045）；缺省时用默认名。 */
+  storeName?: string;
 }
 
 /** 顶部导航（移动优先）：Logo / 分类 / 搜索 / 账户 / 购物车。 */
-export function Header({ locale, channel }: HeaderProps) {
+export function Header({ locale, channel, storeName = '全球商城' }: HeaderProps) {
   const base = `/${locale}/${channel}`;
   const router = useRouter();
   const { count, openDrawer } = useCart();
@@ -24,7 +26,7 @@ export function Header({ locale, channel }: HeaderProps) {
         </IconButton>
 
         <a href={base} className="text-lg font-semibold tracking-tight">
-          全球商城
+          {storeName}
         </a>
 
         <nav className="ml-6 hidden items-center gap-5 md:flex" aria-label="分类导航">

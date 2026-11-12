@@ -1,17 +1,25 @@
 export interface FooterProps {
   locale: string;
   channel: string;
+  storeName?: string;
+  /** 客服电话（可空）：为空时不显示这一行，不印「暂无」。 */
+  supportPhone?: string | null;
 }
 
 /** 页脚：分类入口 + 服务承诺 + 版权。移动端折叠为纵向列。 */
-export function Footer({ locale, channel }: FooterProps) {
+export function Footer({
+  locale,
+  channel,
+  storeName = '全球商城',
+  supportPhone = null,
+}: FooterProps) {
   const base = `/${locale}/${channel}`;
 
   return (
     <footer className="border-t border-border bg-card">
       <div className="mx-auto grid max-w-content grid-cols-2 gap-8 px-4 py-10 md:grid-cols-4">
         <div className="col-span-2 md:col-span-1">
-          <p className="text-base font-semibold">全球商城</p>
+          <p className="text-base font-semibold">{storeName}</p>
           <p className="mt-2 text-sm text-muted-foreground">单商户跨境商城，自托管、零抽佣、数据自主。</p>
         </div>
         <div>
@@ -35,6 +43,7 @@ export function Footer({ locale, channel }: FooterProps) {
             <li>正品保障</li>
             <li>跨境直邮</li>
             <li>7 天可退</li>
+            {supportPhone && <li>客服电话：{supportPhone}</li>}
           </ul>
         </div>
         <div>
