@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { errors } from "@mall/core";
-import { PaginationQuerySchema, MAX_PAGE_OFFSET } from "@mall/types";
+import { PaginationQuerySchema } from "@mall/types";
 import {
   voucherCodeAlreadyExists,
   type VoucherCodeDTO,
@@ -240,6 +240,12 @@ const updatePromotionBody = z.object({
 const listPromotionsQuery = PaginationQuerySchema.extend({
   type: z.enum(["catalogue", "order"]).optional(),
   status: z.enum(["draft", "active", "inactive"]).optional(),
+  q: z.string().min(1).max(80).optional(),
+});
+
+/** 优惠券 / 礼品卡的列表查询：分页 + 关键字（券按名称、卡按卡号）。 */
+const listSearchQuery = PaginationQuerySchema.extend({
+  q: z.string().min(1).max(80).optional(),
 });
 
 export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void {
@@ -289,22 +295,21 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         offset: number;
         type?: "catalogue" | "order";
         status?: "draft" | "active" | "inactive";
+        q?: string;
       };
-      let items: PromotionDTO[];
-      let count: number;
-      if (q.type || q.status) {
-        // repo 暂不支持按 type/status 过滤（硬约束不改模块），此处拉全量后内存过滤 + 分页。
-        const all = await deps.services.promotion.listPromotions({ limit: MAX_PAGE_OFFSET, offset: 0 });
-        const filtered = all.items.filter(
-          (p) => (!q.type || p.type === q.type) && (!q.status || p.status === q.status),
-        );
-        count = filtered.length;
-        items = filtered.slice(q.offset, q.offset + q.limit);
-      } else {
-        const res = await deps.services.promotion.listPromotions({ limit: q.limit, offset: q.offset });
-        items = res.items;
-        count = res.count;
-      }
+      /*
+       * 筛选必须在 SQL 里：之前 type/status 是「拉 MAX_PAGE_OFFSET 条再内存过滤」，
+       * 活动超过一页时第二页起永远拿不到（与 ADR-031 后台订单列表同一个坑）。
+       */
+      const res = await deps.services.promotion.listPromotions({
+        limit: q.limit,
+        offset: q.offset,
+        ...(q.type ? { type: q.type } : {}),
+        ...(q.status ? { status: q.status } : {}),
+        ...(q.q ? { q: q.q } : {}),
+      });
+      const items = res.items;
+      const count = res.count;
       reply.ok({
         items: items.map(mapPromotion),
         count,
@@ -488,10 +493,14 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
   // —— Voucher CRUD ——
   app.get(
     "/api/v1/admin/promotions/vouchers",
-    { preHandler: guard, schema: { querystring: PaginationQuerySchema } },
+    { preHandler: guard, schema: { querystring: listSearchQuery } },
     async (req, reply) => {
-      const q = req.query as { limit: number; offset: number };
-      const res = await deps.services.promotion.listVouchers({ limit: q.limit, offset: q.offset });
+      const q = req.query as { limit: number; offset: number; q?: string };
+      const res = await deps.services.promotion.listVouchers({
+        limit: q.limit,
+        offset: q.offset,
+        ...(q.q ? { q: q.q } : {}),
+      });
       reply.ok({
         items: res.items.map(mapVoucher),
         count: res.count,
@@ -725,10 +734,14 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
   // —— Gift Card 管理（阶段 5，资金安全硬约束 1/5：钱的配置只能走后端 + 后台，RBAC + 审计）——
   app.get(
     "/api/v1/admin/promotions/gift-cards",
-    { preHandler: guard, schema: { querystring: PaginationQuerySchema } },
+    { preHandler: guard, schema: { querystring: listSearchQuery } },
     async (req, reply) => {
-      const q = req.query as { limit: number; offset: number };
-      const res = await deps.services.promotion.listGiftCards({ limit: q.limit, offset: q.offset });
+      const q = req.query as { limit: number; offset: number; q?: string };
+      const res = await deps.services.promotion.listGiftCards({
+        limit: q.limit,
+        offset: q.offset,
+        ...(q.q ? { q: q.q } : {}),
+      });
       reply.ok({
         items: res.items.map(mapGiftCard),
         count: res.count,

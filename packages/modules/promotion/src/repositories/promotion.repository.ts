@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { type NodePgDatabase } from "@mall/core";
 import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
@@ -16,6 +16,7 @@ import type {
   MarketingFeature,
   MarketingFeatureDTO,
   PromotionDTO,
+  PromotionListQuery,
   PromotionPredicate,
   PromotionRepository,
   PromotionRuleDTO,
@@ -78,8 +79,19 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     return rows[0] ? toPromotionDTO(rows[0]) : null;
   }
 
-  async listPromotions(q: ListQuery): Promise<{ items: PromotionDTO[]; count: number }> {
-    const where = isNull(schema.promotion.deletedAt);
+  async listPromotions(q: PromotionListQuery): Promise<{ items: PromotionDTO[]; count: number }> {
+    const where = and(
+      isNull(schema.promotion.deletedAt),
+      q.type ? eq(schema.promotion.type, q.type) : undefined,
+      q.status ? eq(schema.promotion.status, q.status) : undefined,
+      // 搜索名称或活动码：商家手里可能只有一个码
+      q.q
+        ? or(
+            ilike(schema.promotion.name, `%${q.q}%`),
+            ilike(schema.promotion.code, `%${q.q}%`),
+          )
+        : undefined,
+    );
     const rows = await this.db
       .select()
       .from(schema.promotion)
@@ -267,7 +279,10 @@ export class DrizzlePromotionRepository implements PromotionRepository {
   }
 
   async listVouchers(q: ListQuery): Promise<{ items: VoucherDTO[]; count: number }> {
-    const where = isNull(schema.voucher.deletedAt);
+    const where = and(
+      isNull(schema.voucher.deletedAt),
+      q.q ? ilike(schema.voucher.name, `%${q.q}%`) : undefined,
+    );
     const rows = await this.db
       .select()
       .from(schema.voucher)
@@ -551,7 +566,11 @@ export class DrizzlePromotionRepository implements PromotionRepository {
   }
 
   async listGiftCards(q: ListQuery): Promise<{ items: GiftCardDTO[]; count: number }> {
-    const where = isNull(schema.giftCard.deletedAt);
+    const where = and(
+      isNull(schema.giftCard.deletedAt),
+      // 礼品卡按卡号搜：商家拿到的是卡号，不是「哪张卡」
+      q.q ? ilike(schema.giftCard.code, `%${q.q}%`) : undefined,
+    );
     const rows = await this.db
       .select()
       .from(schema.giftCard)

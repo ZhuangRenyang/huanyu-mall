@@ -236,13 +236,56 @@ function mockSaveGiftCard(g: GiftCardView): void {
 }
 
 // ------------------------------------------------------------------ *
+// 列表查询（三张表共用形状）
+// ------------------------------------------------------------------ *
+
+export interface PromoListParams {
+  /** 关键字：促销/券按名称，礼品卡按卡号。 */
+  q?: string;
+  /** 促销专用：类型与状态。 */
+  type?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PromoListResult<T> {
+  items: T[];
+  total: number;
+  hasMore: boolean;
+}
+
+/** 列表在服务端分页：mock 模式本地切页，口径与线上一致。 */
+function pageOf<T>(all: T[], limit: number, offset: number): PromoListResult<T> {
+  return {
+    items: all.slice(offset, offset + limit),
+    total: all.length,
+    hasMore: offset + limit < all.length,
+  };
+}
+
+// ------------------------------------------------------------------ *
 // 对外接口（优惠券）
 // ------------------------------------------------------------------ *
 
-export async function listVouchers(): Promise<VoucherView[]> {
-  if (getAdminApiMode() !== 'live') return mockListVouchers();
-  const res = (await adminClient().listVouchers({ limit: 100 })) as { items?: AdminVoucher[] };
-  return (res.items ?? []).map(mapVoucher);
+export async function listVouchers(params: PromoListParams = {}): Promise<PromoListResult<VoucherView>> {
+  const limit = params.limit ?? 20;
+  const offset = params.offset ?? 0;
+  if (getAdminApiMode() !== 'live') {
+    let all = mockListVouchers();
+    if (params.q) {
+      const needle = params.q.trim().toLowerCase();
+      all = all.filter((v) => v.name.toLowerCase().includes(needle));
+    }
+    return pageOf(all, limit, offset);
+  }
+  const res = (await adminClient().listVouchers({
+    limit,
+    offset,
+    ...(params.q ? { q: params.q } : {}),
+  })) as { items?: AdminVoucher[]; count?: number; hasMore?: boolean };
+  const items = (res.items ?? []).map(mapVoucher);
+  return { items, total: res.count ?? items.length, hasMore: res.hasMore === true };
 }
 
 export async function getVoucher(id: string): Promise<VoucherDetailView | null> {
@@ -375,10 +418,24 @@ export async function setVoucherCodeStatus(id: string, codeId: string, active: b
 // 对外接口（礼品卡）
 // ------------------------------------------------------------------ *
 
-export async function listGiftCards(): Promise<GiftCardView[]> {
-  if (getAdminApiMode() !== 'live') return mockListGiftCards();
-  const res = (await adminClient().listGiftCards({ limit: 100 })) as { items?: AdminGiftCard[] };
-  return (res.items ?? []).map(mapGiftCard);
+export async function listGiftCards(params: PromoListParams = {}): Promise<PromoListResult<GiftCardView>> {
+  const limit = params.limit ?? 20;
+  const offset = params.offset ?? 0;
+  if (getAdminApiMode() !== 'live') {
+    let all = mockListGiftCards();
+    if (params.q) {
+      const needle = params.q.trim().toLowerCase();
+      all = all.filter((g) => g.code.toLowerCase().includes(needle));
+    }
+    return pageOf(all, limit, offset);
+  }
+  const res = (await adminClient().listGiftCards({
+    limit,
+    offset,
+    ...(params.q ? { q: params.q } : {}),
+  })) as { items?: AdminGiftCard[]; count?: number; hasMore?: boolean };
+  const items = (res.items ?? []).map(mapGiftCard);
+  return { items, total: res.count ?? items.length, hasMore: res.hasMore === true };
 }
 
 export async function getGiftCard(id: string): Promise<GiftCardView | null> {
@@ -594,10 +651,30 @@ function mockSavePromotion(p: PromotionDetailView): void {
   write(KEYS.promotions, list);
 }
 
-export async function listPromotions(): Promise<PromotionView[]> {
-  if (getAdminApiMode() !== 'live') return mockListPromotions();
-  const res = (await adminClient().listPromotions({ limit: 100 })) as { items?: AdminPromotion[] };
-  return (res.items ?? []).map(mapPromotion);
+export async function listPromotions(params: PromoListParams = {}): Promise<PromoListResult<PromotionView>> {
+  const limit = params.limit ?? 20;
+  const offset = params.offset ?? 0;
+  if (getAdminApiMode() !== 'live') {
+    let all = mockListPromotions();
+    if (params.type) all = all.filter((p) => p.type === params.type);
+    if (params.status) all = all.filter((p) => p.status === params.status);
+    if (params.q) {
+      const needle = params.q.trim().toLowerCase();
+      all = all.filter(
+        (p) => p.name.toLowerCase().includes(needle) || (p.code ?? '').toLowerCase().includes(needle),
+      );
+    }
+    return pageOf(all, limit, offset);
+  }
+  const res = (await adminClient().listPromotions({
+    limit,
+    offset,
+    ...(params.q ? { q: params.q } : {}),
+    ...(params.type ? { type: params.type } : {}),
+    ...(params.status ? { status: params.status } : {}),
+  })) as { items?: AdminPromotion[]; count?: number; hasMore?: boolean };
+  const items = (res.items ?? []).map(mapPromotion);
+  return { items, total: res.count ?? items.length, hasMore: res.hasMore === true };
 }
 
 export async function getPromotion(id: string): Promise<PromotionDetailView | null> {

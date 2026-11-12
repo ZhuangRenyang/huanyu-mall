@@ -13,6 +13,7 @@ import {
   formatMoney,
 } from '@mall/ui';
 import { SelectField, TextField } from './field';
+import { ListPager, ListSearch } from './list-toolbar';
 import {
   addPromotionRule,
   createPromotion,
@@ -94,18 +95,43 @@ function periodText(p: PromotionView): string {
 
 export function PromotionTab() {
   const [items, setItems] = useState<PromotionView[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(0);
+  const [query, setQuery] = useState('');
+  const [applied, setApplied] = useState('');
+  /** 类型与状态筛选：与搜索一起走服务端（ADR-043）。 */
+  const [type, setType] = useState('');
+  const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
   const [detail, setDetail] = useState<PromotionDetailView | null>(null);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setApplied(query.trim());
+      setPage(0);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setItems(await listPromotions());
+      const res = await listPromotions({
+        q: applied || undefined,
+        type: type || undefined,
+        status: status || undefined,
+        limit: 20,
+        offset: page * 20,
+      });
+      setItems(res.items);
+      setTotal(res.total);
+      setHasMore(res.hasMore);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applied, page, type, status]);
 
   useEffect(() => {
     void refresh();
@@ -129,14 +155,44 @@ export function PromotionTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           目录促销按商品打折（行级），订单促销按小计满减（订单级），均自动命中、无需输码。停用后立即不参与计算。
         </p>
-        <Button onClick={() => setEditorOpen(true)}>
-          <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-          新建促销
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ListSearch value={query} onChange={setQuery} placeholder="搜索活动名称或码" />
+          <select
+            aria-label="促销类型"
+            value={type}
+            onChange={(e) => {
+              setType(e.target.value);
+              setPage(0);
+            }}
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none focus:border-ring"
+          >
+            <option value="">全部类型</option>
+            <option value="catalogue">目录促销</option>
+            <option value="order">订单促销</option>
+          </select>
+          <select
+            aria-label="促销状态"
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value);
+              setPage(0);
+            }}
+            className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none focus:border-ring"
+          >
+            <option value="">全部状态</option>
+            <option value="draft">草稿</option>
+            <option value="active">启用中</option>
+            <option value="inactive">已停用</option>
+          </select>
+          <Button onClick={() => setEditorOpen(true)}>
+            <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+            新建促销
+          </Button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -199,6 +255,15 @@ export function PromotionTab() {
           </tbody>
         </table>
       </div>
+
+      <ListPager
+        page={page}
+        hasMore={hasMore}
+        total={total}
+        loading={loading}
+        onPrev={() => setPage((p) => Math.max(0, p - 1))}
+        onNext={() => setPage((p) => p + 1)}
+      />
 
       <PromotionEditor
         open={editorOpen}

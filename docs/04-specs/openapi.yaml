@@ -2109,6 +2109,99 @@ paths:
         '204': { description: 已删除 }
         '409': { description: 分类下还有商品或子分类(30003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
+  /admin/promotions:
+    get:
+      tags: [admin]
+      summary: 促销列表（分页 + 类型/状态筛选 + 关键字）
+      description: |
+        筛选与搜索都在 SQL 里完成（ADR-043）：之前 type/status 是「拉固定条数再内存过滤」，
+        活动超过一页时第二页起永远拿不到。`q` 匹配活动名称或活动码。
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: type
+          in: query
+          schema: { type: string, enum: [catalogue, order] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, active, inactive] }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: 活动名称或活动码（模糊）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items: { type: array, items: { type: object } }
+                      count: { type: integer, example: 12 }
+                      hasMore: { type: boolean, example: false }
+
+  /admin/promotions/vouchers:
+    get:
+      tags: [admin]
+      summary: 优惠券列表（分页 + 名称搜索）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: 券名称（模糊）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items: { type: array, items: { type: object } }
+                      count: { type: integer, example: 4 }
+                      hasMore: { type: boolean, example: false }
+
+  /admin/promotions/gift-cards:
+    get:
+      tags: [admin]
+      summary: 礼品卡列表（分页 + 卡号搜索）
+      security: [{ adminJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: q
+          in: query
+          schema: { type: string }
+          description: 卡号（模糊）
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items: { type: array, items: { type: object } }
+                      count: { type: integer, example: 6 }
+                      hasMore: { type: boolean, example: false }
+
   /admin/products:
     get:
       tags: [admin]

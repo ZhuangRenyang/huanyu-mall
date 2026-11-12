@@ -137,9 +137,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     setFeatureEnabled: async (feature: string, enabled: boolean) => {
       featureFlags[feature] = enabled;
     },
-    listVouchers: async ({ limit, offset }: { limit: number; offset: number }) => {
-      const items = [...vouchers.values()].slice(offset, offset + limit);
-      return { items, count: vouchers.size };
+    listVouchers: async ({ limit, offset, q }: { limit: number; offset: number; q?: string }) => {
+      // 与真实 repo 同口径：q 按名称模糊（大小写不敏感）
+      const all = [...vouchers.values()].filter(
+        (v) => !q || String(v.name).toLowerCase().includes(q.toLowerCase()),
+      );
+      const items = all.slice(offset, offset + limit);
+      return { items, count: all.length };
     },
     createVoucher: async (input: Record<string, unknown>) => {
       const id = `vouch_${++vCounter}`;
@@ -207,9 +211,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     consumeVoucherCodes: async () => {},
     releaseVoucherCodes: async () => {},
     // —— gift card（阶段 5）——
-    listGiftCards: async ({ limit, offset }: { limit: number; offset: number }) => {
-      const items = [...giftCards.values()].slice(offset, offset + limit);
-      return { items, count: giftCards.size };
+    listGiftCards: async ({ limit, offset, q }: { limit: number; offset: number; q?: string }) => {
+      // q 按卡号模糊
+      const all = [...giftCards.values()].filter(
+        (g) => !q || String(g.code).toLowerCase().includes(q.toLowerCase()),
+      );
+      const items = all.slice(offset, offset + limit);
+      return { items, count: all.length };
     },
     createGiftCard: async (input: Record<string, unknown>) => {
       const id = `gcard_${++gcCounter}`;
@@ -296,9 +304,30 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     consumeGiftCards: async () => {},
     releaseGiftCards: async () => {},
     // —— 目录/订单促销（promotion 表，二期补齐 admin 路由用）——
-    listPromotions: async ({ limit, offset }: { limit: number; offset: number }) => {
-      const items = [...promotions.values()].slice(offset, offset + limit);
-      return { items, count: promotions.size };
+    listPromotions: async ({
+      limit,
+      offset,
+      q,
+      type,
+      status,
+    }: {
+      limit: number;
+      offset: number;
+      q?: string;
+      type?: string;
+      status?: string;
+    }) => {
+      // 与真实 repo 同口径：筛选在查询里完成，不是取回后过滤
+      const all = [...promotions.values()].filter(
+        (p) =>
+          (!type || p.type === type) &&
+          (!status || p.status === status) &&
+          (!q ||
+            String(p.name).toLowerCase().includes(q.toLowerCase()) ||
+            String(p.code ?? "").toLowerCase().includes(q.toLowerCase())),
+      );
+      const items = all.slice(offset, offset + limit);
+      return { items, count: all.length };
     },
     createPromotion: async (input: Record<string, unknown>) => {
       const id = `promo_${++pCounter}`;

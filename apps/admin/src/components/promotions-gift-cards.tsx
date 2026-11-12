@@ -13,6 +13,7 @@ import {
   formatMoney,
 } from '@mall/ui';
 import { SelectField, TextField } from './field';
+import { ListPager, ListSearch } from './list-toolbar';
 import {
   adjustGiftCard,
   createGiftCard,
@@ -43,18 +44,34 @@ function fromLocalInput(v: string): string | null {
 
 export function GiftCardTab() {
   const [items, setItems] = useState<GiftCardView[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(0);
+  const [query, setQuery] = useState('');
+  const [applied, setApplied] = useState('');
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailFor, setDetailFor] = useState<GiftCardView | null>(null);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setApplied(query.trim());
+      setPage(0);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setItems(await listGiftCards());
+      const res = await listGiftCards({ q: applied || undefined, limit: 20, offset: page * 20 });
+      setItems(res.items);
+      setTotal(res.total);
+      setHasMore(res.hasMore);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applied, page]);
 
   useEffect(() => {
     void refresh();
@@ -71,14 +88,17 @@ export function GiftCardTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           礼品卡：卡码由系统生成，余额变动走「调账」留痕，下单抵扣后自动扣减。
         </p>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-          新建礼品卡
-        </Button>
+        <div className="flex items-center gap-2">
+          <ListSearch value={query} onChange={setQuery} placeholder="搜索卡号" />
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+            新建礼品卡
+          </Button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -130,6 +150,15 @@ export function GiftCardTab() {
           </tbody>
         </table>
       </div>
+
+      <ListPager
+        page={page}
+        hasMore={hasMore}
+        total={total}
+        loading={loading}
+        onPrev={() => setPage((p) => Math.max(0, p - 1))}
+        onNext={() => setPage((p) => p + 1)}
+      />
 
       <GiftCardCreate open={createOpen} onClose={() => setCreateOpen(false)} onSaved={refresh} />
       <GiftCardDetail card={detailFor} onClose={() => setDetailFor(null)} onChanged={refresh} />

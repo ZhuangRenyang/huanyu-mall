@@ -180,6 +180,14 @@ export type UpdateGiftCardInput = Partial<CreateGiftCardInput>;
 export interface ListQuery {
   limit: number;
   offset: number;
+  /** 关键字：促销/券按名称，礼品卡按卡号（后台列表搜索）。 */
+  q?: string;
+}
+
+/** 促销列表：额外支持类型与状态筛选（必须在 SQL 里筛，不能拉全量再内存过滤）。 */
+export interface PromotionListQuery extends ListQuery {
+  type?: PromotionType;
+  status?: PromotionStatus;
 }
 
 // —— computeDiscounts（ADR-012 §5，阶段 2-5 落地）——
@@ -225,7 +233,7 @@ export interface PromotionRepository {
   // promotion
   insertPromotion(input: CreatePromotionInput & { id: string }): Promise<PromotionDTO>;
   findPromotionById(id: string): Promise<PromotionDTO | null>;
-  listPromotions(q: ListQuery): Promise<{ items: PromotionDTO[]; count: number }>;
+  listPromotions(q: PromotionListQuery): Promise<{ items: PromotionDTO[]; count: number }>;
   updatePromotion(id: string, patch: UpdatePromotionInput): Promise<PromotionDTO | null>;
   softDeletePromotion(id: string): Promise<void>;
   /** 目录促销算折扣：active + catalogue + 有效期内的 promotion 连同其 rules（一次查询，禁 N+1）。 */

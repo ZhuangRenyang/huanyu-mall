@@ -14,6 +14,7 @@ import {
   formatMoney,
 } from '@mall/ui';
 import { SelectField, TextField } from './field';
+import { ListPager, ListSearch } from './list-toolbar';
 import {
   addVoucherCodes,
   createVoucher,
@@ -67,19 +68,36 @@ function discountText(v: Pick<VoucherView, 'discountType' | 'discountValue'>): s
 
 export function VoucherTab() {
   const [items, setItems] = useState<VoucherView[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [page, setPage] = useState(0);
+  /** 搜索：输入即请求会每敲一个字打一次接口，300ms 防抖。 */
+  const [query, setQuery] = useState('');
+  const [applied, setApplied] = useState('');
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<VoucherView | null>(null);
   const [codesFor, setCodesFor] = useState<VoucherDetailView | null>(null);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setApplied(query.trim());
+      setPage(0);
+    }, 300);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setItems(await listVouchers());
+      const res = await listVouchers({ q: applied || undefined, limit: 20, offset: page * 20 });
+      setItems(res.items);
+      setTotal(res.total);
+      setHasMore(res.hasMore);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applied, page]);
 
   useEffect(() => {
     void refresh();
@@ -104,14 +122,17 @@ export function VoucherTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
           优惠券：满减 / 折扣，支持一券多码、限额与有效期。停用后立即不参与计算。
         </p>
-        <Button onClick={openCreate}>
-          <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
-          新建优惠券
-        </Button>
+        <div className="flex items-center gap-2">
+          <ListSearch value={query} onChange={setQuery} placeholder="搜索券名称" />
+          <Button onClick={openCreate}>
+            <Plus className="size-4" strokeWidth={2} aria-hidden="true" />
+            新建优惠券
+          </Button>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -174,6 +195,15 @@ export function VoucherTab() {
           </tbody>
         </table>
       </div>
+
+      <ListPager
+        page={page}
+        hasMore={hasMore}
+        total={total}
+        loading={loading}
+        onPrev={() => setPage((p) => Math.max(0, p - 1))}
+        onNext={() => setPage((p) => p + 1)}
+      />
 
       <VoucherEditor
         open={editorOpen}
