@@ -1,11 +1,138 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Copy, CreditCard, MapPin, Truck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Badge, formatMoney } from '@mall/ui';
+import { Badge, Button, formatMoney } from '@mall/ui';
+import { loadOrderRefunds, requestOrderRefund, type StoreRefundView } from '@/lib/refunds';
 import { OrderTimeline } from './order-timeline';
 import { ORDER_STATUS_META, formatDateTime, type OrderView } from '@/lib/orders';
+
+/**
+ * 申请退款（淘宝「申请售后」）。
+ *
+ * 只在已付款的订单上出现；提交后是「待商家处理」，不是立即到账。
+ * 已有申请时显示进度，避免顾客重复申请。
+ */
+function RefundPanel({
+  orderId,
+  status,
+  amountMinor,
+  currencyCode,
+}: {
+  orderId: string;
+  status: OrderView['status'];
+  amountMinor: number;
+  currencyCode: string;
+}) {
+  const [refunds, setRefunds] = useState<StoreRefundView[]>([]);
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const refundable = status === 'to_ship' || status === 'to_receive' || status === 'completed';
+
+  useEffect(() => {
+    if (!refundable) return;
+    let cancelled = false;
+    void loadOrderRefunds(orderId).then((rows) => {
+      if (!cancelled) setRefunds(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId, refundable]);
+
+  if (!refundable) return null;
+
+  const pending = refunds.find((r) => r.status === 'pending');
+  const approved = refunds.find((r) => r.status === 'approved');
+  const rejected = refunds.find((r) => r.status === 'rejected');
+
+  if (pending || done) {
+    return (
+      <section className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-medium text-foreground">退款申请</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          已提交，商家处理中。处理结果会显示在这里，也会通知到你的邮箱。
+        </p>
+      </section>
+    );
+  }
+
+  if (approved) {
+    return (
+      <section className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-medium text-foreground">退款申请</h3>
+        <p className="mt-1 text-sm text-success">
+          退款已原路退回，到账时间以支付渠道为准（通常 1–3 个工作日）。
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <h3 className="text-sm font-medium text-foreground">需要退款？</h3>
+      {rejected && (
+        <p className="mt-1 text-sm text-muted-foreground">
+          上次申请已被拒绝：{rejected.reviewNote ?? '（商家未填写理由）'}
+        </p>
+      )}
+      {!open ? (
+        <Button className="mt-3" variant="secondary" size="sm" onClick={() => setOpen(true)}>
+          申请退款
+        </Button>
+      ) : (
+        <div className="mt-3 space-y-2">
+          <label htmlFor="refund-reason" className="block text-xs font-medium text-foreground">
+            退款原因
+          </label>
+          <textarea
+            id="refund-reason"
+            rows={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="如：不想要了 / 商品有瑕疵 / 发错货"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
+          />
+          <p className="text-xs text-muted-foreground">
+            将全额退回 {formatMoney(amountMinor, currencyCode)}，商家同意后原路退回。
+          </p>
+          {error && (
+            <p className="text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={busy || reason.trim().length < 2}
+              onClick={() => {
+                setBusy(true);
+                setError(null);
+                void requestOrderRefund(orderId, reason.trim())
+                  .then(() => {
+                    setOpen(false);
+                    setDone(true);
+                  })
+                  .catch((err: unknown) => setError(err instanceof Error ? err.message : '提交失败'))
+                  .finally(() => setBusy(false));
+              }}
+            >
+              {busy ? '提交中…' : '提交申请'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function CopyText({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -131,6 +258,13 @@ export function OrderDetail({ order }: { order: OrderView }) {
             <p className="text-sm text-foreground">{order.paymentMethod}</p>
           </InfoCard>
         </div>
+
+        <RefundPanel
+          orderId={order.id}
+          status={order.status}
+          amountMinor={order.totalMinor}
+          currencyCode={order.currencyCode}
+        />
       </div>
     </div>
   );

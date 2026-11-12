@@ -37,6 +37,8 @@ export function mapOrder(order: OrderDetailDTO) {
 export function mapAdminOrder(order: OrderDetailDTO) {
   return {
     ...mapOrder(order),
+    /** 商家备注只在后台出现，店面接口不带（mapOrder 不含此字段）。 */
+    merchant_note: order.merchant_note,
     discounts: (order.discounts ?? []).map((d) => ({
       type: d.type,
       promotion_id: d.promotion_id,

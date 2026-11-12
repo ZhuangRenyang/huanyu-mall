@@ -61,6 +61,11 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
             })
           : [];
       const priceByVariant = new Map(prices.map((p) => [p.variantId, p.amountMinor]));
+      // 主图：批量取 URL。原来这里写死 null，导致店面列表永远没有图。
+      const thumbIds = res.items
+        .map((p) => p.thumbnail_file_id)
+        .filter((id): id is string => Boolean(id));
+      const thumbUrls = thumbIds.length > 0 ? await deps.services.file.getPublicUrls(thumbIds) : {};
       const items = res.items.map((p) => {
         const amounts = p.variants
           .map((v) => priceByVariant.get(v.id))
@@ -72,7 +77,7 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
           handle: p.handle,
           subtitle: p.subtitle,
           status: p.status,
-          thumbnail_url: null,
+          thumbnail_url: p.thumbnail_file_id ? (thumbUrls[p.thumbnail_file_id] ?? null) : null,
           price:
             min !== undefined
               ? { amount_minor: Number(min), currency_code: channel.currency_code }
@@ -128,12 +133,16 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
       subtitle: detail.subtitle,
       description: detail.description,
       status: detail.status,
-      images: detail.images.map((img) => ({
-        id: img.id,
-        url: `/uploads/${img.file_id}`,
-        alt: img.alt,
-        is_primary: img.is_primary,
-      })),
+      images: await (async () => {
+        // URL 必须由 file 模块按 storage key 生成；直接拼 file_id 会 404（key ≠ id）
+        const urls = await deps.services.file.getPublicUrls(detail.images.map((i) => i.file_id));
+        return detail.images.map((img) => ({
+          id: img.id,
+          url: urls[img.file_id] ?? "",
+          alt: img.alt,
+          is_primary: img.is_primary,
+        }));
+      })(),
       variants: detail.variants.map((v) => {
         const price = priceByVariant.get(v.id);
         const available = availByVariant.get(v.id) ?? 0;

@@ -63,6 +63,15 @@ export class FileService implements IFileModuleService {
     return `${this.config.publicBaseUrl}/${key}`;
   }
 
+  async getPublicUrls(ids: string[]): Promise<Record<string, string>> {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return {};
+    const files = await this.repo.findByIds(unique);
+    const out: Record<string, string> = {};
+    for (const f of files) out[f.id] = `${this.config.publicBaseUrl}/${f.key}`;
+    return out;
+  }
+
   async deleteFile(id: string): Promise<void> {
     const file = await this.repo.findById(id);
     if (!file) throw fileNotFound(id);

@@ -1,8 +1,9 @@
-import type { AdminOrder, AdminOrderLine } from './admin-data';
+import type { AdminOrder, AdminOrderLine, AdminOrderLog } from './admin-data';
 import { adminClient, getAdminApiMode } from './admin-client';
 import {
   listOrders as mockListOrders,
   listShippedLocations,
+  setOrderNote as mockSetOrderNote,
   shipOrder as mockShipOrder,
 } from './admin-store';
 import { MOCK_BACKUP_LOCATION_ID, MOCK_MAIN_LOCATION_ID } from './admin-inventory';
@@ -47,6 +48,7 @@ interface ApiOrder {
     sku?: string;
   }>;
   shipping_method?: { carrier_name?: string | null; name?: string | null } | null;
+  merchant_note?: string | null;
 }
 
 function addressText(addr?: Record<string, unknown>): string {
@@ -94,7 +96,45 @@ function mapOrder(o: ApiOrder): AdminOrder {
     items,
     shippingAddress: addressText(o.shipping_address),
     carrier: o.shipping_method?.carrier_name ?? undefined,
+    merchantNote: o.merchant_note ?? null,
   };
+}
+
+/** 写商家备注；传空串等于清空。 */
+export async function setOrderNote(id: string, note: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    mockSetOrderNote(id, note);
+    return;
+  }
+  await adminClient().setOrderNote(id, { note: note.trim() === '' ? null : note.trim() });
+}
+
+/**
+ * 订单操作日志。
+ *
+ * mock 模式没有真实审计流水，返回空数组并在界面提示「演示模式无日志」，
+ * 不编造假数据 —— 假日志比没日志更坏。
+ */
+export async function listOrderLogs(id: string): Promise<AdminOrderLog[]> {
+  if (getAdminApiMode() !== 'live') return [];
+  const res = (await adminClient().listOrderLogs(id)) as {
+    items?: Array<{
+      id: string;
+      action: string;
+      actor?: string | null;
+      created_at: string;
+      before?: unknown;
+      after?: unknown;
+    }>;
+  };
+  return (res.items ?? []).map((r) => ({
+    id: r.id,
+    action: r.action,
+    actor: r.actor ?? '系统',
+    createdAt: r.created_at,
+    before: r.before,
+    after: r.after,
+  }));
 }
 
 export async function listOrders(): Promise<AdminOrder[]> {

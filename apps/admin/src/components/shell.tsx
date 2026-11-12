@@ -1,11 +1,13 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
+  Banknote,
   ClipboardList,
   Gift,
   LogOut,
   Package,
   Settings,
   Tag,
+  Truck,
   TicketPercent,
   Warehouse,
 } from 'lucide-react';
@@ -31,11 +33,17 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     items: [
       { to: '/products', label: '商品列表', icon: Package },
       { to: '/inventory', label: '库存', icon: Warehouse },
+      // 运费模板是低频配置项，放商品域末尾：日常用的是上面两个
+      { to: '/shipping-profiles', label: '运费模板', icon: Truck },
     ],
   },
   {
     label: '订单',
-    items: [{ to: '/orders', label: '订单列表', icon: ClipboardList }],
+    items: [
+      { to: '/orders', label: '订单列表', icon: ClipboardList },
+      // 退款是独立单据（有自己的状态与时效），必须能单独筛出待处理
+      { to: '/refunds', label: '退款管理', icon: Banknote },
+    ],
   },
   {
     label: '营销',

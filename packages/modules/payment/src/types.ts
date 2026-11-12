@@ -175,6 +175,8 @@ export interface IPaymentModuleService {
   createPaymentCollection(input: CreateCollectionInput): Promise<PaymentCollectionDTO>;
   /** 按订单反查支付集合（复用 workflow 建好的集合，避免旁路新建 order_id 为空的空壳）。 */
   findCollectionByOrderId(orderId: string): Promise<PaymentCollectionDTO | null>;
+  /** 按订单反查支付单（退款时要知道退哪一笔，避免调用方拼两步查询）。 */
+  findPaymentByOrderId(orderId: string): Promise<PaymentDTO | null>;
   createSession(input: CreateSessionInput): Promise<PaymentSessionDTO>;
   findCollectionById(id: string): Promise<PaymentCollectionDTO | null>;
   authorizeSession(sessionId: string): Promise<PaymentDTO>;

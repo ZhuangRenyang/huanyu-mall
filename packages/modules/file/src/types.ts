@@ -49,6 +49,8 @@ export interface FileRepository {
   insertFile(input: InsertFileInput): Promise<FileDTO>;
   insertVariant(input: InsertFileVariantInput): Promise<FileVariantDTO>;
   findById(id: string): Promise<FileDTO | null>;
+  /** 批量取文件元数据（商品列表补缩略图用，禁 N+1）。 */
+  findByIds(ids: string[]): Promise<FileDTO[]>;
   findVariant(fileId: string, variant: ImageVariantName): Promise<FileVariantDTO | null>;
   softDelete(id: string): Promise<void>;
 }
@@ -56,5 +58,7 @@ export interface FileRepository {
 export interface IFileModuleService {
   upload(input: UploadInput): Promise<FileDTO>;
   getPublicUrl(id: string, variant?: ImageVariantName): Promise<string>;
+  /** 批量取公开 URL（id → url），查不到的 id 不出现。 */
+  getPublicUrls(ids: string[]): Promise<Record<string, string>>;
   deleteFile(id: string): Promise<void>;
 }

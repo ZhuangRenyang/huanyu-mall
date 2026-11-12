@@ -1,5 +1,13 @@
 import { prefixedUlid } from "@mall/core";
-import { orderNotFound, partialRefundNotSupported, refundNotAllowed } from "../errors.js";
+import {
+  orderNotFound,
+  partialRefundNotSupported,
+  refundAlreadyPending,
+  refundAlreadyReviewed,
+  refundNotAllowed,
+  refundRequestNotFound,
+  refundReviewNoteRequired,
+} from "../errors.js";
 import { assertTransition, isRefundable } from "./state-machine.js";
 import type {
   Actor,
@@ -11,6 +19,8 @@ import type {
   OrderRepository,
   OrderStatus,
   RefundRequestDTO,
+  RefundRequestQuery,
+  RefundRequestSource,
 } from "../types.js";
 
 /** M05 对外门面（架构 §2.1）。createOrder 冻结行快照，之后 retrieve 不回查目录。 */
@@ -95,6 +105,13 @@ export class OrderService implements IOrderModuleService {
     return this.retrieveOrder(id);
   }
 
+  async setMerchantNote(id: string, note: string | null): Promise<OrderDetailDTO> {
+    const trimmed = note?.trim() ?? '';
+    const updated = await this.repo.setMerchantNote(id, trimmed === '' ? null : trimmed);
+    if (!updated) throw orderNotFound(id);
+    return this.retrieveOrder(id);
+  }
+
   async retrieveOrder(id: string): Promise<OrderDetailDTO> {
     const order = await this.repo.findById(id);
     if (!order) throw orderNotFound(id);
@@ -122,15 +139,82 @@ export class OrderService implements IOrderModuleService {
     return updated!;
   }
 
+  /**
+   * 创建退款申请单（落库为 pending）。
+   *
+   * 两个来源共用：买家在店面申请（source=customer）、商家在后台主动退（source=merchant）。
+   * 校验三件事：订单可退、金额为全额（一期不支持部分退）、没有待处理申请。
+   * 真正打款不在这里做 —— 由 refund-order workflow 在商家同意后执行。
+   */
   async createRefundRequest(
     orderId: string,
-    input: { amountMinor: bigint; reason: string },
+    input: {
+      amountMinor: bigint;
+      reason: string;
+      source: RefundRequestSource;
+      customerId?: string | null;
+    },
   ): Promise<RefundRequestDTO> {
     const order = await this.repo.findById(orderId);
     if (!order) throw orderNotFound(orderId);
     if (!isRefundable(order.status)) throw refundNotAllowed(`order status ${order.status}`);
     if (input.amountMinor !== order.total_minor) throw partialRefundNotSupported();
-    return { orderId, amountMinor: input.amountMinor, currencyCode: order.currency_code, reason: input.reason };
+    if (await this.repo.findPendingRefundRequest(orderId)) throw refundAlreadyPending(orderId);
+
+    return this.repo.insertRefundRequest({
+      id: prefixedUlid("rfr"),
+      orderId,
+      customerId: input.customerId ?? order.customer_id,
+      amountMinor: input.amountMinor,
+      currencyCode: order.currency_code,
+      reason: input.reason,
+      source: input.source,
+    });
+  }
+
+  async listRefundRequests(
+    q: RefundRequestQuery,
+  ): Promise<{ items: RefundRequestDTO[]; count: number }> {
+    return this.repo.listRefundRequests(q);
+  }
+
+  async findRefundRequest(id: string): Promise<RefundRequestDTO | null> {
+    return this.repo.findRefundRequest(id);
+  }
+
+  /** 同意退款：workflow 执行打款成功后回写（refund_id 即资金流水）。 */
+  async approveRefundRequest(
+    id: string,
+    refundId: string,
+    reviewNote?: string | null,
+  ): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
+    const updated = await this.repo.updateRefundRequest(id, {
+      status: "approved",
+      refundId,
+      reviewNote: reviewNote ?? null,
+    });
+    return updated!;
+  }
+
+  async rejectRefundRequest(id: string, reviewNote: string): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
+    const note = reviewNote.trim();
+    if (note === "") throw refundReviewNoteRequired();
+    const updated = await this.repo.updateRefundRequest(id, { status: "rejected", reviewNote: note });
+    return updated!;
+  }
+
+  async cancelRefundRequest(id: string): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
+    const updated = await this.repo.updateRefundRequest(id, { status: "canceled" });
+    return updated!;
   }
 
   async markRefundSettled(orderId: string, _refundRequestId: string): Promise<OrderDTO> {

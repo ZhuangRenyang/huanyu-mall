@@ -147,6 +147,11 @@ export function saveProduct(product: ProductDraft): void {
   write(KEYS.products, list);
 }
 
+/** mock：整组覆盖商品（批量上架/下架/删除用）。 */
+export function replaceProducts(list: ProductDraft[]): void {
+  write(KEYS.products, list);
+}
+
 export function deleteProduct(id: string): void {
   write(
     KEYS.products,
@@ -161,6 +166,13 @@ export function listOrders(): AdminOrder[] {
 
 export function getOrder(id: string): AdminOrder | null {
   return listOrders().find((o) => o.id === id) ?? null;
+}
+
+/** mock：写商家备注（空串=清空）。 */
+export function setOrderNote(id: string, note: string): void {
+  updateOrder(id, (o) => {
+    o.merchantNote = note.trim() === '' ? null : note.trim();
+  });
 }
 
 function updateOrder(id: string, mutate: (o: AdminOrder) => void): void {

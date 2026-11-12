@@ -28,6 +28,8 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
     product_type_id: null,
     metadata: null,
   };
+  /** 可变的商品集合：批量操作会改状态/删除，测试要能看到变化。 */
+  const products: Array<typeof product> = [product];
   const variant = {
     id: "var_1",
     product_id: "prod_1",
@@ -44,7 +46,47 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
       getChannel: async () => channel,
     },
     product: {
-      listProducts: async () => ({ items: [product], count: 1 }),
+      // 支持状态/关键词过滤与批量改状态：批量操作测试要看到真实影响
+      listProducts: async (q: {
+        status?: string;
+        q?: string;
+        limit?: number;
+        offset?: number;
+      } = {}) => {
+        let all = products.filter((p) => !q.status || p.status === q.status);
+        if (q.q) {
+          const needle = q.q.toLowerCase();
+          all = all.filter(
+            (p) =>
+              p.title.toLowerCase().includes(needle) || p.handle.toLowerCase().includes(needle),
+          );
+        }
+        const offset = q.offset ?? 0;
+        const limit = q.limit ?? all.length;
+        return { items: all.slice(offset, offset + limit), count: all.length };
+      },
+      countByStatus: async () => {
+        const out: Record<string, number> = {};
+        for (const p of products) out[p.status] = (out[p.status] ?? 0) + 1;
+        return out;
+      },
+      bulkUpdateStatus: async (ids: string[], status: string) => {
+        let n = 0;
+        for (const p of products) {
+          if (ids.includes(p.id)) {
+            p.status = status;
+            n += 1;
+          }
+        }
+        return n;
+      },
+      bulkDelete: async (ids: string[]) => {
+        const before = products.length;
+        for (let i = products.length - 1; i >= 0; i -= 1) {
+          if (ids.includes(products[i]!.id)) products.splice(i, 1);
+        }
+        return before - products.length;
+      },
       listProductsWithVariants: async () => ({
         items: [{ ...product, variants: [variant] }],
         count: 1,
@@ -70,7 +112,41 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
         variants: [],
         images: [],
       }),
-      updateProduct: async () => product,
+      // 按真实 DTO 契约回显（服务层入参 camelCase → DTO snake_case）：
+      // 路由若把字段名弄错，这里就会漏字段，测试能立刻看出来
+      updateProduct: async (
+        _id: string,
+        patch: {
+          title?: string;
+          subtitle?: string | null;
+          status?: string;
+          shippingProfileId?: string | null;
+          freeShipping?: boolean;
+        },
+      ) => ({
+        ...product,
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.shippingProfileId !== undefined
+          ? { shipping_profile_id: patch.shippingProfileId }
+          : {}),
+        ...(patch.freeShipping !== undefined ? { free_shipping: patch.freeShipping } : {}),
+      }),
+      replaceProductImages: async (productId: string, fileIds: string[]) => ({
+        ...product,
+        id: productId,
+        thumbnail_file_id: fileIds[0] ?? null,
+        description: null,
+        images: fileIds.map((fileId, index) => ({
+          id: `pimg_${index}`,
+          product_id: productId,
+          file_id: fileId,
+          alt: null,
+          sort_order: index,
+          is_primary: index === 0,
+        })),
+        variants: [variant],
+      }),
       deleteProduct: async () => {},
       listVariantsByIds: async () => [variant],
       resolveSellableVariants: async () => ({ items: [], count: 0 }),

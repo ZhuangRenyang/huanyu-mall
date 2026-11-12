@@ -11,10 +11,13 @@ import {
   SheetTitle,
   cn,
 } from '@mall/ui';
-import { SelectField, TextField } from './field';
+import { SelectField, TextAreaField, TextField } from './field';
+import { ImageUploader } from './image-uploader';
+import { getShippingConfig, type ShippingProfileView } from '@/lib/admin-shipping';
+import { Switch } from '@mall/ui';
 import { newId } from '@/lib/admin-store';
 import { saveProduct } from '@/lib/admin-api';
-import type { ProductDraft, ProductStatus, VariantDraft } from '@/lib/admin-data';
+import type { ProductDraft, ProductImageDraft, ProductStatus, VariantDraft } from '@/lib/admin-data';
 
 function minorToYuan(m: number): string {
   return (m / 100).toFixed(2);
@@ -42,6 +45,19 @@ export function ProductEditor({
   const [status, setStatus] = useState<ProductStatus>('draft');
   const [variants, setVariants] = useState<VariantDraft[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  /** 运费归属：模板 + 卖家包邮（淘宝发布页的「物流信息」）。 */
+  const [profiles, setProfiles] = useState<ShippingProfileView[]>([]);
+  const [profileId, setProfileId] = useState<string>('');
+  const [freeShipping, setFreeShipping] = useState(false);
+  /** 图集（第一张主图）与详情描述 —— 淘宝发布页在「价格库存」之后。 */
+  const [images, setImages] = useState<ProductImageDraft[]>([]);
+  const [description, setDescription] = useState('');
+
+  useEffect(() => {
+    void getShippingConfig()
+      .then((c) => setProfiles(c.profiles))
+      .catch(() => setProfiles([]));
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -51,12 +67,20 @@ export function ProductEditor({
       setSubtitle(product.subtitle ?? '');
       setStatus(product.status);
       setVariants(product.variants.map((v) => ({ ...v })));
+      setProfileId(product.shippingProfileId ?? '');
+      setFreeShipping(product.freeShipping ?? false);
+      setImages(product.images ?? []);
+      setDescription(product.description ?? '');
     } else {
       setTitle('');
       setHandle('');
       setSubtitle('');
       setStatus('draft');
       setVariants([emptyVariant()]);
+      setProfileId('');
+      setFreeShipping(false);
+      setImages([]);
+      setDescription('');
     }
     setErrors({});
   }, [open, product]);
@@ -91,6 +115,10 @@ export function ProductEditor({
       status,
       variants,
       createdAt: product?.createdAt ?? new Date().toISOString().slice(0, 10),
+      shippingProfileId: profileId || null,
+      freeShipping,
+      description: description.trim() || undefined,
+      images,
     });
     onSaved();
   };
@@ -183,6 +211,64 @@ export function ProductEditor({
           <p className="text-xs text-muted-foreground">
             共 {variants.length} 个变体 · 价格区间 ¥{minorToYuan(minPrice)}–¥{minorToYuan(maxPrice)} · 总库存 {totalStock}
           </p>
+        </section>
+
+        {/*
+          运费（淘宝发布页的「物流信息」）。
+          位置照淘宝：在**价格与库存之后**，不是标题后面 ——
+          商家填价、填库存、再决定怎么发货，是发布商品的自然顺序。
+          商品只负责「用哪套模板 / 是否包邮」，金额在模板里配。
+        */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground">运费</h3>
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              卖家包邮
+              <Switch
+                checked={freeShipping}
+                onCheckedChange={setFreeShipping}
+                aria-label={freeShipping ? '取消卖家包邮' : '设为卖家包邮'}
+              />
+            </span>
+          </div>
+          <SelectField
+            id="p-shipping-profile"
+            label="运费模板"
+            value={profileId || '__default__'}
+            onChange={(e) => setProfileId(e.target.value === '__default__' ? '' : e.target.value)}
+            disabled={freeShipping}
+            options={[
+              { value: '__default__', label: '默认模板' },
+              ...profiles
+                .filter((p) => !p.isDefault)
+                .map((p) => ({ value: p.id, label: p.name })),
+            ]}
+          />
+          <p className="text-xs leading-5 text-muted-foreground">
+            {freeShipping
+              ? '本商品不向顾客收运费，运费由商家承担（其金额也不计入满额包邮门槛）。'
+              : '结账时按收货国家自动匹配模板里的运费，顾客不用选。模板在「商品 → 运费模板」里维护。'}
+          </p>
+        </section>
+
+        {/* 商品图片：淘宝发布页在物流信息之后 */}
+        <section className="space-y-3">
+          <h3 className="text-sm font-semibold text-foreground">商品图片</h3>
+          <ImageUploader images={images} onChange={setImages} />
+        </section>
+
+        {/* 商品详情：淘宝最后一块是详情描述 */}
+        <section className="space-y-3">
+          <h3 className="text-sm font-semibold text-foreground">商品详情</h3>
+          <TextAreaField
+            id="p-description"
+            label="详情描述"
+            placeholder="材质、尺寸、使用说明……空行分段，店面按段落展示"
+            rows={6}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="min-h-[140px]"
+          />
         </section>
       </div>
         </SheetBody>

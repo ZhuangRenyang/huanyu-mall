@@ -108,6 +108,15 @@ export interface ProductLookupPort {
   listCategoryIdsByProducts(
     productIds: string[],
   ): Promise<Array<{ productId: string; categoryIds: string[] }>>;
+  /**
+   * 批量查商品的运费归属（运费模板 + 是否卖家包邮）。
+   *
+   * 运费跟着商品走：不同商品可挂不同模板，也可以卖家包邮。
+   * 结账据此分组算运费，不能全店一套价（淘宝/Shopify 同做法）。
+   */
+  listShippingInfoByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; profileId: string | null; freeShipping: boolean }>>;
 }
 
 /** 定价端口：按币种/渠道/数量算价（唯一计价入口）。 */
@@ -186,11 +195,13 @@ export interface ShippingMethodInput {
 
 /** 运费方案查询端口（跨模块走端口，M08 fulfillment）。 */
 export interface ShippingLookupPort {
-  /** 按渠道 + 国家列可用运费方案（自动选最便宜的那个）。 */
+  /** 按渠道 + 国家 + 模板列可用运费方案（自动选最便宜的那个）。 */
   listShippingOptions(input: {
     channelId: string;
     countryCode: string;
     cartSubtotalMinor: bigint;
+    /** 商品的运费模板；null = 默认模板。 */
+    profileId?: string | null;
   }): Promise<Array<{ id: string; name: string }>>;
   findShippingOption(
     id: string,

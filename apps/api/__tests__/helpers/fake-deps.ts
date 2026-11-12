@@ -176,7 +176,10 @@ export function makeDeps(): AppDeps & { seen: Set<string>; auditRepo: InMemoryAu
   };
   const auditFixture = makeAuditFixture();
   const services = makeFakeServices(state);
-  const workflow = { run: async () => ({ result: { orderId: "ord_1" }, executionId: "wf_1" }) };
+  // 退款工作流要回 refundId（真实实现由 payment 生成）
+  const workflow = {
+    run: async () => ({ result: { orderId: "ord_1", refundId: "rfd_1" }, executionId: "wf_1" }),
+  };
 
   return {
     config: {

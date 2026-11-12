@@ -5,6 +5,8 @@ import { LoginPage } from './pages/login';
 import { ProductsPage } from './pages/products';
 import { OrdersPage } from './pages/orders';
 import { InventoryPage } from './pages/inventory';
+import { ShippingProfilesPage } from './pages/shipping-profiles';
+import { RefundsPage } from './pages/refunds';
 import { SettingsPage } from './pages/settings';
 import {
   MarketingGiftCardsPage,
@@ -21,7 +23,9 @@ export function App() {
           <Route index element={<Navigate to="/products" replace />} />
           <Route path="products" element={<ProductsPage />} />
           <Route path="orders" element={<OrdersPage />} />
+          <Route path="refunds" element={<RefundsPage />} />
           <Route path="inventory" element={<InventoryPage />} />
+          <Route path="shipping-profiles" element={<ShippingProfilesPage />} />
           <Route path="marketing">
             <Route index element={<Navigate to="promotions" replace />} />
             <Route path="promotions" element={<MarketingPromotionsPage />} />

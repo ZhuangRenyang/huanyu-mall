@@ -13,6 +13,10 @@ export const product = pgTable(
     status: text("status").notNull().default("draft"),
     thumbnailFileId: text("thumbnail_file_id"),
     productTypeId: text("product_type_id"),
+    /** 运费模板 id（对齐淘宝发布页的「运费模板」）；NULL = 用默认模板。 */
+    shippingProfileId: text("shipping_profile_id"),
+    /** 卖家包邮（淘宝的「卖家承担运费」）：该商品不产生运费。 */
+    freeShipping: boolean("free_shipping").notNull().default(false),
     metadata: jsonb("metadata"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

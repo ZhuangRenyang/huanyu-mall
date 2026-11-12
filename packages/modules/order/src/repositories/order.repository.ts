@@ -13,6 +13,10 @@ import type {
   OrderShippingMethodDTO,
   OrderStatus,
   PaymentStatus,
+  RefundRequestDTO,
+  RefundRequestQuery,
+  RefundRequestSource,
+  RefundRequestStatus,
 } from "../types.js";
 
 type Db = NodePgDatabase<typeof schema>;
@@ -167,6 +171,106 @@ export class DrizzleOrderRepository implements OrderRepository {
     });
   }
 
+  // ---- 退款申请单 ----
+
+  async insertRefundRequest(input: {
+    id: string;
+    orderId: string;
+    customerId: string | null;
+    amountMinor: bigint;
+    currencyCode: string;
+    reason: string;
+    source: RefundRequestSource;
+  }): Promise<RefundRequestDTO> {
+    const rows = await this.db
+      .insert(schema.refundRequest)
+      .values({
+        id: input.id,
+        orderId: input.orderId,
+        customerId: input.customerId,
+        amountMinor: input.amountMinor,
+        currencyCode: input.currencyCode,
+        reason: input.reason,
+        source: input.source,
+      })
+      .returning();
+    return toRefundRequestDTO(rows[0]!);
+  }
+
+  async findRefundRequest(id: string): Promise<RefundRequestDTO | null> {
+    const rows = await this.db
+      .select({
+        req: schema.refundRequest,
+        email: schema.order.email,
+      })
+      .from(schema.refundRequest)
+      .leftJoin(schema.order, eq(schema.order.id, schema.refundRequest.orderId))
+      .where(eq(schema.refundRequest.id, id))
+      .limit(1);
+    const row = rows[0];
+    return row ? toRefundRequestDTO(row.req, row.email) : null;
+  }
+
+  async findPendingRefundRequest(orderId: string): Promise<RefundRequestDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.refundRequest)
+      .where(
+        and(eq(schema.refundRequest.orderId, orderId), eq(schema.refundRequest.status, "pending")),
+      )
+      .limit(1);
+    return rows[0] ? toRefundRequestDTO(rows[0]) : null;
+  }
+
+  async listRefundRequests(q: RefundRequestQuery): Promise<{ items: RefundRequestDTO[]; count: number }> {
+    const where = q.status ? eq(schema.refundRequest.status, q.status) : undefined;
+    const limit = q.limit ?? 20;
+    const offset = q.offset ?? 0;
+    const rows = await this.db
+      .select({ req: schema.refundRequest, email: schema.order.email })
+      .from(schema.refundRequest)
+      .leftJoin(schema.order, eq(schema.order.id, schema.refundRequest.orderId))
+      .where(where)
+      .orderBy(desc(schema.refundRequest.createdAt))
+      .limit(limit)
+      .offset(offset);
+    const totalRows = await this.db
+      .select({ id: schema.refundRequest.id })
+      .from(schema.refundRequest)
+      .where(where);
+    return {
+      items: rows.map((r) => toRefundRequestDTO(r.req, r.email)),
+      count: totalRows.length,
+    };
+  }
+
+  async updateRefundRequest(
+    id: string,
+    patch: { status: RefundRequestStatus; reviewNote?: string | null; refundId?: string | null },
+  ): Promise<RefundRequestDTO | null> {
+    const rows = await this.db
+      .update(schema.refundRequest)
+      .set({
+        status: patch.status,
+        ...(patch.reviewNote !== undefined ? { reviewNote: patch.reviewNote } : {}),
+        ...(patch.refundId !== undefined ? { refundId: patch.refundId } : {}),
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.refundRequest.id, id))
+      .returning();
+    return rows[0] ? toRefundRequestDTO(rows[0]) : null;
+  }
+
+  async setMerchantNote(id: string, note: string | null): Promise<OrderDTO | null> {
+    const rows = await this.db
+      .update(schema.order)
+      .set({ merchantNote: note, updatedAt: new Date() })
+      .where(eq(schema.order.id, id))
+      .returning();
+    return rows[0] ? toOrderDTO(rows[0]) : null;
+  }
+
   async findById(id: string): Promise<OrderDTO | null> {
     const rows = await this.db.select().from(schema.order).where(eq(schema.order.id, id)).limit(1);
     return rows[0] ? toOrderDTO(rows[0]) : null;
@@ -227,6 +331,27 @@ export class DrizzleOrderRepository implements OrderRepository {
   }
 }
 
+function toRefundRequestDTO(
+  r: typeof schema.refundRequest.$inferSelect,
+  orderEmail?: string | null,
+): RefundRequestDTO {
+  return {
+    id: r.id,
+    order_id: r.orderId,
+    customer_id: r.customerId ?? null,
+    amount_minor: r.amountMinor,
+    currency_code: r.currencyCode,
+    reason: r.reason,
+    source: r.source as RefundRequestDTO["source"],
+    status: r.status as RefundRequestDTO["status"],
+    review_note: r.reviewNote ?? null,
+    reviewed_at: r.reviewedAt ? r.reviewedAt.toISOString() : null,
+    refund_id: r.refundId ?? null,
+    created_at: r.createdAt.toISOString(),
+    order_email: orderEmail ?? null,
+  };
+}
+
 function toOrderDTO(r: typeof schema.order.$inferSelect): OrderDTO {
   return {
     id: r.id,
@@ -245,6 +370,7 @@ function toOrderDTO(r: typeof schema.order.$inferSelect): OrderDTO {
     payment_status: r.paymentStatus as PaymentStatus,
     shipping_address: (r.shippingAddress as Record<string, unknown>) ?? {},
     payment_collection_id: r.paymentCollectionId ?? null,
+    merchant_note: r.merchantNote ?? null,
     placed_at: r.placedAt ? r.placedAt.toISOString() : null,
   };
 }

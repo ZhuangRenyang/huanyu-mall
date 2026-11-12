@@ -61,8 +61,10 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     live ? [] : PAYMENT_PROVIDERS,
   );
   const [optionsLoading, setOptionsLoading] = useState(live);
-  // 可选国家：以后端为准（内置常用 ∪ 已配税率），带各国家税率
+  // 可选国家：以后端可配送范围为准（ADR-019），带各国家税率
   const [countries, setCountries] = useState<CheckoutCountry[]>([]);
+  /** 配送范围是否已配置：'none' 时挡住下单（不让顾客填完地址才发现下不了单）。 */
+  const [shippingStatus, setShippingStatus] = useState<'ok' | 'none' | 'unknown'>('unknown');
   const headingRef = useRef<HTMLHeadingElement>(null);
   // mutatePromo 是 useCallback，直接依赖 form.country 会让每个按键都重建；
   // 用 ref 取最新国家，写码后重读合计时就能带上正确税率。
@@ -74,17 +76,20 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const [promoBusy, setPromoBusy] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
 
-  // 可选国家清单：进页面拉一次；失败退回最小清单（不阻断下单）
+  // 可选国家清单：进页面拉一次；接口失败退回最小清单，后端说没配配送范围则挡住下单
   useEffect(() => {
     if (!live) return;
     let cancelled = false;
     void (async () => {
-      const list = await loadCheckoutCountries();
+      const result = await loadCheckoutCountries();
       if (cancelled) return;
-      setCountries(list);
+      setCountries(result.items);
+      setShippingStatus(result.status);
       // 草稿里的国家可能已下线：回退到清单第一个，避免「选了却不在列表里」
       setForm((f) =>
-        list.some((c) => c.code === f.country) ? f : { ...f, country: list[0]?.code ?? f.country },
+        result.items.some((c) => c.code === f.country)
+          ? f
+          : { ...f, country: result.items[0]?.code ?? f.country },
       );
     })();
     return () => {
@@ -426,6 +431,26 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
         <p className="mt-1 text-sm text-muted-foreground">先挑选商品，再回来完成下单</p>
         <Button className="mt-4" onClick={() => router.push(`/${locale}/${channel}/products`)}>
           去逛逛
+        </Button>
+      </div>
+    );
+  }
+
+  /*
+   * 商家还没配配送范围（一个发货区都没有）。
+   *
+   * 这时不能渲染结账表单：顾客会填完地址、点支付，才在服务端拿到「无可用运费方案」。
+   * 把失败点前移到这一屏，说清「暂不配送」，比让顾客白填一遍强。
+   */
+  if (live && shippingStatus === 'none') {
+    return (
+      <div className="mx-auto max-w-narrow px-4 py-16 text-center">
+        <p className="text-lg font-medium text-foreground">暂无可配送地区</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          商家尚未开通配送范围，暂时无法下单，请联系店铺客服
+        </p>
+        <Button className="mt-4" onClick={() => router.push(`/${locale}/${channel}/products`)}>
+          返回商品
         </Button>
       </div>
     );

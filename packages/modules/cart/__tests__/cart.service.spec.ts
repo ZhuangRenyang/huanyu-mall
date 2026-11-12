@@ -136,7 +136,8 @@ class FakeProductLookup implements ProductLookupPort {
   async listVariantsByIds(ids: string[]) {
     return ids.map((id) => ({
       id,
-      product_id: "prod_1",
+      // var_2 属于另一个商品：多模板运费测试需要「一车多商品」
+      product_id: id === "var_2" ? "prod_2" : "prod_1",
       sku: "SKU-1",
       title: "T 恤 黑色",
       status: this.status,
@@ -146,6 +147,15 @@ class FakeProductLookup implements ProductLookupPort {
     return productIds
       .map((id) => ({ productId: id, categoryIds: this.categoryIdsByProduct.get(id) ?? [] }))
       .filter((e) => e.categoryIds.length > 0);
+  }
+  /** 默认不包邮、用默认模板；需要差异化时由用例往 map 里塞。 */
+  readonly shippingInfo = new Map<string, { profileId: string | null; freeShipping: boolean }>();
+  async listShippingInfoByProducts(productIds: string[]) {
+    return productIds.map((id) => ({
+      productId: id,
+      profileId: this.shippingInfo.get(id)?.profileId ?? null,
+      freeShipping: this.shippingInfo.get(id)?.freeShipping ?? false,
+    }));
   }
 }
 
@@ -169,8 +179,14 @@ class FakeShippingLookup implements ShippingLookupPort {
     private readonly freeOverThreshold: bigint | null = null,
   ) {}
   /** 可用方案：CN 两个（含一个更便宜的），其它国家只有一个；ZZ 无可用方案。 */
-  async listShippingOptions(input: { channelId: string; countryCode: string }) {
+  async listShippingOptions(input: {
+    channelId: string;
+    countryCode: string;
+    profileId?: string | null;
+  }) {
     if (input.countryCode === "ZZ") return [];
+    // 重货模板：单独一套价（验证多模板分别计算后相加）
+    if (input.profileId === "shprof_heavy") return [{ id: "shipopt_heavy", name: "重货专线" }];
     if (input.countryCode === "US") {
       return [
         { id: "shipopt_1", name: "标准快递" },
@@ -184,6 +200,7 @@ class FakeShippingLookup implements ShippingLookupPort {
     return { id, name: id === "shipopt_cheap" ? "经济快递" : "标准快递", amount_minor: 800n };
   }
   async calculateShippingPrice(optionId: string, ctx: { cartSubtotalMinor: bigint }) {
+    if (optionId === "shipopt_heavy") return { amountMinor: 3000n, currencyCode: "CNY" };
     if (optionId === "shipopt_cheap") return { amountMinor: 500n, currencyCode: "CNY" };
     if (optionId !== "shipopt_1") throw new Error("unknown option");
     // free_over 命中：小计 ≥ 门槛 → 0（免运费）；否则基础价 800
@@ -303,9 +320,10 @@ function setup(
   } = {},
 ) {
   const repo = new InMemoryCartRepository();
+  const product = new FakeProductLookup(opts.productStatus, opts.categoryIdsByProduct ?? new Map());
   const service = new CartService({
     repo,
-    product: new FakeProductLookup(opts.productStatus, opts.categoryIdsByProduct ?? new Map()),
+    product,
     pricing: new FakePricingLookup(opts.price === undefined ? 9900n : opts.price),
     shipping: new FakeShippingLookup(opts.freeOverThreshold ?? null),
     promotion: new FakePromotionLookup(
@@ -317,7 +335,7 @@ function setup(
     ),
     tax: new FakeTaxLookup(opts.taxRateBps ?? 0, opts.pricesIncludeTax ?? true),
   });
-  return { repo, service };
+  return { repo, service, product };
 }
 
 describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () => {
@@ -382,7 +400,8 @@ describe("CartService（M04，游客车 + 后端定价 + 软删/恢复）", () =
   it("setShippingMethod 走规则价（free_over 未命中=基础价）且 totals 读时计算", async () => {
     const { service } = setup();
     const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
-    // 客户端只传方案 id，方案名与运费金额由后端解析
+    // 先有商品才有运费可算（运费按商品所属模板分组，空车不出运费）
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
     // 运费不再由客户端选：填国家后系统自动挑最便宜的可用方案（ADR-019）
     const withShipping = await service.setShippingCountry(cart.id, "CN");
     expect(withShipping.shipping_method?.amount_minor).toBe(800n);
@@ -641,5 +660,50 @@ describe("运费与税全自动（ADR-019：客户端不再参与金额）", () 
       service.setShippingMethod(cart.id, { shippingOptionId: "shipopt_1" }),
     ).rejects.toBeInstanceOf(DomainError);
     await expect(service.setShippingCountry(cart.id, "中国")).rejects.toBeInstanceOf(DomainError);
+  });
+});
+
+/**
+ * 运费跟着商品走（ADR-021，对齐淘宝「运费模板 + 卖家包邮」）。
+ *
+ * 守的是钱：包邮商品不能产生运费，也不能拿它的金额去凑满额门槛；
+ * 不同模板的商品要分别计价后相加，不能只算一套。
+ */
+describe("运费按商品模板分组", () => {
+  it("卖家包邮商品：运费 0，且显示「卖家包邮」", async () => {
+    const { service, product } = setup();
+    product.shippingInfo.set("prod_1", { profileId: null, freeShipping: true });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    const detail = await service.setShippingCountry(cart.id, "CN");
+    expect(detail.shipping_method?.amount_minor).toBe(0n);
+    expect(detail.shipping_method?.name).toBe("卖家包邮");
+    expect(detail.totals?.shipping_minor).toBe(0n);
+  });
+
+  it("包邮商品不计入满额门槛：其余商品照常收运费", async () => {
+    // 门槛 5000：包邮商品 9900 若被计入，就会误判为「已满额」
+    const { service, product } = setup({ freeOverThreshold: 5000n });
+    product.shippingInfo.set("prod_1", { profileId: null, freeShipping: true });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+
+    const detail = await service.setShippingCountry(cart.id, "CN");
+    expect(detail.shipping_method?.amount_minor).toBe(0n);
+  });
+
+  it("不同模板的商品：各自计价后相加（不是取其一）", async () => {
+    const { service, product } = setup();
+    // 商品 1 走默认模板（800），商品 2 走重货模板（3000）
+    product.shippingInfo.set("prod_1", { profileId: null, freeShipping: false });
+    product.shippingInfo.set("prod_2", { profileId: "shprof_heavy", freeShipping: false });
+    const cart = await service.createCart({ channelId: "chn_cn", regionId: "reg_1", currencyCode: "CNY" });
+    await service.addLineItem(cart.id, { variantId: "var_1", quantity: 1 });
+    await service.addLineItem(cart.id, { variantId: "var_2", quantity: 1 });
+
+    const detail = await service.setShippingCountry(cart.id, "CN");
+    expect(detail.shipping_method?.amount_minor).toBe(3800n);
+    expect(detail.totals?.shipping_minor).toBe(3800n);
   });
 });

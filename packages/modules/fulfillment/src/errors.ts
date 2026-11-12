@@ -48,3 +48,71 @@ export function fulfillmentQuantityMismatch(expected: number, actual: number): D
     message: `发货数量与该仓预留不一致：预留 ${expected}，本次发货 ${actual}`,
   });
 }
+
+// ---------------------------------------------------------------- *
+// 运费配置（后台「设置 → 运费」）
+// ---------------------------------------------------------------- *
+
+export function zoneNotFound(id: string): DomainError {
+  return new DomainError({ code: 30001, message: `Shipping zone not found: ${id}` });
+}
+
+/**
+ * 同一国家只能属于一个发货区。
+ *
+ * 这不是「多一层校验」，而是**唯一性的根**：两个区同时覆盖一个国家时，
+ * 结账会拿到两套价格，选最便宜的那条就成了可绕过口子。
+ */
+export function countryAlreadyInZone(countryCode: string, zoneName: string): DomainError {
+  return new DomainError({
+    code: 30002,
+    message: `国家 ${countryCode} 已在发货区「${zoneName}」中，请先从该区移除`,
+  });
+}
+
+/** 区内还有运费方式，禁止删除（否则该区国家结账直接算不出运费）。 */
+export function zoneHasOptions(zoneName: string, count: number): DomainError {
+  return new DomainError({
+    code: 30002,
+    message: `发货区「${zoneName}」下还有 ${count} 个运费方式，请先删除或改到别的区`,
+  });
+}
+
+export function invalidShippingCountry(code: string): DomainError {
+  return new DomainError({
+    code: 20001,
+    message: `国家码必须是两位字母（ISO 3166-1 alpha-2）：${code}`,
+  });
+}
+
+export function invalidShippingAmount(message: string): DomainError {
+  return new DomainError({ code: 20001, message });
+}
+
+/** 满额包邮必须有门槛：门槛为 0 等于全场包邮，该用「固定价 0」表达，不能混。 */
+export function freeOverThresholdRequired(): DomainError {
+  return new DomainError({
+    code: 20001,
+    message: "满额包邮必须填写门槛金额（大于 0）；要全场包邮请把固定价设为 0",
+  });
+}
+
+// ---------------------------------------------------------------- *
+// 运费模板
+// ---------------------------------------------------------------- *
+
+export function profileNotFound(id: string): DomainError {
+  return new DomainError({ code: 30001, message: `运费模板不存在：${id}` });
+}
+
+/** 默认模板是全店的兜底：商品没指定模板时用它，删了会让一堆商品算不出运费。 */
+export function defaultProfileUndeletable(): DomainError {
+  return new DomainError({ code: 30002, message: "默认运费模板不能删除" });
+}
+
+export function profileHasZones(name: string, count: number): DomainError {
+  return new DomainError({
+    code: 30002,
+    message: `运费模板「${name}」下还有 ${count} 个发货区，请先删除或改到别的模板`,
+  });
+}

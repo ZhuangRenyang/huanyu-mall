@@ -12,6 +12,10 @@ export interface ProductDTO {
   status: ProductStatus;
   thumbnail_file_id: string | null;
   product_type_id: string | null;
+  /** 运费模板 id；NULL = 用默认模板（对齐淘宝发布页的「运费模板」）。 */
+  shipping_profile_id: string | null;
+  /** 卖家包邮：该商品不产生运费。 */
+  free_shipping: boolean;
   metadata: Record<string, unknown> | null;
   /** ISO 时间，用于 created_at.desc 排序。 */
   created_at: string;
@@ -91,6 +95,8 @@ export interface CreateProductInput {
   status?: ProductStatus;
   productTypeId?: string | null;
   thumbnailFileId?: string | null;
+  shippingProfileId?: string | null;
+  freeShipping?: boolean;
   metadata?: Record<string, unknown> | null;
   variants?: CreateVariantInput[];
   images?: CreateImageInput[];
@@ -105,6 +111,8 @@ export interface UpdateProductInput {
   status?: ProductStatus;
   thumbnailFileId?: string | null;
   productTypeId?: string | null;
+  shippingProfileId?: string | null;
+  freeShipping?: boolean;
   metadata?: Record<string, unknown> | null;
 }
 
@@ -146,15 +154,27 @@ export interface ProductRepository {
   insert(input: CreateProductInput & { id: string }): Promise<ProductDTO>;
   update(id: string, patch: UpdateProductInput): Promise<ProductDTO | null>;
   softDelete(id: string): Promise<void>;
+  /** 各状态的商品数（列表页签角标用，一次 GROUP BY）。 */
+  countByStatus(): Promise<Record<string, number>>;
+  /** 批量改状态（一条 SQL，不做 N 次单条更新）。 */
+  bulkUpdateStatus(ids: string[], status: ProductStatus): Promise<number>;
+  /** 批量软删。 */
+  bulkSoftDelete(ids: string[]): Promise<number>;
   listVariantsByIds(ids: string[]): Promise<VariantDTO[]>;
   listVariantsByProductIds(productIds: string[]): Promise<VariantDTO[]>;
   updateVariant(variantId: string, patch: { title?: string; status?: ProductStatus }): Promise<VariantDTO | null>;
   listImagesByProductId(productId: string): Promise<ImageDTO[]>;
   createVariants(productId: string, variants: CreateVariantInput[]): Promise<VariantDTO[]>;
   createImages(productId: string, images: CreateImageInput[]): Promise<void>;
+  /** 软删该商品所有图片（整组替换前调用）。 */
+  softDeleteImages(productId: string): Promise<void>;
   linkCategories(productId: string, categoryIds: string[]): Promise<void>;
   /** product_category_link：批量查「商品 → 分类」映射（供 promotion 目录促销算折扣，禁 N+1）。 */
   listCategoryIdsByProducts(productIds: string[]): Promise<Array<{ productId: string; categoryIds: string[] }>>;
+  /** 批量查商品的运费归属（模板 + 是否卖家包邮），供购物车分组算运费。 */
+  listShippingInfoByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; profileId: string | null; freeShipping: boolean }>>;
   /** product_channel link：返回该渠道可见的商品 id（is_visible=true）。 */
   listSellableProductIds(channelId: string): Promise<string[]>;
   /** variant_price_set link：批量取 price_set_id（禁循环）。 */
@@ -182,6 +202,13 @@ export interface IProductModuleService {
   retrieveProduct(id: string, opts?: { withVariants?: boolean }): Promise<ProductDetailDTO>;
   createProduct(input: CreateProductInput): Promise<ProductDetailDTO>;
   updateProduct(id: string, patch: UpdateProductInput): Promise<ProductDTO>;
+  /** 整组替换商品图片；第一张自动成为主图（thumbnail_file_id）。 */
+  replaceProductImages(productId: string, fileIds: string[]): Promise<ProductDetailDTO>;
+  /** 各状态的商品数（页签角标）。 */
+  countByStatus(): Promise<Record<string, number>>;
+  /** 批量改状态 / 批量删除，返回实际影响条数。 */
+  bulkUpdateStatus(ids: string[], status: ProductStatus): Promise<number>;
+  bulkDelete(ids: string[]): Promise<number>;
   deleteProduct(id: string): Promise<void>;
   createVariant(productId: string, input: CreateVariantInput): Promise<VariantDTO>;
   updateVariant(variantId: string, patch: { title?: string; status?: ProductStatus }): Promise<VariantDTO>;
@@ -189,4 +216,8 @@ export interface IProductModuleService {
   resolveSellableVariants(q: SellableVariantQuery): Promise<{ items: SellableVariantDTO[]; count: number }>;
   /** 批量查「商品 → 分类」映射（供 promotion 目录促销算折扣）。 */
   listCategoryIdsByProducts(productIds: string[]): Promise<Array<{ productId: string; categoryIds: string[] }>>;
+  /** 批量查商品的运费归属（模板 + 是否卖家包邮），供购物车分组算运费。 */
+  listShippingInfoByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; profileId: string | null; freeShipping: boolean }>>;
 }

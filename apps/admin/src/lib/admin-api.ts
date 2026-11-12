@@ -12,7 +12,13 @@ export type { AdminApiMode } from './admin-client';
 
 export { login, logout, type AdminLoginResult } from './admin-session';
 
-export { listProducts, saveProduct, deleteProduct } from './admin-catalog';
+export {
+  listProducts,
+  saveProduct,
+  deleteProduct,
+  uploadProductImage,
+  bulkProductAction,
+} from './admin-catalog';
 
 export {
   listOrders,
@@ -22,6 +28,8 @@ export {
   listOrderReservations,
   listOrderFulfillments,
   getFulfillmentPlan,
+  setOrderNote,
+  listOrderLogs,
 } from './admin-orders';
 export type {
   OrderReservationView,

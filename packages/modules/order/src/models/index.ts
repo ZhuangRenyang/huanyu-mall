@@ -21,6 +21,8 @@ export const order = pgTable(
     shippingAddress: jsonb("shipping_address").notNull(),
     billingAddress: jsonb("billing_address"),
     paymentCollectionId: text("payment_collection_id"),
+    /** 商家内部备注（仅后台可见）。 */
+    merchantNote: text("merchant_note"),
     metadata: jsonb("metadata"),
     placedAt: timestamp("placed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -105,4 +107,27 @@ export const orderDiscount = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("idx_order_discount_order").on(t.orderId)],
+);
+
+/** 退款申请单（售后业务单据，与 payment.refund 资金流水分开）。 */
+export const refundRequest = pgTable(
+  "refund_request",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull(),
+    customerId: text("customer_id"),
+    amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
+    currencyCode: char("currency_code", { length: 3 }).notNull(),
+    reason: text("reason").notNull(),
+    /** customer = 买家申请；merchant = 商家主动退款。 */
+    source: text("source").notNull().default("customer"),
+    status: text("status").notNull().default("pending"),
+    reviewNote: text("review_note"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    /** 资金流水 id（payment.refund.id）。 */
+    refundId: text("refund_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_refund_req_order").on(t.orderId), index("idx_refund_req_status").on(t.status)],
 );

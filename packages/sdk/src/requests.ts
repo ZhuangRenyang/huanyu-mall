@@ -94,6 +94,10 @@ export interface CreateProductRequest {
   subtitle?: string | null;
   description?: string | null;
   product_type_id?: string | null;
+  /** 运费模板；null = 默认模板。 */
+  shipping_profile_id?: string | null;
+  /** 卖家包邮：该商品不产生运费。 */
+  free_shipping?: boolean;
   attributes?: AttributeInput[];
   variants?: CreateVariantRequest[];
 }
@@ -101,6 +105,8 @@ export interface CreateProductRequest {
 /** 更新商品。 */
 export interface UpdateProductRequest {
   title?: string;
+  shipping_profile_id?: string | null;
+  free_shipping?: boolean;
   subtitle?: string | null;
   description?: string | null;
   status?: 'draft' | 'published' | 'archived';

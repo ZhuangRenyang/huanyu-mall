@@ -8,6 +8,7 @@ import type {
   ProductListItemDTO,
   ProductQuery,
   ProductRepository,
+  ProductStatus,
   SellableVariantDTO,
   SellableVariantQuery,
   UpdateProductInput,
@@ -57,10 +58,52 @@ export class ProductService implements IProductModuleService {
     return this.retrieveProduct(id);
   }
 
+  /**
+   * 整组替换商品图片（后台一次提交整组，前端不用做增量 diff）。
+   *
+   * 第一张自动成为主图并写回 `thumbnail_file_id` —— 列表页、购物车、订单都用它，
+   * 漏写就会出现「详情有图、列表空白」。
+   */
+  async replaceProductImages(productId: string, fileIds: string[]): Promise<ProductDetailDTO> {
+    const existing = await this.repo.findById(productId);
+    if (!existing) throw productNotFound(productId);
+
+    await this.repo.softDeleteImages(productId);
+    if (fileIds.length > 0) {
+      await this.repo.createImages(
+        productId,
+        fileIds.map((fileId, index) => ({
+          fileId,
+          sortOrder: index,
+          isPrimary: index === 0,
+        })),
+      );
+    }
+    await this.repo.update(productId, { thumbnailFileId: fileIds[0] ?? null });
+    return this.retrieveProduct(productId);
+  }
+
   async updateProduct(id: string, patch: UpdateProductInput): Promise<ProductDTO> {
     const updated = await this.repo.update(id, patch);
     if (!updated) throw productNotFound(id);
     return updated;
+  }
+
+  async countByStatus(): Promise<Record<string, number>> {
+    return this.repo.countByStatus();
+  }
+
+  /** 批量改状态：一次 SQL 完成，返回实际生效条数（已删的不算）。 */
+  async bulkUpdateStatus(ids: string[], status: ProductStatus): Promise<number> {
+    const unique = [...new Set(ids)].filter(Boolean);
+    if (unique.length === 0) return 0;
+    return this.repo.bulkUpdateStatus(unique, status);
+  }
+
+  async bulkDelete(ids: string[]): Promise<number> {
+    const unique = [...new Set(ids)].filter(Boolean);
+    if (unique.length === 0) return 0;
+    return this.repo.bulkSoftDelete(unique);
   }
 
   async deleteProduct(id: string): Promise<void> {
@@ -119,5 +162,18 @@ export class ProductService implements IProductModuleService {
   ): Promise<Array<{ productId: string; categoryIds: string[] }>> {
     if (productIds.length === 0) return [];
     return this.repo.listCategoryIdsByProducts(productIds);
+  }
+
+  /**
+   * 批量查商品的运费归属（模板 + 是否卖家包邮），供购物车分组算运费。
+   *
+   * 商品是运费的**归属者**：不同商品可以挂不同模板（重货 / 冷链），
+   * 也可以标「卖家包邮」。结账时按这个分组，不能全店一套价。
+   */
+  async listShippingInfoByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; profileId: string | null; freeShipping: boolean }>> {
+    if (productIds.length === 0) return [];
+    return this.repo.listShippingInfoByProducts(productIds);
   }
 }

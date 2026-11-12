@@ -1,8 +1,19 @@
 import { bigint, boolean, char, index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
+export const shippingProfile = pgTable("shipping_profile", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
 export const shippingZone = pgTable("shipping_zone", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  /** 所属运费模板；NULL 视同默认模板（历史数据）。 */
+  profileId: text("profile_id"),
   countryCodes: jsonb("country_codes").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -13,6 +13,7 @@ import type {
   OrderQuery,
   OrderRepository,
   OrderShippingMethodDTO,
+  RefundRequestDTO,
   OrderStatus,
   PaymentStatus,
 } from "../src/types.js";
@@ -24,6 +25,7 @@ class InMemoryOrderRepository implements OrderRepository {
   readonly shipping = new Map<string, OrderShippingMethodDTO>();
   readonly history: Array<{ orderId: string; from: OrderStatus | null; to: OrderStatus; actor: Actor }> = [];
   readonly discounts: OrderDiscountDTO[] = [];
+  readonly refundRequests: RefundRequestDTO[] = [];
   private counter = 0;
 
   async insertOrder(input: {
@@ -143,6 +145,74 @@ class InMemoryOrderRepository implements OrderRepository {
     actor: Actor,
   ): Promise<void> {
     this.history.push({ orderId, from: fromStatus, to: toStatus, actor });
+  }
+
+  // ---- 退款申请单 ----
+
+  async insertRefundRequest(input: {
+    id: string;
+    orderId: string;
+    customerId: string | null;
+    amountMinor: bigint;
+    currencyCode: string;
+    reason: string;
+    source: RefundRequestDTO["source"];
+  }): Promise<RefundRequestDTO> {
+    const dto: RefundRequestDTO = {
+      id: input.id,
+      order_id: input.orderId,
+      customer_id: input.customerId,
+      amount_minor: input.amountMinor,
+      currency_code: input.currencyCode,
+      reason: input.reason,
+      source: input.source,
+      status: "pending",
+      review_note: null,
+      reviewed_at: null,
+      refund_id: null,
+      created_at: new Date().toISOString(),
+    };
+    this.refundRequests.push(dto);
+    return dto;
+  }
+
+  async findRefundRequest(id: string): Promise<RefundRequestDTO | null> {
+    return this.refundRequests.find((r) => r.id === id) ?? null;
+  }
+
+  async findPendingRefundRequest(orderId: string): Promise<RefundRequestDTO | null> {
+    return (
+      this.refundRequests.find((r) => r.order_id === orderId && r.status === "pending") ?? null
+    );
+  }
+
+  async listRefundRequests(q: {
+    status?: RefundRequestDTO["status"];
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: RefundRequestDTO[]; count: number }> {
+    const all = q.status
+      ? this.refundRequests.filter((r) => r.status === q.status)
+      : this.refundRequests;
+    const offset = q.offset ?? 0;
+    return { items: all.slice(offset, offset + (q.limit ?? all.length)), count: all.length };
+  }
+
+  async updateRefundRequest(
+    id: string,
+    patch: {
+      status: RefundRequestDTO["status"];
+      reviewNote?: string | null;
+      refundId?: string | null;
+    },
+  ): Promise<RefundRequestDTO | null> {
+    const req = this.refundRequests.find((r) => r.id === id);
+    if (!req) return null;
+    req.status = patch.status;
+    if (patch.reviewNote !== undefined) req.review_note = patch.reviewNote;
+    if (patch.refundId !== undefined) req.refund_id = patch.refundId;
+    req.reviewed_at = new Date().toISOString();
+    return req;
   }
 
   async findById(id: string): Promise<OrderDTO | null> {
@@ -292,8 +362,13 @@ describe("OrderService（M05，状态机 + 行快照冻结 + 全额退款）", (
     await service.transition(order.id, "awaiting_payment", { actor: "workflow" });
     await service.transition(order.id, "paid", { actor: "workflow" });
 
-    const req = await service.createRefundRequest(order.id, { amountMinor: 20600n, reason: "客户申请" });
-    expect(req.amountMinor).toBe(20600n);
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "客户申请",
+      source: "customer",
+    });
+    expect(req.amount_minor).toBe(20600n);
+    expect(req.status).toBe("pending");
 
     const settled = await service.markRefundSettled(order.id, "ref_1");
     expect(settled.status).toBe("refunded");

@@ -188,6 +188,10 @@ export function createStoreClient(opts: ClientOptions) {
         ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),
       }),
     getOrder: (id: string) => get(`/api/v1/store/orders/${id}`),
+    /** 顾客申请退款：只传原因，金额由服务端按订单实付取。 */
+    requestOrderRefund: (id: string, b: { reason: string }) =>
+      post(`/api/v1/store/orders/${id}/refund-requests`, b),
+    listOrderRefunds: (id: string) => get(`/api/v1/store/orders/${id}/refund-requests`),
     register: (b: RegisterRequest) => post("/api/v1/store/auth/register", b),
     login: (b: LoginRequest) => post("/api/v1/store/auth/login", b),
     refresh: (refreshToken: string) =>
@@ -227,6 +231,17 @@ export function createAdminClient(opts: ClientOptions) {
     updateProduct: (id: string, b: UpdateProductRequest) =>
       patch(`/api/v1/admin/products/${id}`, b),
     deleteProduct: (id: string) => del(`/api/v1/admin/products/${id}`),
+    /** 批量上架/下架/删除，返回实际影响条数。 */
+    bulkProductAction: (b: {
+      ids: string[];
+      action: "publish" | "unpublish" | "delete";
+    }) => post("/api/v1/admin/products/bulk", b),
+    /** 整组替换商品图片；第一张即主图。 */
+    replaceProductImages: (id: string, b: { file_ids: string[] }) =>
+      put(`/api/v1/admin/products/${id}/images`, b),
+    /** 上传文件（JSON + base64，后端限制 20MB）。 */
+    uploadFile: (b: { filename: string; content_type: string; data_base64: string }) =>
+      post("/api/v1/admin/files", b),
     createVariant: (productId: string, b: CreateVariantRequest) =>
       post(`/api/v1/admin/products/${productId}/variants`, b),
     updateVariant: (variantId: string, b: UpdateVariantRequest) =>
@@ -235,6 +250,17 @@ export function createAdminClient(opts: ClientOptions) {
       put(`/api/v1/admin/variants/${variantId}/prices`, b),
     listOrders: (q?: Query) => get("/api/v1/admin/orders", q),
     getOrder: (id: string) => get(`/api/v1/admin/orders/${id}`),
+    /** 商家内部备注（仅后台可见）。 */
+    setOrderNote: (id: string, b: { note: string | null }) =>
+      put(`/api/v1/admin/orders/${id}/note`, b),
+    // —— 退款管理 ——
+    listRefundRequests: (q?: Query) => get("/api/v1/admin/refund-requests", q),
+    approveRefundRequest: (id: string, b: { note?: string }) =>
+      post(`/api/v1/admin/refund-requests/${id}/approve`, b),
+    rejectRefundRequest: (id: string, b: { note: string }) =>
+      post(`/api/v1/admin/refund-requests/${id}/reject`, b),
+    /** 该订单的操作日志（审计流水，orders 权限即可查）。 */
+    listOrderLogs: (id: string) => get(`/api/v1/admin/orders/${id}/logs`),
     cancelOrder: (id: string) => post(`/api/v1/admin/orders/${id}/cancel`),
     refundOrder: (id: string, b: CreateRefundRequest) =>
       post(`/api/v1/admin/orders/${id}/refunds`, b),
@@ -286,6 +312,43 @@ export function createAdminClient(opts: ClientOptions) {
     setCountryTaxRate: (code: string, body: { name: string; rate_bps: number }) =>
       put(`/api/v1/admin/tax/country-rates/${code}`, body),
     deleteCountryTaxRate: (code: string) => del(`/api/v1/admin/tax/country-rates/${code}`),
+    // —— 运费设置（运费模板 / 发货区 / 运费方式）——
+    getShippingConfig: () => get("/api/v1/admin/shipping"),
+    createShippingProfile: (body: { name: string }) =>
+      post("/api/v1/admin/shipping/profiles", body),
+    updateShippingProfile: (id: string, body: { name?: string }) =>
+      patch(`/api/v1/admin/shipping/profiles/${id}`, body),
+    deleteShippingProfile: (id: string) => del(`/api/v1/admin/shipping/profiles/${id}`),
+    createShippingZone: (body: {
+      name: string;
+      country_codes: string[];
+      profile_id?: string | null;
+    }) => post("/api/v1/admin/shipping/zones", body),
+    updateShippingZone: (
+      id: string,
+      body: { name?: string; country_codes?: string[] },
+    ) => patch(`/api/v1/admin/shipping/zones/${id}`, body),
+    deleteShippingZone: (id: string) => del(`/api/v1/admin/shipping/zones/${id}`),
+    createShippingOption: (body: {
+      zone_id: string;
+      name: string;
+      carrier?: string | null;
+      type: "flat" | "free_over";
+      amount_minor: number;
+      free_over_threshold_minor?: number | null;
+    }) => post("/api/v1/admin/shipping/options", body),
+    updateShippingOption: (
+      id: string,
+      body: {
+        name?: string;
+        carrier?: string | null;
+        type?: "flat" | "free_over";
+        amount_minor?: number;
+        free_over_threshold_minor?: number | null;
+        is_active?: boolean;
+      },
+    ) => patch(`/api/v1/admin/shipping/options/${id}`, body),
+    deleteShippingOption: (id: string) => del(`/api/v1/admin/shipping/options/${id}`),
     getSystemInfo: () => get("/api/v1/admin/system/info"),
     setSystemUpdateSource: (update_source_url: string) =>
       put("/api/v1/admin/system/settings", { update_source_url }),

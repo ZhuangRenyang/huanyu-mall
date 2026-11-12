@@ -14,6 +14,6 @@ export { seedCatalog, type CatalogSeedPorts } from "./services/seed.js";
 export default Module("product", {
   service: (ctx) =>
     new ProductService(new DrizzleProductRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_shipping.sql"],
   linkable,
 });

@@ -388,6 +388,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         storage_provider: "local",
       }),
       getPublicUrl: async () => "/uploads/k",
+      getPublicUrls: async (ids: string[]) =>
+        Object.fromEntries(ids.map((id) => [id, `/uploads/${id}`])),
       deleteFile: async () => {},
     },
     auth: {
@@ -642,8 +644,31 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       // 只要求接口存在、不抛错。
       completeCart: async () => {},
     },
-    order: {
+    order: (() => {
+      let refundSeq = 0;
+      const refundRequests: Array<{
+        id: string;
+        order_id: string;
+        customer_id: string | null;
+        amount_minor: bigint;
+        currency_code: string;
+        reason: string;
+        source: "customer" | "merchant";
+        status: "pending" | "approved" | "rejected" | "canceled";
+        review_note: string | null;
+        reviewed_at: string | null;
+        refund_id: string | null;
+        created_at: string;
+        order_email: string | null;
+      }> = [];
+      return {
       retrieveOrder: async () => order,
+      setMerchantNote: async (_id: string, note: string | null) => {
+        // 与真实服务同语义：trim 后为空即清空（null），不是存一串空格
+        const trimmed = note?.trim() ?? "";
+        order.merchant_note = trimmed === "" ? null : trimmed;
+        return order;
+      },
       /*
        * 真实 listOrders 按 cartId 过滤：cart_1 尚未下单时返回空，
        * 下单成功后（workflow 里 createOrder 返回 ord_1）才有记录。
@@ -654,43 +679,311 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           ? { items: [order], count: 1 }
           : { items: [], count: 0 },
       cancelOrder: async () => {},
-      createRefundRequest: async () => ({
-        orderId: "ord_1",
-        amountMinor: 10700n,
-        currencyCode: "CNY",
-        reason: "r",
-      }),
+      /*
+       * 退款申请单用内存数组：够跑「申请 → 列表 → 同意/拒绝」这条链。
+       * 真实守卫（订单可退、金额全额、重复申请）在模块单测里守，这里只保证接口形状对。
+       */
+      createRefundRequest: async (
+        orderId: string,
+        input: { amountMinor: bigint; reason: string; source?: string; customerId?: string | null },
+      ) => {
+        const req = {
+          id: `rfr_${++refundSeq}`,
+          order_id: orderId,
+          customer_id: input.customerId ?? null,
+          amount_minor: input.amountMinor,
+          currency_code: "CNY",
+          reason: input.reason,
+          source: (input.source ?? "customer") as "customer" | "merchant",
+          status: "pending" as const,
+          review_note: null,
+          reviewed_at: null,
+          refund_id: null,
+          created_at: new Date().toISOString(),
+          order_email: "a@b.com",
+        };
+        refundRequests.push(req);
+        return req;
+      },
+      listRefundRequests: async (q: {
+        status?: string;
+        limit?: number;
+        offset?: number;
+      }) => {
+        const all = q.status ? refundRequests.filter((r) => r.status === q.status) : refundRequests;
+        const offset = q.offset ?? 0;
+        const limit = q.limit ?? all.length;
+        return { items: all.slice(offset, offset + limit), count: all.length };
+      },
+      findRefundRequest: async (id: string) => refundRequests.find((r) => r.id === id) ?? null,
+      approveRefundRequest: async (id: string, refundId: string, note?: string | null) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        req.status = "approved";
+        req.refund_id = refundId;
+        req.review_note = note ?? null;
+        return req;
+      },
+      rejectRefundRequest: async (id: string, note: string) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        req.status = "rejected";
+        req.review_note = note;
+        return req;
+      },
+      cancelRefundRequest: async (id: string) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        req.status = "canceled";
+        return req;
+      },
       markRefundSettled: async () => order,
-    },
-    fulfillment: {
-      listShippingOptions: async () => [],
-      createFulfillment: async (input: { stockLocationId?: string }) => ({
-        id: "fulf_1",
-        order_id: "ord_1",
-        stock_location_id: input.stockLocationId ?? "loc_1",
-        status: "fulfilled",
-        reservation_ids: ["rsv_1"],
-        tracking_links: null,
-      }),
-      listByOrder: async () => [
+      };
+    })(),
+    /*
+     * 履约替身：运费配置用内存数组，够跑「建区 → 建方式 → 结账可下单国家」这条链。
+     * 守卫逻辑不在替身里复刻（那会变成第二套实现），真实规则由模块单测守。
+     */
+    fulfillment: (() => {
+      const profiles: Array<{ id: string; name: string; is_default: boolean }> = [
+        { id: "shprof_default", name: "默认运费模板", is_default: true },
+      ];
+      const zones: Array<{
+        id: string;
+        name: string;
+        profile_id: string | null;
+        country_codes: string[];
+      }> = [
         {
+          id: "zone_default",
+          name: "默认区",
+          profile_id: "shprof_default",
+          country_codes: [
+            "CN",
+            "HK",
+            "MO",
+            "JP",
+            "KR",
+            "SG",
+            "MY",
+            "TH",
+            "VN",
+            "US",
+            "GB",
+            "DE",
+            "FR",
+            "AU",
+            "CA",
+          ],
+        },
+      ];
+      const options: Array<{
+        id: string;
+        zone_id: string;
+        name: string;
+        carrier: string | null;
+        type: "flat" | "free_over" | "weight_based";
+        amount_minor: bigint;
+        currency_code: string;
+        is_active: boolean;
+        free_over_threshold_minor: bigint | null;
+      }> = [
+        {
+          id: "shipopt_default",
+          zone_id: "zone_default",
+          name: "标准快递",
+          carrier: null,
+          type: "flat",
+          amount_minor: 800n,
+          currency_code: "CNY",
+          is_active: true,
+          free_over_threshold_minor: null,
+        },
+      ];
+      let seq = 0;
+      return {
+        listShippingOptions: async (input: { countryCode: string }) =>
+          options.filter((o) => {
+            const zone = zones.find((z) => z.id === o.zone_id);
+            return o.is_active && (zone?.country_codes ?? []).includes(input.countryCode);
+          }),
+        findShippingOption: async (id: string) => options.find((o) => o.id === id) ?? null,
+        createFulfillment: async (input: { stockLocationId?: string }) => ({
           id: "fulf_1",
           order_id: "ord_1",
-          stock_location_id: "loc_1",
-          status: "shipped",
+          stock_location_id: input.stockLocationId ?? "loc_1",
+          status: "fulfilled",
           reservation_ids: ["rsv_1"],
-          tracking_links: [{ carrier: "顺丰", number: "SF1" }],
+          items: [],
+          tracking_links: null,
+        }),
+        listByOrder: async () => [
+          {
+            id: "fulf_1",
+            order_id: "ord_1",
+            stock_location_id: "loc_1",
+            status: "shipped",
+            reservation_ids: ["rsv_1"],
+            items: [],
+            tracking_links: [{ carrier: "顺丰", number: "SF1" }],
+          },
+        ],
+        addShipment: async () => ({
+          id: "ship_1",
+          fulfillment_id: "fulf_1",
+          carrier_name: "顺丰",
+          tracking_number: "SF1",
+          shipped_at: new Date().toISOString(),
+        }),
+        calculateShippingPrice: async () => ({ amountMinor: 0n, currencyCode: "CNY" }),
+        listDeliverableCountries: async () => [
+          ...new Set(
+            zones
+              .filter((z) => options.some((o) => o.zone_id === z.id && o.is_active))
+              .flatMap((z) => z.country_codes),
+          ),
+        ],
+        listShippingProfiles: async () => profiles.map((p) => ({ ...p })),
+        getDefaultProfileId: async () => profiles.find((p) => p.is_default)?.id ?? null,
+        createShippingProfile: async (input: { name: string }) => {
+          const p = { id: `shprof_${++seq}`, name: input.name, is_default: false };
+          profiles.push(p);
+          return { ...p };
         },
-      ],
-      addShipment: async () => ({
-        id: "ship_1",
-        fulfillment_id: "fulf_1",
-        carrier_name: "顺丰",
-        tracking_number: "SF1",
-        shipped_at: new Date().toISOString(),
-      }),
-      calculateShippingPrice: async () => ({ amountMinor: 0n, currencyCode: "CNY" }),
-    },
+        updateShippingProfile: async (id: string, input: { name?: string }) => {
+          const p = profiles.find((x) => x.id === id);
+          if (!p) throw new DomainError({ code: 30001, message: `运费模板不存在：${id}` });
+          if (input.name !== undefined) p.name = input.name;
+          return { ...p };
+        },
+        deleteShippingProfile: async (id: string) => {
+          const p = profiles.find((x) => x.id === id);
+          if (!p) throw new DomainError({ code: 30001, message: `运费模板不存在：${id}` });
+          if (p.is_default) {
+            throw new DomainError({ code: 30002, message: "默认运费模板不能删除" });
+          }
+          const count = zones.filter((z) => z.profile_id === id).length;
+          if (count > 0) {
+            throw new DomainError({
+              code: 30002,
+              message: `运费模板「${p.name}」下还有 ${count} 个发货区，请先删除或改到别的模板`,
+            });
+          }
+          profiles.splice(profiles.indexOf(p), 1);
+        },
+        listShippingZones: async (profileId?: string | null) =>
+          zones
+            .filter((z) => (profileId === undefined ? true : z.profile_id === profileId))
+            .map((z) => ({ ...z, country_codes: [...z.country_codes] })),
+        createShippingZone: async (input: {
+          name: string;
+          countryCodes: string[];
+          profileId?: string | null;
+        }) => {
+          const taken = new Map<string, string>();
+          for (const z of zones) for (const c of z.country_codes) taken.set(c, z.name);
+          for (const code of input.countryCodes) {
+            const owner = taken.get(code);
+            if (owner) {
+              throw new DomainError({
+                code: 30002,
+                message: `国家 ${code} 已在发货区「${owner}」中，请先从该区移除`,
+              });
+            }
+          }
+          const zone = {
+            id: `zone_${++seq}`,
+            name: input.name,
+            profile_id: input.profileId ?? profiles.find((p) => p.is_default)?.id ?? null,
+            country_codes: [...input.countryCodes],
+          };
+          zones.push(zone);
+          return { ...zone };
+        },
+        updateShippingZone: async (
+          id: string,
+          input: { name?: string; countryCodes?: string[] },
+        ) => {
+          const zone = zones.find((z) => z.id === id);
+          if (!zone) throw new DomainError({ code: 30001, message: `Shipping zone not found: ${id}` });
+          if (input.name !== undefined) zone.name = input.name;
+          if (input.countryCodes !== undefined) zone.country_codes = [...input.countryCodes];
+          return { ...zone, country_codes: [...zone.country_codes] };
+        },
+        deleteShippingZone: async (id: string) => {
+          const zone = zones.find((z) => z.id === id);
+          if (!zone) throw new DomainError({ code: 30001, message: `Shipping zone not found: ${id}` });
+          const count = options.filter((o) => o.zone_id === id).length;
+          if (count > 0) {
+            throw new DomainError({
+              code: 30002,
+              message: `发货区「${zone.name}」下还有 ${count} 个运费方式，请先删除或改到别的区`,
+            });
+          }
+          zones.splice(zones.indexOf(zone), 1);
+        },
+        listShippingOptionsByZone: async (zoneId: string) =>
+          options.filter((o) => o.zone_id === zoneId),
+        createShippingOption: async (input: {
+          zoneId: string;
+          name: string;
+          carrier?: string | null;
+          type: "flat" | "free_over";
+          amountMinor: bigint;
+          currencyCode: string;
+          freeOverThresholdMinor?: bigint | null;
+        }) => {
+          if (!zones.some((z) => z.id === input.zoneId)) {
+            throw new DomainError({ code: 30001, message: `Shipping zone not found: ${input.zoneId}` });
+          }
+          if (input.type === "free_over" && !(input.freeOverThresholdMinor ?? 0n > 0n)) {
+            throw new DomainError({
+              code: 20001,
+              message: "满额包邮必须填写门槛金额（大于 0）；要全场包邮请把固定价设为 0",
+            });
+          }
+          const option = {
+            id: `shipopt_${++seq}`,
+            zone_id: input.zoneId,
+            name: input.name,
+            carrier: input.carrier ?? null,
+            type: input.type,
+            amount_minor: input.amountMinor,
+            currency_code: input.currencyCode,
+            is_active: true,
+            free_over_threshold_minor:
+              input.type === "free_over" ? (input.freeOverThresholdMinor ?? null) : null,
+          };
+          options.push(option);
+          return option;
+        },
+        updateShippingOption: async (
+          id: string,
+          input: {
+            name?: string;
+            carrier?: string | null;
+            type?: "flat" | "free_over";
+            amountMinor?: bigint;
+            freeOverThresholdMinor?: bigint | null;
+            isActive?: boolean;
+          },
+        ) => {
+          const option = options.find((o) => o.id === id);
+          if (!option) throw new DomainError({ code: 30001, message: `Shipping option not found: ${id}` });
+          if (input.name !== undefined) option.name = input.name;
+          if (input.carrier !== undefined) option.carrier = input.carrier;
+          if (input.type !== undefined) option.type = input.type;
+          if (input.amountMinor !== undefined) option.amount_minor = input.amountMinor;
+          if (input.isActive !== undefined) option.is_active = input.isActive;
+          if (input.freeOverThresholdMinor !== undefined) {
+            option.free_over_threshold_minor = input.freeOverThresholdMinor;
+          }
+          if (option.type !== "free_over") option.free_over_threshold_minor = null;
+          return option;
+        },
+        deleteShippingOption: async (id: string) => {
+          const idx = options.findIndex((o) => o.id === id);
+          if (idx >= 0) options.splice(idx, 1);
+        },
+      };
+    })(),
     theme: {
       getSettings: async () => ({ ...state.theme }),
       updateSettings: async (patch: Record<string, unknown>) => {

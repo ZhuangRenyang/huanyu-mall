@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -53,6 +53,12 @@ export class DrizzleFileRepository implements FileRepository {
       .where(and(eq(schema.file.id, id), isNull(schema.file.deletedAt)))
       .limit(1);
     return rows[0] ? toFileDTO(rows[0]) : null;
+  }
+
+  async findByIds(ids: string[]): Promise<FileDTO[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.db.select().from(schema.file).where(inArray(schema.file.id, ids));
+    return rows.map(toFileDTO);
   }
 
   async findVariant(fileId: string, variant: ImageVariantName): Promise<FileVariantDTO | null> {

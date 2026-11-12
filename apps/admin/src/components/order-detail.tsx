@@ -12,15 +12,22 @@ import {
   formatMoney,
   cn,
 } from '@mall/ui';
-import { TextField } from './field';
+import { TextAreaField, TextField } from './field';
 import {
   getFulfillmentPlan,
   listOrderFulfillments,
   listStockLocations,
   refundOrder,
   shipOrder,
+  setOrderNote,
+  listOrderLogs,
 } from '@/lib/admin-api';
-import type { FulfillmentPlanView, OrderFulfillmentView, StockLocationView } from '@/lib/admin-api';
+import type {
+  FulfillmentPlanView,
+  OrderFulfillmentView,
+  StockLocationView,
+} from '@/lib/admin-api';
+import type { AdminOrderLog } from '@/lib/admin-data';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
 
@@ -97,6 +104,11 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   const [refundInput, setRefundInput] = useState('');
   const [refundError, setRefundError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  /** 商家备注：draft 与已存值分开，避免一边打字一边被刷新覆盖。 */
+  const [noteDraft, setNoteDraft] = useState(order.merchantNote ?? '');
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [logs, setLogs] = useState<AdminOrderLog[]>([]);
+  const [logsLoaded, setLogsLoaded] = useState(false);
 
   const flash = (msg: string) => {
     setToast(msg);
@@ -109,6 +121,43 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
   // 后端按预留算出「每个仓发哪些行、各几件」；前端不再选仓、不再分行。
   const canShip = order.paymentStatus === 'paid' && (!planLoaded || plans.length > 0);
   const locationName = (id: string) => locations.find((l) => l.id === id)?.name ?? id;
+
+  // 备注跟着订单走：切换订单要重置输入，否则会把上一单的备注写到这一单
+  useEffect(() => {
+    setNoteDraft(order.merchantNote ?? '');
+  }, [order.id, order.merchantNote]);
+
+  // 操作日志：淘宝订单详情底部都有，谁改了什么要能追
+  useEffect(() => {
+    let cancelled = false;
+    setLogsLoaded(false);
+    void listOrderLogs(order.id)
+      .then((rows) => {
+        if (!cancelled) setLogs(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setLogs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLogsLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [order.id]);
+
+  const saveNote = async () => {
+    setNoteSaving(true);
+    try {
+      await setOrderNote(order.id, noteDraft);
+      flash('备注已保存');
+      onUpdated();
+    } catch (err) {
+      flash(err instanceof Error ? err.message : '备注保存失败');
+    } finally {
+      setNoteSaving(false);
+    }
+  };
 
   const loadShipContext = async () => {
     // 任一接口不可用时退回「无待发货」，不阻断页面其它操作。
@@ -223,6 +272,30 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
             <dd className="tabular">{formatMoney(order.totalMinor, order.currency)}</dd>
           </div>
         </dl>
+      </section>
+
+      {/* 商家备注：淘宝订单详情里的固定一块，仅后台可见 */}
+      <section aria-label="商家备注" className="space-y-2">
+        <h3 className="text-sm font-semibold text-foreground">商家备注</h3>
+        <TextAreaField
+          id="order-note"
+          label="内部备注（顾客看不到）"
+          placeholder="客户要求、特殊包装、售后约定……"
+          value={noteDraft}
+          onChange={(e) => setNoteDraft(e.target.value)}
+        />
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => void saveNote()}
+            disabled={noteSaving || noteDraft === (order.merchantNote ?? '')}
+          >
+            {noteSaving ? '保存中…' : '保存备注'}
+          </Button>
+          {order.merchantNote && noteDraft === order.merchantNote && (
+            <span className="text-xs text-muted-foreground">已保存</span>
+          )}
+        </div>
       </section>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -370,6 +443,51 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 操作日志：谁在什么时候改了什么（数据来自审计流水，非前端拼装） */}
+      <section aria-label="操作日志" className="space-y-2">
+        <h3 className="text-sm font-semibold text-foreground">操作日志</h3>
+        {!logsLoaded ? (
+          <p className="text-xs text-muted-foreground">正在读取…</p>
+        ) : logs.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            暂无操作记录。演示模式下没有真实审计流水，接上后端后这里会显示发货、退款、备注等变更。
+          </p>
+        ) : (
+          <ol className="divide-y divide-border rounded-lg border border-border">
+            {logs.map((log) => (
+              <li key={log.id} className="flex flex-wrap items-baseline justify-between gap-2 px-3 py-2">
+                <span className="text-sm text-foreground">{logLabel(log.action)}</span>
+                <span className="tabular text-xs text-muted-foreground">
+                  {log.actor} · {formatLogTime(log.createdAt)}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
     </div>
   );
+}
+
+/** 审计动作名 → 人话。未知动作原样显示，不吞掉信息。 */
+const LOG_LABELS: Record<string, string> = {
+  'order.note.update': '修改商家备注',
+  'order.cancel': '取消订单',
+  'order.refund.create': '发起退款',
+  'fulfillment.create': '创建发货单',
+  'shipment.create': '填写运单发货',
+  'product.update': '修改商品',
+};
+
+function logLabel(action: string): string {
+  return LOG_LABELS[action] ?? action;
+}
+
+function formatLogTime(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

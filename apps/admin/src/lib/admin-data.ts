@@ -22,6 +22,23 @@ export interface ProductDraft {
   status: ProductStatus;
   variants: VariantDraft[];
   createdAt: string;
+  /** 运费模板；null/undefined = 默认模板。 */
+  shippingProfileId?: string | null;
+  /** 卖家包邮（淘宝的「卖家承担运费」）。 */
+  freeShipping?: boolean;
+  /** 商品详情（纯文本，空行分段）。 */
+  description?: string;
+  /** 图集顺序：第一张即主图。 */
+  images?: ProductImageDraft[];
+  /** 列表用主图地址（后端按 thumbnail_file_id 生成）。 */
+  thumbnailUrl?: string | null;
+}
+
+export interface ProductImageDraft {
+  /** 后端文件 id；mock 模式下为本地占位。 */
+  fileId: string;
+  /** 可直接渲染的 URL（mock 下是 dataURL）。 */
+  url: string | null;
 }
 
 export type OrderPayment = 'paid' | 'pending' | 'refunded';
@@ -52,6 +69,19 @@ export interface AdminOrder {
   shippingAddress: string;
   carrier?: string;
   trackingNumber?: string;
+  /** 商家内部备注（仅后台可见）。 */
+  merchantNote?: string | null;
+}
+
+/** 订单操作日志条目（来自审计流水）。 */
+export interface AdminOrderLog {
+  id: string;
+  action: string;
+  actor: string;
+  createdAt: string;
+  /** 变更前后摘要，界面按需展示。 */
+  before: unknown;
+  after: unknown;
 }
 
 export interface ThemeConfig {

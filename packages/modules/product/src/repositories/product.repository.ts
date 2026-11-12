@@ -78,6 +78,8 @@ export class DrizzleProductRepository implements ProductRepository {
         status: input.status ?? "draft",
         thumbnailFileId: input.thumbnailFileId ?? null,
         productTypeId: input.productTypeId ?? null,
+        shippingProfileId: input.shippingProfileId ?? null,
+        freeShipping: input.freeShipping ?? false,
         metadata: input.metadata ?? null,
       })
       .returning();
@@ -93,6 +95,8 @@ export class DrizzleProductRepository implements ProductRepository {
     if (patch.status !== undefined) set.status = patch.status;
     if (patch.thumbnailFileId !== undefined) set.thumbnailFileId = patch.thumbnailFileId;
     if (patch.productTypeId !== undefined) set.productTypeId = patch.productTypeId;
+    if (patch.shippingProfileId !== undefined) set.shippingProfileId = patch.shippingProfileId;
+    if (patch.freeShipping !== undefined) set.freeShipping = patch.freeShipping;
     if (patch.metadata !== undefined) set.metadata = patch.metadata;
     const rows = await this.db
       .update(schema.product)
@@ -107,6 +111,37 @@ export class DrizzleProductRepository implements ProductRepository {
       .update(schema.product)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.product.id, id));
+  }
+
+  async countByStatus(): Promise<Record<string, number>> {
+    const rows = await this.db
+      .select({ status: schema.product.status, n: sql<number>`count(*)::int` })
+      .from(schema.product)
+      .where(isNull(schema.product.deletedAt))
+      .groupBy(schema.product.status);
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.status] = Number(r.n);
+    return out;
+  }
+
+  async bulkUpdateStatus(ids: string[], status: string): Promise<number> {
+    if (ids.length === 0) return 0;
+    const rows = await this.db
+      .update(schema.product)
+      .set({ status, updatedAt: new Date() })
+      .where(and(inArray(schema.product.id, ids), isNull(schema.product.deletedAt)))
+      .returning({ id: schema.product.id });
+    return rows.length;
+  }
+
+  async bulkSoftDelete(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const rows = await this.db
+      .update(schema.product)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(inArray(schema.product.id, ids), isNull(schema.product.deletedAt)))
+      .returning({ id: schema.product.id });
+    return rows.length;
   }
 
   async listVariantsByIds(ids: string[]): Promise<VariantDTO[]> {
@@ -152,6 +187,15 @@ export class DrizzleProductRepository implements ProductRepository {
     return rows.map(toImageDTO);
   }
 
+  async softDeleteImages(productId: string): Promise<void> {
+    await this.db
+      .update(schema.productImage)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(eq(schema.productImage.productId, productId), isNull(schema.productImage.deletedAt)),
+      );
+  }
+
   async createVariants(productId: string, variants: CreateVariantInput[]): Promise<VariantDTO[]> {
     if (variants.length === 0) return [];
     const rows = await this.db
@@ -190,6 +234,26 @@ export class DrizzleProductRepository implements ProductRepository {
     await this.db
       .insert(schema.productCategoryLink)
       .values(categoryIds.map((categoryId) => ({ id: prefixedUlid("pcat"), productId, categoryId })));
+  }
+
+  /** 批量取商品的运费归属（模板 + 卖家包邮），禁 N+1。 */
+  async listShippingInfoByProducts(
+    productIds: string[],
+  ): Promise<Array<{ productId: string; profileId: string | null; freeShipping: boolean }>> {
+    if (productIds.length === 0) return [];
+    const rows = await this.db
+      .select({
+        id: schema.product.id,
+        profileId: schema.product.shippingProfileId,
+        freeShipping: schema.product.freeShipping,
+      })
+      .from(schema.product)
+      .where(and(inArray(schema.product.id, productIds), isNull(schema.product.deletedAt)));
+    return rows.map((r) => ({
+      productId: r.id,
+      profileId: r.profileId ?? null,
+      freeShipping: r.freeShipping,
+    }));
   }
 
   async listCategoryIdsByProducts(
@@ -304,6 +368,8 @@ function toProductDTO(r: typeof schema.product.$inferSelect): ProductDTO {
     status: r.status as ProductStatus,
     thumbnail_file_id: r.thumbnailFileId ?? null,
     product_type_id: r.productTypeId ?? null,
+    shipping_profile_id: r.shippingProfileId ?? null,
+    free_shipping: r.freeShipping,
     metadata: (r.metadata as Record<string, unknown> | null) ?? null,
     created_at: r.createdAt.toISOString(),
   };

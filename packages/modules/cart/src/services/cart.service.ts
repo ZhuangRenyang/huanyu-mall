@@ -43,7 +43,7 @@ export class CartService implements ICartModuleService {
      * 运费**不由客户端选**（ADR-019）：按购物车上的收货国家取可用方案，自动挑最便宜的。
      * 每次都按当前小计重算 —— 方案里可能有「满额免运费」，先选后改数量会让金额过期。
      */
-    const shipping = await this.resolveShipping(cart, subtotal);
+    const shipping = await this.resolveShipping(cart, items);
     /*
      * totals 在**读时动态计算**（不依赖「某次写操作后落库」的时序）：
      * 购物车小计 = Σ(单价×数量)，运费 = 已选方案的规则价，合计 = 小计+运费+税-折扣。
@@ -126,43 +126,89 @@ export class CartService implements ICartModuleService {
    * 自动选运费：按收货国家列可用方案，挑规则价最低的一个。
    * 没有国家 → 不产生运费（但下单会被 checkout 拒掉）；该国无方案 → null。
    */
+  /**
+   * 自动算运费（ADR-019 / ADR-021）。
+   *
+   * 运费**跟着商品走**：先查每个商品的运费模板，再按模板分组，各组分别取最便宜方案后相加。
+   * - 标了「卖家包邮」的商品不产生运费，其金额也不计入任何门槛（不能拿包邮品凑满减）；
+   * - 某个模板下该国没有可用方案 → 整单返回 null（结账据此挡住，不静默免运费）。
+   */
   private async resolveShipping(
     cart: CartDTO,
-    subtotal: bigint,
+    items: CartLineItemDTO[],
   ): Promise<CartDetailDTO["shipping_method"]> {
     const country = cart.shipping_country;
-    if (!country) return null;
-    const options = await this.deps.shipping.listShippingOptions({
-      channelId: cart.channel_id,
-      countryCode: country,
-      cartSubtotalMinor: subtotal,
-    });
-    if (options.length === 0) return null;
+    if (!country || items.length === 0) return null;
 
-    const priced = await Promise.all(
-      options.map(async (option) => ({
-        option,
-        price: await this.deps.shipping.calculateShippingPrice(option.id, {
-          cartSubtotalMinor: subtotal,
-        }),
-      })),
+    const productIds = [...new Set(items.map((i) => i.product_id))];
+    const infos = await this.deps.product.listShippingInfoByProducts(productIds);
+    const infoByProduct = new Map(infos.map((i) => [i.productId, i]));
+
+    // 按模板聚合「非包邮商品」的小计；包邮商品直接跳过
+    const groups = new Map<string | null, bigint>();
+    for (const item of items) {
+      const info = infoByProduct.get(item.product_id);
+      if (info?.freeShipping) continue;
+      const profileId = info?.profileId ?? null;
+      const line = item.unit_price_minor * BigInt(item.quantity);
+      groups.set(profileId, (groups.get(profileId) ?? 0n) + line);
+    }
+
+    // 整车都是包邮商品：运费 0，但要给前台一个可展示的说法
+    if (groups.size === 0) {
+      return {
+        id: "auto_free",
+        cart_id: cart.id,
+        shipping_option_id: "free_shipping",
+        name: "卖家包邮",
+        amount_minor: 0n,
+        currency_code: cart.currency_code,
+      };
+    }
+
+    const picked = await Promise.all(
+      [...groups.entries()].map(async ([profileId, groupSubtotal]) => {
+        const options = await this.deps.shipping.listShippingOptions({
+          channelId: cart.channel_id,
+          countryCode: country,
+          cartSubtotalMinor: groupSubtotal,
+          profileId,
+        });
+        if (options.length === 0) return null;
+
+        const priced = await Promise.all(
+          options.map(async (option) => ({
+            option,
+            price: await this.deps.shipping.calculateShippingPrice(option.id, {
+              cartSubtotalMinor: groupSubtotal,
+            }),
+          })),
+        );
+        // 价格相同按 id 排，保证同一辆车每次算出来一致（避免展示抖动）
+        priced.sort((a, b) =>
+          a.price.amountMinor !== b.price.amountMinor
+            ? a.price.amountMinor < b.price.amountMinor
+              ? -1
+              : 1
+            : a.option.id.localeCompare(b.option.id),
+        );
+        return priced[0]!;
+      }),
     );
-    // 价格相同按 id 排，保证同一辆车每次算出来一致（避免展示抖动）
-    priced.sort((a, b) =>
-      a.price.amountMinor !== b.price.amountMinor
-        ? a.price.amountMinor < b.price.amountMinor
-          ? -1
-          : 1
-        : a.option.id.localeCompare(b.option.id),
-    );
-    const best = priced[0]!;
+
+    // 任一组发不到这个国家 → 整单不可结（部分可发会让顾客以为能买）
+    if (picked.some((p) => p === null)) return null;
+    const chosen = picked as NonNullable<(typeof picked)[number]>[];
+
+    const amount = chosen.reduce((sum, c) => sum + c.price.amountMinor, 0n);
+    const first = chosen[0]!;
     return {
-      id: `auto_${best.option.id}`,
+      id: `auto_${chosen.map((c) => c.option.id).join("_")}`,
       cart_id: cart.id,
-      shipping_option_id: best.option.id,
-      name: best.option.name,
-      amount_minor: best.price.amountMinor,
-      currency_code: best.price.currencyCode,
+      shipping_option_id: first.option.id,
+      name: chosen.length === 1 ? first.option.name : `运费（${chosen.length} 个包裹）`,
+      amount_minor: amount,
+      currency_code: first.price.currencyCode,
     };
   }
 

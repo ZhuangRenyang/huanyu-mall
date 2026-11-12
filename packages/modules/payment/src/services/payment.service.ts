@@ -52,6 +52,13 @@ export class PaymentService implements IPaymentModuleService {
     return this.deps.repo.insertCollection({ ...input, id: prefixedUlid("paycol"), status: "not_paid" });
   }
 
+  /** 按订单反查支付单：退款流程要知道退哪一笔，不能让调用方自己拼两步查询。 */
+  async findPaymentByOrderId(orderId: string): Promise<PaymentDTO | null> {
+    const collection = await this.deps.repo.findCollectionByOrderId(orderId);
+    if (!collection) return null;
+    return this.deps.repo.findPaymentByCollectionId(collection.id);
+  }
+
   async createSession(input: CreateSessionInput): Promise<PaymentSessionDTO> {
     const collection = await this.deps.repo.findCollection(input.paymentCollectionId);
     if (!collection) throw collectionNotFound(input.paymentCollectionId);

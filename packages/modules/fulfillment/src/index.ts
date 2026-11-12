@@ -33,6 +33,6 @@ export default Module("fulfillment", {
       events,
     });
   },
-  migrations: ["migrations/0001_init.sql", "migrations/0002_location.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_location.sql", "migrations/0003_shipping_profile.sql"],
   linkable,
 });

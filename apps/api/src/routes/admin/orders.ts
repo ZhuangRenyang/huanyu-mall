@@ -5,6 +5,7 @@ import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { mapAdminOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
+import { refundOrderWorkflow } from "@mall/workflows";
 
 const refundBody = z.object({ amount_minor: z.number().int().positive(), reason: z.string().optional() });
 const createFulfillmentBody = z.object({
@@ -43,6 +44,49 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.get("/api/v1/admin/orders/:id", { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
     reply.ok(mapAdminOrder(await deps.services.order.retrieveOrder(id)));
+  });
+
+  /**
+   * 商家备注（淘宝订单详情里的「商家备注」）。
+   *
+   * 只存后台，店面接口不下发；空串等于清空。
+   */
+  app.put(
+    "/api/v1/admin/orders/:id/note",
+    { preHandler: guard, schema: { body: z.object({ note: z.string().max(1000).nullable() }) } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { note } = req.body as { note: string | null };
+      const before = await deps.services.order.retrieveOrder(id);
+      const after = await deps.services.order.setMerchantNote(id, note);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "order.note.update",
+          entityType: "order",
+          entityId: id,
+          before: { merchant_note: before.merchant_note },
+          after: { merchant_note: after.merchant_note },
+        }),
+      );
+      reply.ok(mapAdminOrder(after));
+    },
+  );
+
+  /**
+   * 订单操作日志（谁在什么时候改了什么）。
+   *
+   * 单独开这个端点而不是复用 /admin/audit-logs：后者要 settings 权限，
+   * 客服/运营拿不到；这里只要 orders 权限，且强制限定在**本订单**范围内。
+   */
+  app.get("/api/v1/admin/orders/:id/logs", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const res = await deps.audit.query({
+      entityType: "order",
+      entityId: id,
+      limit: 50,
+      offset: 0,
+    });
+    reply.ok(res);
   });
 
   /**
@@ -119,6 +163,13 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     reply.ok(mapAdminOrder(after));
   });
 
+  /**
+   * 商家主动退款（订单详情里的「退款」按钮）。
+   *
+   * 走的是和「退款管理」同一条链路：建申请单（source=merchant）→ 立刻执行打款。
+   * 之前这里**只把订单标成 refunded，没有任何打款动作** —— 钱没退、账已平，
+   * 属于最危险的那种「看起来做完了」。
+   */
   app.post(
     "/api/v1/admin/orders/:id/refunds",
     { preHandler: guard, schema: { body: refundBody } },
@@ -126,11 +177,27 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof refundBody>;
       const before = await deps.services.order.retrieveOrder(id);
-      const refundRequest = await deps.services.order.createRefundRequest(id, {
+
+      const request = await deps.services.order.createRefundRequest(id, {
         amountMinor: BigInt(b.amount_minor),
         reason: b.reason ?? "admin refund",
+        source: "merchant",
       });
-      await deps.services.order.markRefundSettled(id, "auto");
+      const { result } = await deps.workflow.run(
+        refundOrderWorkflow,
+        {
+          orderId: id,
+          refundRequestId: request.id,
+          amountMinor: Number(request.amount_minor),
+          reason: request.reason,
+        },
+        { idempotencyKey: `refund-approve:${request.id}` },
+      );
+      const settled = await deps.services.order.approveRefundRequest(
+        request.id,
+        (result as { refundId: string }).refundId,
+        null,
+      );
       const after = await deps.services.order.retrieveOrder(id);
       await deps.audit.record(
         auditEntry(req, {
@@ -138,10 +205,10 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
           entityType: "order",
           entityId: id,
           before,
-          after: { refund: refundRequest, order: after },
+          after: { refund: settled, order: after },
         }),
       );
-      reply.ok({ refund: refundRequest, order: mapAdminOrder(after) });
+      reply.ok({ refund: settled, order: mapAdminOrder(after) });
     },
   );
 

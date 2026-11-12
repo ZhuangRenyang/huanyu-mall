@@ -13,3 +13,25 @@ export function partialRefundNotSupported(): DomainError {
   // K4：一期只开全额退款，部分退款路径结构保留但禁止。
   return new DomainError({ code: 30002, message: "Partial refund not supported (full refund only)" });
 }
+
+// ---------------------------------------------------------------- *
+// 退款申请单
+// ---------------------------------------------------------------- *
+
+export function refundRequestNotFound(id: string): DomainError {
+  return new DomainError({ code: 30001, message: `退款申请不存在：${id}` });
+}
+
+/** 同一订单同时只能有一条待处理申请：否则商家可能重复退款。 */
+export function refundAlreadyPending(orderId: string): DomainError {
+  return new DomainError({ code: 30002, message: `订单 ${orderId} 已有待处理的退款申请` });
+}
+
+/** 已处理过的申请不能再处理一次（防双击重复退款）。 */
+export function refundAlreadyReviewed(status: string): DomainError {
+  return new DomainError({ code: 30002, message: `该退款申请已处理（当前状态：${status}）` });
+}
+
+export function refundReviewNoteRequired(): DomainError {
+  return new DomainError({ code: 20001, message: "拒绝退款必须填写理由" });
+}

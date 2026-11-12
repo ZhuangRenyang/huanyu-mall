@@ -31,19 +31,33 @@ const completeBody = z
   .nullish();
 
 /**
- * 店面可选国家/地区（ADR-018）：内置常用 ∪ 商家配过税率的国家，各带实际税率。
+ * 店面可选国家/地区（ADR-018 / ADR-019）。
  *
- * 之前这份清单写死在前端且只有「中国」一条——顾客根本没得选，
- * 所谓「按用户选择」也就无从发生。现在以后端为准，商家加国家税率即可出现。
+ * 两个来源各管一件事，不能混：
+ * - **能不能卖到该国** = 运费覆盖范围（fulfillment）。没配运费就不该让顾客选，
+ *   否则他填完地址、点下单才被「无可用运费方案」挡住。
+ * - **该国收多少税** = 税率配置（tax）。
+ *
+ * 之前这份清单只取税务、且写死「中国」一条，等于用税表冒充配送范围；
+ * 现在以配送范围为准，税务信息只做附加字段。
+ *
+ * 一个区都没配（新装店铺）时返回空列表 + `shipping_configured: false`，
+ * 前台据此提示「暂无可配送地区」，而不是让顾客在空下拉里打转。
  */
 export function checkoutMetadataRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.get("/api/v1/store/checkout/countries", async (_req, reply) => {
-    const items = await deps.services.tax.listCheckoutCountries();
+    const [taxCountries, deliverable] = await Promise.all([
+      deps.services.tax.listCheckoutCountries(),
+      deps.services.fulfillment.listDeliverableCountries(),
+    ]);
+    const allowed = new Set(deliverable);
+    const items = taxCountries.filter((c) => allowed.has(c.code));
     reply.ok({
       items,
       count: items.length,
+      shipping_configured: deliverable.length > 0,
       // 默认国家：优先中国（既有店铺的主市场），否则列表第一个
-      default_country: items.find((c) => c.code === "CN")?.code ?? items[0]?.code ?? "CN",
+      default_country: items.find((c) => c.code === "CN")?.code ?? items[0]?.code ?? null,
     });
   });
 }
