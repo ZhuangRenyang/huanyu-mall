@@ -7,6 +7,7 @@ import { ProductsPage } from './pages/products';
 import { CategoriesPage } from './pages/categories';
 import { OrdersPage } from './pages/orders';
 import { ReviewsPage } from './pages/reviews';
+import { PackingSlipPage } from './pages/packing-slip';
 import { InventoryPage } from './pages/inventory';
 import { ShippingProfilesPage } from './pages/shipping-profiles';
 import { RefundsPage } from './pages/refunds';
@@ -23,6 +24,8 @@ export function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<RequireAuth />}>
+        {/* 发货单不套外壳：套着侧边栏打印会印出一列菜单（ADR-044） */}
+        <Route path="orders/:id/packing-slip" element={<PackingSlipPage />} />
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />

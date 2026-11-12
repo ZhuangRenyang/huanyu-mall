@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Check, CreditCard, MapPin, RotateCcw, Truck } from 'lucide-react';
+import { Check, CreditCard, MapPin, Printer, RotateCcw, Truck } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Badge,
@@ -262,6 +263,16 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
               {toast}
             </span>
           )}
+          {/* 发货单：新窗口打开，方便直接 Ctrl+P（套在 Sheet 里打印会印出侧边栏）（ADR-044） */}
+          <Link
+            to={`/orders/${order.id}/packing-slip`}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground"
+          >
+            <Printer className="size-3.5" strokeWidth={2} aria-hidden="true" />
+            打印发货单
+          </Link>
         </div>
         <Timeline order={order} />
       </div>
