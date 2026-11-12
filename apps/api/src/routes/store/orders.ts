@@ -95,7 +95,22 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
      * 「我的包裹到哪了」是下单后最高频的查询。改造前这个接口不返回物流，
      * 店面前端即便有渲染分支也永远是空的（ADR-033）。
      */
-    const fulfillments = await deps.services.fulfillment.listByOrder(id);
+    const [fulfillments, payment] = await Promise.all([
+      deps.services.fulfillment.listByOrder(id),
+      // 支付渠道：顾客要看到「我用什么付的」。没有支付单（未付款/货到付款）就返回 null
+      deps.services.payment.findPaymentByOrderId(id).catch(() => null),
+    ]);
+
+    let paymentProvider: { id: string; label: string } | null = null;
+    if (payment) {
+      // provider_id 是内部标识（如 paypal），展示要用渠道配置里的 label
+      const providers = await deps.services.payment
+        .listEnabledProviders(order.channel_id)
+        .catch(() => []);
+      const found = providers.find((p) => p.identifier === payment.provider_id);
+      paymentProvider = { id: payment.provider_id, label: found?.label ?? payment.provider_id };
+    }
+
     reply.ok({
       ...mapOrder(order),
       fulfillments: fulfillments.map((f) => ({
@@ -103,6 +118,7 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         status: f.status,
         tracking_links: f.tracking_links ?? [],
       })),
+      payment_provider: paymentProvider,
     });
   });
 

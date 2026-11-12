@@ -95,7 +95,7 @@ function recordToView(rec: OrderRecord): OrderView {
     taxMinor: rec.taxMinor,
     totalMinor: rec.totalMinor,
     shippingOptionName: rec.shippingOptionName,
-    paymentMethod: '微信支付',
+    paymentMethod: rec.paymentMethod ?? '在线支付',
     contactName: rec.contactName ?? '访客',
     contactPhone: rec.phone,
     contactEmail: rec.email || undefined,

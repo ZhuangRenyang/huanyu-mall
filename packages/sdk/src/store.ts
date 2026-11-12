@@ -227,6 +227,15 @@ export interface Order {
   shipping_address?: OrderShippingAddress;
   line_items: OrderLineItem[];
   placed_at?: string;
+  /** 配送方式（详情接口返回；列表不查，避免 N+1）。 */
+  shipping_method?: {
+    name: string;
+    carrier_name: string | null;
+    amount_minor: number;
+    currency_code: string;
+  } | null;
+  /** 支付渠道（详情接口返回）。未付款或货到付款为 null。 */
+  payment_provider?: { id: string; label: string } | null;
   /** 发货单（含物流单号）：顾客端「物流信息」用它（ADR-033）。 */
   fulfillments?: Array<{
     id: string;

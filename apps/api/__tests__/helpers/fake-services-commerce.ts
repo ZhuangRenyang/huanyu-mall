@@ -397,7 +397,15 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     payment_collection_id: null,
     placed_at: new Date().toISOString(),
     items: [orderItem],
-    shipping_method: null,
+    // 订单记下了所选运费方式：详情页要显示它（ADR-034）
+    shipping_method: {
+      id: "osm_1",
+      order_id: "ord_1",
+      name: "标准快递",
+      carrier_name: "顺丰",
+      amount_minor: 800n,
+      currency_code: "CNY",
+    },
   };
 
   return {

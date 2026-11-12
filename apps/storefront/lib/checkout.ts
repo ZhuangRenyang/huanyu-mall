@@ -174,6 +174,8 @@ export interface OrderRecord {
   shippingLine1?: string;
   /** 物流单号：后台发货时填的，顾客在订单详情看「到哪了」（ADR-033）。 */
   tracking?: { carrier: string; number: string };
+  /** 支付渠道展示名（如「支付宝」）；未付款时为空。 */
+  paymentMethod?: string;
 }
 
 const ORDER_PREFIX = 'order:';
@@ -533,7 +535,7 @@ export function toOrderRecord(order: Order): OrderRecord {
     currencyCode: order.currency_code,
     email: order.email,
     phone: address?.phone ?? '',
-    shippingOptionName: '',
+    shippingOptionName: order.shipping_method?.name ?? '',
     items: (order.line_items ?? []).map((li) => ({
       title: li.title,
       quantity: li.quantity,
@@ -543,6 +545,8 @@ export function toOrderRecord(order: Order): OrderRecord {
     pollCount: 0,
     // 物流：取第一张有单号的发货单。拆包分批发时，顾客先看到第一个包裹
     ...mapTracking(order),
+    // 支付渠道用后端给的 label，不写死渠道：写死「微信支付」会让 PayPal 订单也显示微信
+    paymentMethod: order.payment_provider?.label,
     ...(address
       ? {
           contactName: [address.first_name, address.last_name].filter(Boolean).join(' '),

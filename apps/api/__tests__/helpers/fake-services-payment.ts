@@ -19,6 +19,21 @@ export function makeFakePaymentServices(state: FakeServicesState) {
       createPaymentCollection: async () => ({ id: "paycol_1" }),
       findCollectionByOrderId: async () => null,
       findCollectionById: async () => null,
+      /** 订单详情用它判断「顾客用什么付的」；未付款的订单返回 null。 */
+      findPaymentByOrderId: async () =>
+        state.orderCreated
+          ? {
+              id: "pay_1",
+              payment_collection_id: "paycol_1",
+              session_id: "paysess_1",
+              amount_minor: 19800n,
+              currency_code: "CNY",
+              status: "captured",
+              provider_id: "pp_fake",
+              provider_reference: "ref_1",
+              captured_at: "2026-11-12T10:00:00.000Z",
+            }
+          : null,
       createSession: async () => ({ id: "paysess_1" }),
       authorizeSession: async (sessionId: string) => ({
         id: "pay_1",

@@ -1,4 +1,9 @@
-import type { OrderDetailDTO, OrderDTO, OrderLineItemDTO } from "@mall/order";
+import type {
+  OrderDetailDTO,
+  OrderDTO,
+  OrderLineItemDTO,
+  OrderShippingMethodDTO,
+} from "@mall/order";
 
 /**
  * 订单 → 店面视图。
@@ -7,7 +12,13 @@ import type { OrderDetailDTO, OrderDTO, OrderLineItemDTO } from "@mall/order";
  * 列表页用批量取回的行项组装的摘要也能直接用同一个 mapper，
  * 不然列表和详情会各写一份映射，字段迟早漂移。
  */
-export function mapOrder(order: OrderDTO & { items: OrderLineItemDTO[] }) {
+export function mapOrder(
+  order: OrderDTO & {
+    items: OrderLineItemDTO[];
+    /** 详情接口才有；列表不查运费方式，避免 N+1。 */
+    shipping_method?: OrderShippingMethodDTO | null;
+  },
+) {
   return {
     id: order.id,
     status: order.status,
@@ -33,6 +44,15 @@ export function mapOrder(order: OrderDTO & { items: OrderLineItemDTO[] }) {
       currency_code: li.currency_code,
     })),
     placed_at: order.placed_at,
+    // 顾客要看「我选的是什么配送方式」：不返回它，详情页只能显示空白
+    shipping_method: order.shipping_method
+      ? {
+          name: order.shipping_method.name,
+          carrier_name: order.shipping_method.carrier_name,
+          amount_minor: order.shipping_method.amount_minor,
+          currency_code: order.shipping_method.currency_code,
+        }
+      : null,
   };
 }
 

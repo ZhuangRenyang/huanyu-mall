@@ -390,6 +390,22 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OrderLineItem' }
         placed_at: { type: string, format: date-time, example: "2026-11-08T10:00:00Z" }
+        shipping_method:
+          type: object
+          nullable: true
+          description: 订单记下的运费方式（仅详情接口返回，ADR-034）。
+          properties:
+            name: { type: string, example: 标准快递 }
+            carrier_name: { type: string, nullable: true, example: 顺丰 }
+            amount_minor: { type: integer, example: 800 }
+            currency_code: { type: string, example: CNY }
+        payment_provider:
+          type: object
+          nullable: true
+          description: 支付渠道（仅详情接口返回）。未付款或货到付款为 null。
+          properties:
+            id: { type: string, example: alipay }
+            label: { type: string, example: 支付宝 }
         fulfillments:
           type: array
           description: 发货单与物流单号（仅详情接口返回，ADR-033）。顾客据此看「包裹到哪了」。

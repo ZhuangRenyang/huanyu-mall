@@ -177,3 +177,22 @@ describe("订单详情带物流（ADR-033）", () => {
     });
   });
 });
+
+describe("订单详情带支付渠道与配送方式（ADR-034）", () => {
+  it("顾客能看到「用什么付的」与「选的什么配送」，不再是写死的渠道名", async () => {
+    await withApp(async (app, deps) => {
+      deps.state.orderCreated = true;
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/store/orders/ord_1",
+        headers: customer,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const data = res.json().data;
+      // provider_id 是内部标识，展示要用渠道配置里的 label
+      expect(data.payment_provider).toMatchObject({ id: "pp_fake", label: "Fake" });
+      expect(data.shipping_method).toBeTruthy();
+      expect(typeof data.shipping_method.name).toBe("string");
+    });
+  });
+});
