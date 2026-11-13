@@ -90,7 +90,11 @@ export function VoucherStrip({
                 </p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
                   {v.name}
-                  {v.type === 'specific_product' ? ' · 限指定商品' : v.type === 'shipping' ? ' · 仅抵运费' : ''}
+                  {v.type === 'specific_product'
+                    ? ` · ${v.scopeLabel ?? '限指定商品'}`
+                    : v.type === 'shipping'
+                      ? ' · 仅抵运费'
+                      : ''}
                 </p>
               </div>
               <Button

@@ -90,7 +90,10 @@ export function MyVouchers() {
                       {voucherThresholdText(v.minSpentMinor, currencyCode)}
                     </span>
                   </p>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{v.name}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    {v.name}
+                    {v.scopeLabel ? ` · ${v.scopeLabel}` : ''}
+                  </p>
                   {!disabled && (
                     <p className="mt-0.5 text-xs text-muted-foreground">结账时自动可选，无需输码</p>
                   )}

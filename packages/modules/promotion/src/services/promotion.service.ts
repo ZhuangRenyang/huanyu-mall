@@ -156,10 +156,19 @@ export class PromotionService implements IPromotionModuleService {
         counts.set(c.voucher_id, (counts.get(c.voucher_id) ?? 0) + 1);
       }
     }
+    const scopesByVoucher = await this.repo.listScopesByVoucherIds(collectable.map((v) => v.id));
     return collectable
       .map((v) => {
         const collected = counts.get(v.id) ?? 0;
-        return { ...v, collected: collected > 0, collected_count: collected };
+        return {
+          ...v,
+          collected: collected > 0,
+          collected_count: collected,
+          scopes: (scopesByVoucher[v.id] ?? []).map((sc) => ({
+            scope_type: sc.scope_type,
+            scope_id: sc.scope_id,
+          })),
+        };
       })
       .sort((a, b) => Number(b.discount_value) - Number(a.discount_value));
   }
@@ -205,11 +214,22 @@ export class PromotionService implements IPromotionModuleService {
 
   async listCollectedVouchers(customerId: string): Promise<CollectedVoucherDTO[]> {
     const list = await this.repo.listVoucherCollectionsByCustomer(customerId);
+    const scopesByVoucher = await this.repo.listScopesByVoucherIds(
+      [...new Set(list.map((c) => c.voucher_id))],
+    );
     // 未用在最前，其次按领取时间倒序（后端已按领取时间倒序）
-    return [...list].sort((a, b) => {
-      if (a.status === b.status) return 0;
-      return a.status === "unused" ? -1 : 1;
-    });
+    return list
+      .map((c) => ({
+        ...c,
+        scopes: (scopesByVoucher[c.voucher_id] ?? []).map((sc) => ({
+          scope_type: sc.scope_type,
+          scope_id: sc.scope_id,
+        })),
+      }))
+      .sort((a, b) => {
+        if (a.status === b.status) return 0;
+        return a.status === "unused" ? -1 : 1;
+      });
   }
 
   /** 生成一条没被占用的券码（去掉易混的 I/O/0/1，顾客手输也不会错）。 */

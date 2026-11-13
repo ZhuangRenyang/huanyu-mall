@@ -14,6 +14,8 @@ export interface PublicVoucherView {
   name: string;
   /** 整单 / 运费 / 指定商品（ADR-064：specific_product 只对命中范围的行生效）。 */
   type: 'entire_order' | 'shipping' | 'specific_product';
+  /** 适用范围文案（ADR-066）：如「限 2 件商品、1 个分类」；无范围时为空。 */
+  scopeLabel?: string;
   /** fixed = 减固定金额（minor）；percentage = 减百分比（bps）。 */
   discountType: 'fixed' | 'percentage';
   discountValue: number;
@@ -35,6 +37,8 @@ export interface MyVoucherView {
   minSpentMinor: number | null;
   endsAt: string | null;
   status: 'unused' | 'used';
+  /** 适用范围文案（ADR-066）；无范围时为空。 */
+  scopeLabel?: string;
   /** 过期按 ends_at 现算（后端不落「已过期」状态）。 */
   expired: boolean;
 }
@@ -43,6 +47,7 @@ interface ApiVoucher {
   id: string;
   name: string;
   type?: 'entire_order' | 'shipping' | 'specific_product';
+  scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
   discount_type: 'fixed' | 'percentage';
   discount_value: number | string;
   min_spent: number | string | null;
@@ -57,11 +62,23 @@ interface ApiMyVoucher {
   id: string;
   code: string;
   name: string;
+  scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
   discount_type: 'fixed' | 'percentage';
   discount_value: number | string;
   min_spent: number | string | null;
   ends_at: string | null;
   status: 'unused' | 'used';
+}
+
+/** 范围 → 一行文案（ADR-066）：只数数量，不展开商品名（展开要跨模块取名称）。 */
+function scopeLabelFrom(scopes?: Array<{ scope_type: string; scope_id: string }>): string | undefined {
+  if (!scopes || scopes.length === 0) return undefined;
+  const products = scopes.filter((sc) => sc.scope_type === 'product').length;
+  const categories = scopes.filter((sc) => sc.scope_type === 'category').length;
+  const parts: string[] = [];
+  if (products > 0) parts.push(`限 ${products} 件商品`);
+  if (categories > 0) parts.push(`限 ${categories} 个分类`);
+  return parts.join('、');
 }
 
 function toNum(v: number | string | null | undefined): number {
@@ -154,6 +171,7 @@ export async function getStoreVouchers(): Promise<{
       id: v.id,
       name: v.name,
       type: v.type ?? 'entire_order',
+      scopeLabel: scopeLabelFrom(v.scopes),
       discountType: v.discount_type,
       discountValue: toNum(v.discount_value),
       minSpentMinor: v.min_spent === null ? null : toNum(v.min_spent),
@@ -220,6 +238,7 @@ export async function fetchMyVouchers(): Promise<{
     id: v.id,
     code: v.code,
     name: v.name,
+    scopeLabel: scopeLabelFrom(v.scopes),
     discountType: v.discount_type,
     discountValue: toNum(v.discount_value),
     minSpentMinor: v.min_spent === null ? null : toNum(v.min_spent),

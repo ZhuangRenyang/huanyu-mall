@@ -1290,6 +1290,38 @@ describe("优惠券适用范围（ADR-064）", () => {
     const withShip = await service.computeDiscounts(twoLineCtx({ shippingMinor: 800n }) as never);
     expect(withShip.voucherDiscountMinor).toBe(800n);
   });
+
+  it("公开券与我的卡券都带出范围，供店面提示（ADR-066）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const v = await service.createVoucher({
+      name: "范围券",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 1000n,
+      isPublic: true,
+      scopes: [
+        { scopeType: "product", scopeId: "prod_a" },
+        { scopeType: "category", scopeId: "cat_x" },
+      ],
+    });
+    await service.addVoucherCode({ voucherId: v.id, code: "CODE" });
+
+    const pubs = await service.listPublicVouchers(null);
+    const pub = pubs.find((x) => x.id === v.id);
+    expect(pub?.scopes).toEqual([
+      { scope_type: "product", scope_id: "prod_a" },
+      { scope_type: "category", scope_id: "cat_x" },
+    ]);
+
+    // 领取后，我的卡券也带范围
+    await service.collectVoucher(v.id, "cust_1");
+    const mine = await service.listCollectedVouchers("cust_1");
+    expect(mine[0]?.scopes).toEqual([
+      { scope_type: "product", scope_id: "prod_a" },
+      { scope_type: "category", scope_id: "cat_x" },
+    ]);
+  });
 });
 
 describe("领券（ADR-029）", () => {

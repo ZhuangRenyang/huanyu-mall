@@ -102,6 +102,8 @@ export interface CollectedVoucherDTO {
   status: "unused" | "used";
   collected_at: Date;
   used_at: Date | null;
+  /** 适用范围（ADR-066）：type='specific_product' 时非空。 */
+  scopes?: Array<{ scope_type: "product" | "category"; scope_id: string }>;
 }
 
 /** 店面公开券：券信息 + 当前顾客是否已领（未登录时为 false）。 */
@@ -109,6 +111,11 @@ export interface PublicVoucherDTO extends VoucherDTO {
   collected: boolean;
   /** 已领张数（配合 collect_limit 展示「还可领 N 张」）。 */
   collected_count: number;
+  /**
+   * 适用范围（ADR-066）：type='specific_product' 时非空。
+   * 店面据此提示「限 N 件商品 / N 个分类」，别让顾客领了全店都用不上的券。
+   */
+  scopes?: Array<{ scope_type: "product" | "category"; scope_id: string }>;
 }
 
 export interface GiftCardDTO {
