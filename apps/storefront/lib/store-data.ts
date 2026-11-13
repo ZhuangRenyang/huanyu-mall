@@ -133,9 +133,16 @@ export interface StoreProfile {
   supportPhone: string | null;
   /** 店铺 Logo（可空）：有图显示图，没图显示店名文字（ADR-046）。 */
   logoUrl: string | null;
+  /** 店铺公告（可空）：非空时在页头之上显示一条公告条（ADR-047）。 */
+  announcement: string | null;
 }
 
-const DEFAULT_PROFILE: StoreProfile = { name: '全球商城', supportPhone: null, logoUrl: null };
+const DEFAULT_PROFILE: StoreProfile = {
+  name: '全球商城',
+  supportPhone: null,
+  logoUrl: null,
+  announcement: null,
+};
 
 /**
  * 店铺资料（店名 / 客服电话，ADR-045）。
@@ -147,12 +154,18 @@ export async function getStoreProfile(): Promise<StoreProfile> {
   if (getApiMode() !== 'live') return DEFAULT_PROFILE;
   try {
     const raw = (await getStoreClient().bootstrap()) as {
-      theme?: { store_name?: string; support_phone?: string | null; logo_url?: string | null } | null;
+      theme?: {
+        store_name?: string;
+        support_phone?: string | null;
+        logo_url?: string | null;
+        announcement?: string | null;
+      } | null;
     };
     return {
       name: raw.theme?.store_name?.trim() || DEFAULT_PROFILE.name,
       supportPhone: raw.theme?.support_phone ?? null,
       logoUrl: raw.theme?.logo_url ?? null,
+      announcement: raw.theme?.announcement?.trim() || null,
     };
   } catch {
     return DEFAULT_PROFILE;

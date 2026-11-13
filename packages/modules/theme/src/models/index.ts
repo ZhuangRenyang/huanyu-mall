@@ -15,6 +15,8 @@ export const themeSettings = pgTable("theme_settings", {
   storeName: text("store_name").notNull().default("全球商城"),
   /** 客服电话（发货单与页脚展示，可为空）。 */
   supportPhone: text("support_phone"),
+  /** 店铺公告：店面顶部公告条（ADR-047），空值不显示。 */
+  announcement: text("announcement"),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

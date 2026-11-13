@@ -126,3 +126,60 @@ describe("店铺 Logo", () => {
     });
   });
 });
+
+describe("店铺公告（ADR-047）", () => {
+  it("保存后能读回，也出现在店面 bootstrap（公告条全站可见）", async () => {
+    await withApp(async (app) => {
+      const put = await app.inject({
+        method: "PUT",
+        url: "/api/v1/admin/settings/theme",
+        headers: adminJson,
+        payload: { announcement: "  双十一全场 8 折，满 199 包邮  " },
+      });
+      expect(put.statusCode, put.body).toBe(200);
+
+      const adminTheme = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/settings/theme",
+        headers: admin,
+      });
+      // 首尾空格被裁掉：公告是一条单行文本，不该带着空格渲染
+      expect(adminTheme.json().data.theme.announcement).toBe("双十一全场 8 折，满 199 包邮");
+
+      const boot = await app.inject({ method: "GET", url: "/api/v1/store/bootstrap" });
+      expect(boot.json().data.theme.announcement).toBe("双十一全场 8 折，满 199 包邮");
+    });
+  });
+
+  it("清空公告后为 null（不显示公告条）", async () => {
+    await withApp(async (app) => {
+      await app.inject({
+        method: "PUT",
+        url: "/api/v1/admin/settings/theme",
+        headers: adminJson,
+        payload: { announcement: "旧公告" },
+      });
+      await app.inject({
+        method: "PUT",
+        url: "/api/v1/admin/settings/theme",
+        headers: adminJson,
+        payload: { announcement: "   " },
+      });
+
+      const boot = await app.inject({ method: "GET", url: "/api/v1/store/bootstrap" });
+      expect(boot.json().data.theme.announcement).toBeNull();
+    });
+  });
+
+  it("公告超过 40 字被拒（页面也是一行输入框）", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/v1/admin/settings/theme",
+        headers: adminJson,
+        payload: { announcement: "字".repeat(41) },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+  });
+});

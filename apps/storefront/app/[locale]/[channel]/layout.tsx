@@ -19,6 +19,15 @@ export default async function ChannelLayout({
     <CartProvider>
       <ThemeInjector />
       <div className="flex min-h-dvh flex-col">
+        {/* 店铺公告（ADR-047）：Shopify/淘宝的公告条都在页头之上，全站可见 */}
+        {profile.announcement && (
+          <p
+            className="bg-primary-subtle px-4 py-1.5 text-center text-xs text-primary-subtle-foreground"
+            role="status"
+          >
+            {profile.announcement}
+          </p>
+        )}
         <Header
           locale={locale}
           channel={channel}

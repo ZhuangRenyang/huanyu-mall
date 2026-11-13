@@ -537,6 +537,12 @@ components:
           nullable: true
           example: "/uploads/file_logo_01H"
           description: 店铺 Logo 的公开 URL（由 file 模块按存储 key 生成，ADR-046）；未设置时为 null
+        announcement:
+          type: string
+          nullable: true
+          maxLength: 40
+          example: "双十一全场 8 折，满 199 包邮"
+          description: 店铺公告（ADR-047）；非空时店面在页头之上显示公告条
 
     FileInfo:
       type: object

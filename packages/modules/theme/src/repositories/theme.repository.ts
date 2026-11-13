@@ -28,6 +28,7 @@ export class DrizzleThemeRepository implements ThemeRepository {
       productImageRatio: merged.product_image_ratio,
       storeName: merged.store_name,
       supportPhone: merged.support_phone,
+      announcement: merged.announcement,
       metadata: merged.metadata,
       updatedAt: new Date(),
     };
@@ -68,6 +69,7 @@ function toThemeDTO(r: typeof schema.themeSettings.$inferSelect): ThemeSettingsD
     product_image_ratio: r.productImageRatio,
     store_name: r.storeName,
     support_phone: r.supportPhone ?? null,
+    announcement: r.announcement ?? null,
     metadata: (r.metadata as Record<string, unknown> | null) ?? null,
   };
 }

@@ -14,6 +14,8 @@ export interface ThemeSettingsDTO {
   store_name: string;
   /** 客服电话（可空）：发货单与页脚展示。 */
   support_phone: string | null;
+  /** 店铺公告（可空）：店面顶部公告条，空 = 不显示（ADR-047）。 */
+  announcement: string | null;
   metadata: Record<string, unknown> | null;
 }
 
@@ -29,6 +31,7 @@ export const DEFAULT_THEME: ThemeSettingsDTO = {
   product_image_ratio: "4:5",
   store_name: "全球商城",
   support_phone: null,
+  announcement: null,
   metadata: null,
 };
 

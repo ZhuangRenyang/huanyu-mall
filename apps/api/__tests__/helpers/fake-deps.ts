@@ -164,6 +164,7 @@ const INITIAL_THEME: Record<string, unknown> = {
   product_image_ratio: "4:5",
   store_name: "全球商城",
   support_phone: null,
+  announcement: null,
   metadata: null,
 };
 

@@ -61,6 +61,8 @@ export async function saveTheme(theme: ThemeConfig): Promise<void> {
     product_image_ratio: theme.productRatio,
     // logo 必须一起提交：外观保存原本只发 4 个字段，上传后的 logo 会被下一次保存悄悄抹掉
     logo_file_id: theme.logoFileId,
+    // 公告同理：输入框从一期就在，但一直没落库，保存一次就丢（ADR-047）
+    announcement: theme.announcement.trim() ? theme.announcement.trim() : null,
   });
 }
 

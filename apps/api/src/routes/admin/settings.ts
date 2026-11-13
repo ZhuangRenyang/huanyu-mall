@@ -14,6 +14,13 @@ const themeBody = z.object({
   shadow: z.string().optional(),
   logo_file_id: z.string().nullable().optional(),
   product_image_ratio: z.string().optional(),
+  // 公告：空串按「没填」处理，避免 null 与 "" 两种空值混存（ADR-047）
+  announcement: z
+    .string()
+    .max(40)
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.trim() ? v.trim() : null)),
 });
 
 /**
