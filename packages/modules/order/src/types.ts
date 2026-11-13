@@ -358,6 +358,13 @@ export interface OrderRepository {
   summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]>;
   /** 各状态订单数（一次 GROUP BY）。 */
   countByStatus(): Promise<Record<string, number>>;
+  /**
+   * 各变体的累计销量（ADR-067）。
+   *
+   * 口径：订单状态属于「已成交」的那几档（已付款/已发货/已收货/已完成）的行数量之和，
+   * 未付款、已取消、退款中、已退款都不算。销量是社交证明，虚高会让顾客不信任。
+   */
+  countSoldByVariantIds(variantIds: string[]): Promise<Record<string, number>>;
   /** 某时刻之后「已付款」订单数与金额（工作台「今日」口径）。 */
   summarizePaidSince(since: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
   updateStatus(id: string, status: OrderStatus): Promise<void>;
@@ -368,6 +375,8 @@ export interface IOrderModuleService {
   createOrder(input: CreateOrderInput): Promise<OrderDetailDTO>;
   /** 各状态订单数（后台工作台与订单页签角标，一次 GROUP BY）。 */
   countByStatus(): Promise<Record<string, number>>;
+  /** 各变体累计销量（ADR-067）。 */
+  countSoldByVariants(variantIds: string[]): Promise<Record<string, number>>;
   /** 某时刻之后「已付款」订单数与金额（工作台「今日」口径）。 */
   summarizePaidSince(since: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
   retrieveOrder(id: string): Promise<OrderDetailDTO>;

@@ -67,6 +67,10 @@ export function ProductCard({ product, basePath, priority = false }: ProductCard
             size="base"
           />
         </span>
+        {/* 已售 N 件（ADR-067）：淘宝商品卡常带月销，是社交证明；0 件不显示 */}
+        {(product.soldCount ?? 0) > 0 && (
+          <span className="text-xs text-muted-foreground">已售 {product.soldCount} 件</span>
+        )}
       </div>
     </article>
   );

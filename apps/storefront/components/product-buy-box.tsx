@@ -105,6 +105,10 @@ export function ProductBuyBox({
         <Price amountMinor={priceMinor} originalMinor={originalMinor} promo={originalMinor !== undefined} size="xl" />
         {lowStock !== undefined && <Badge variant="warning">仅剩 {lowStock} 件</Badge>}
         {soldOut && <Badge variant="neutral">已售罄</Badge>}
+        {/* 已售 N 件（ADR-067）：淘宝商品页价格旁常带月销，社交证明 */}
+        {(product.soldCount ?? 0) > 0 && (
+          <span className="text-sm text-muted-foreground">已售 {product.soldCount} 件</span>
+        )}
       </div>
 
       {groups.length > 0 && (

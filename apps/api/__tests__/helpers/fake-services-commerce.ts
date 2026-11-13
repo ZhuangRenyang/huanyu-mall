@@ -1049,6 +1049,15 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           : { items: [], count: 0 },
       // 工作台（ADR-030）：内存版计数，够驱动路由契约测试
       countByStatus: async () => (state.orderCreated ? { paid: 1 } : {}),
+      // 销量（ADR-067）：默认各变体 0，用例可用 state.soldByVariant 覆盖
+      countSoldByVariants: async (variantIds: string[]) => {
+        const out: Record<string, number> = {};
+        for (const id of variantIds) {
+          const n = state.soldByVariant?.[id];
+          if (n !== undefined && n > 0) out[id] = n;
+        }
+        return out;
+      },
       summarizePaidSince: async () => ({
         count: state.orderCreated ? 1 : 0,
         amountMinor: state.orderCreated ? BigInt(String(order.total_minor ?? 0)) : 0n,

@@ -53,7 +53,7 @@ export async function mapStoreProductSummaries(
   products: Awaited<ReturnType<AppDeps["services"]["product"]["listProductsWithVariants"]>>["items"],
 ) {
   const variantIds = products.flatMap((p) => p.variants.map((v) => v.id));
-  const [prices, availability] = await Promise.all([
+  const [prices, availability, sold] = await Promise.all([
     variantIds.length > 0
       ? deps.services.pricing.calculatePrices({
           variantIds,
@@ -62,9 +62,12 @@ export async function mapStoreProductSummaries(
       : Promise.resolve([]),
     // 库存也批量取：列表要标「已售罄」，缺了它顾客只能点进详情才发现卖完了（ADR-041）
     variantIds.length > 0 ? deps.services.inventory.getAvailability({ variantIds }) : Promise.resolve([]),
+    // 销量：商品级「已售 N 件」是社交证明（ADR-067），一次 GROUP BY 取全
+    variantIds.length > 0 ? deps.services.order.countSoldByVariants(variantIds) : Promise.resolve({}),
   ]);
   const priceByVariant = new Map(prices.map((p) => [p.variantId, p.amountMinor]));
   const availByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
+  const soldByVariant = sold as Record<string, number>;
   // 主图：批量取 URL。原来这里写死 null，导致店面列表永远没有图。
   const thumbIds = products
     .map((p) => p.thumbnail_file_id)
@@ -89,6 +92,8 @@ export async function mapStoreProductSummaries(
           : undefined,
       // 商品级可用量 = 各变体可用量之和（0 = 售罄，店面前端据此标「已售罄」）
       available_quantity: p.variants.reduce((sum, v) => sum + (availByVariant.get(v.id) ?? 0), 0),
+      // 商品级销量 = 各变体销量之和（ADR-067，社交证明）
+      sold_count: p.variants.reduce((sum, v) => sum + (soldByVariant[v.id] ?? 0), 0),
     };
   });
 }
@@ -143,7 +148,7 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
     const detail = await deps.services.product.retrieveProduct(summary.id);
 
     const variantIds = detail.variants.map((v) => v.id);
-    const [prices, availability] = await Promise.all([
+    const [prices, availability, sold] = await Promise.all([
       variantIds.length
         ? deps.services.pricing.calculatePrices({
             variantIds,
@@ -151,9 +156,13 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
           })
         : Promise.resolve([]),
       variantIds.length ? deps.services.inventory.getAvailability({ variantIds }) : Promise.resolve([]),
+      variantIds.length
+        ? deps.services.order.countSoldByVariants(variantIds)
+        : Promise.resolve({}),
     ]);
     const priceByVariant = new Map(prices.map((p) => [p.variantId, p]));
     const availByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
+    const soldByVariant = sold as Record<string, number>;
 
     reply.ok({
       id: detail.id,
@@ -162,6 +171,8 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
       subtitle: detail.subtitle,
       description: detail.description,
       status: detail.status,
+      // 商品级销量（ADR-067）：各变体销量之和
+      sold_count: detail.variants.reduce((sum, v) => sum + (soldByVariant[v.id] ?? 0), 0),
       images: await (async () => {
         // URL 必须由 file 模块按 storage key 生成；直接拼 file_id 会 404（key ≠ id）
         const urls = await deps.services.file.getPublicUrls(detail.images.map((i) => i.file_id));
@@ -185,6 +196,7 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
             : null,
           available_quantity: available,
           inventory_status: available > 5 ? "in_stock" : available > 0 ? "low_stock" : "out_of_stock",
+          sold_count: soldByVariant[v.id] ?? 0,
         };
       }),
       attributes: [],

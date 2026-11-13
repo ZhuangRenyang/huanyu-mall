@@ -24,6 +24,7 @@ interface ApiVariant {
   price?: Money;
   inventory_status?: string;
   available_quantity?: number;
+  sold_count?: number;
 }
 
 /** 真 API 返回的商品详情（字段对齐 openapi ProductDetail）。 */
@@ -39,6 +40,8 @@ interface ApiProductDetail {
   attributes?: Array<{ name: string; value: string }>;
   /** 所属分类（详情接口返回，ADR-040）。 */
   categories?: Array<{ id: string; name: string; parent_id?: string | null }>;
+  /** 商品级销量（ADR-067）。 */
+  sold_count?: number;
 }
 
 /** 真 API 返回的商品摘要（字段对齐 openapi ProductSummary）。 */
@@ -52,6 +55,8 @@ interface ApiProductSummary {
   price?: Money;
   /** 可用量（各变体之和），0 = 已售罄（ADR-041）。 */
   available_quantity?: number;
+  /** 商品级销量（ADR-067）。 */
+  sold_count?: number;
 }
 
 /** 真 API 的分类。 */
@@ -79,6 +84,7 @@ function mapVariant(v: ApiVariant): CatalogVariant {
     options: v.options ?? {},
     priceMinor: v.price?.amount_minor ?? 0,
     stock: v.available_quantity ?? 0,
+    soldCount: v.sold_count ?? 0,
   };
 }
 
@@ -105,6 +111,7 @@ function mapDetail(d: ApiProductDetail): CatalogProduct {
       parentId: c.parent_id ?? null,
     })),
     variants,
+    soldCount: d.sold_count,
     originalMinor: undefined,
   };
 }
@@ -119,6 +126,7 @@ function mapSummary(p: ApiProductSummary): StoreProduct {
     status: (p.status ?? "published") as StoreProduct["status"],
     price: p.price,
     available: p.available_quantity,
+    soldCount: p.sold_count,
     originalMinor: undefined,
     badge: undefined,
     categoryId: "",

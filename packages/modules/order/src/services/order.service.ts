@@ -151,6 +151,10 @@ export class OrderService implements IOrderModuleService {
     return this.repo.countByStatus();
   }
 
+  async countSoldByVariants(variantIds: string[]): Promise<Record<string, number>> {
+    return this.repo.countSoldByVariantIds(variantIds);
+  }
+
   async summarizePaidSince(
     since: Date,
   ): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }> {

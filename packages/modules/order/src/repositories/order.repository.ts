@@ -1,6 +1,15 @@
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
+
+/** 已成交的订单状态（ADR-067）：销量只数这些，未付款/取消/退款都不算。 */
+const SOLD_STATUSES = [
+  "paid",
+  "partially_fulfilled",
+  "fulfilled",
+  "delivered",
+  "completed",
+] as const;
 import type {
   Actor,
   CreateOrderDiscountInput,
@@ -386,6 +395,25 @@ export class DrizzleOrderRepository implements OrderRepository {
       .where(eq(schema.orderShippingMethod.orderId, orderId))
       .limit(1);
     return rows[0] ? toShippingDTO(rows[0]) : null;
+  }
+
+  async countSoldByVariantIds(variantIds: string[]): Promise<Record<string, number>> {
+    if (variantIds.length === 0) return {};
+    const rows = await this.db
+      .select({
+        variantId: schema.orderLineItem.variantId,
+        count: sql<number>`sum(${schema.orderLineItem.quantity})::int`,
+      })
+      .from(schema.orderLineItem)
+      .innerJoin(schema.order, eq(schema.orderLineItem.orderId, schema.order.id))
+      .where(
+        and(
+          inArray(schema.orderLineItem.variantId, variantIds),
+          inArray(schema.order.status, SOLD_STATUSES),
+        ),
+      )
+      .groupBy(schema.orderLineItem.variantId);
+    return Object.fromEntries(rows.map((r) => [r.variantId, Number(r.count ?? 0)]));
   }
 
   async countByStatus(): Promise<Record<string, number>> {

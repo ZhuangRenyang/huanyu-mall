@@ -52,6 +52,7 @@ export const catalogProducts: CatalogProduct[] = [
       '2.4G 与蓝牙双模连接，静音微动点击声低于 30dB，适合共享办公与夜间使用。三档 DPI 一键切换，单节电池续航约 6 个月。',
     categoryId: 'cat-peripherals',
     createdAt: '2026-09-12',
+    soldCount: 1280,
     images: imgs('mouse'),
     attributes: [{ name: '连接方式', value: '无线' }],
     variants: [variant('var_mouse_black', '黑色', '颜色', '黑色', 19900, 8), variant('var_mouse_white', '白色', '颜色', '白色', 19900, 0)],
