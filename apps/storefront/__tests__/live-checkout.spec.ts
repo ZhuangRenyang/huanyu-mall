@@ -291,9 +291,14 @@ describe("live 模式：订单状态映射", () => {
     expect(record.status).toBe("paid");
     expect(record.totalMinor).toBe(41800);
     expect(record.currencyCode).toBe("CNY");
-    expect(record.items).toEqual([
-      { title: "黑色", quantity: 2, unitPriceMinor: 19900 },
-    ]);
+    // variantId 必须带出来：订单详情「再买一次」靠它加购（ADR-058）
+    expect(record.items).toHaveLength(1);
+    expect(record.items[0]).toMatchObject({
+      title: "黑色",
+      variantId: "var_1",
+      quantity: 2,
+      unitPriceMinor: 19900,
+    });
   });
 
   it("未收款 → 处理中（轮询等待支付商回调）", () => {

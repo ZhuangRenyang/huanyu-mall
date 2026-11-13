@@ -157,7 +157,7 @@ function seedOrders(): OrderView[] {
       id: 'ord_sample_7f3k',
       status: 'to_receive',
       daysAgo: 3,
-      items: [{ title: '主动降噪头戴耳机', variantTitle: '曜石黑', quantity: 1, unitPriceMinor: 89900, imageUrl: 'https://picsum.photos/seed/headphones/200/250' }],
+      items: [{ productId: 'prod_headphones', variantId: 'var_hp_black', title: '主动降噪头戴耳机', variantTitle: '曜石黑', quantity: 1, unitPriceMinor: 89900, imageUrl: 'https://picsum.photos/seed/headphones/200/250' }],
       contactName: '林知远',
       phone: '13800001234',
       email: 'lin@example.com',
@@ -170,7 +170,7 @@ function seedOrders(): OrderView[] {
       id: 'ord_sample_2m9q',
       status: 'completed',
       daysAgo: 12,
-      items: [{ title: '87 键机械键盘', variantTitle: '茶轴', quantity: 1, unitPriceMinor: 52900, imageUrl: 'https://picsum.photos/seed/keyboard/200/250' }],
+      items: [{ productId: 'prod_keyboard', variantId: 'var_kb_brown', title: '87 键机械键盘', variantTitle: '茶轴', quantity: 1, unitPriceMinor: 52900, imageUrl: 'https://picsum.photos/seed/keyboard/200/250' }],
       contactName: '陈苇',
       phone: '13900004567',
       email: 'chen@example.com',
@@ -182,7 +182,7 @@ function seedOrders(): OrderView[] {
       id: 'ord_sample_5x1v',
       status: 'refunded',
       daysAgo: 20,
-      items: [{ title: '20000mAh 快充充电宝', variantTitle: '远峰蓝', quantity: 1, unitPriceMinor: 14900, imageUrl: 'https://picsum.photos/seed/powerbank/200/250' }],
+      items: [{ productId: 'prod_powerbank', variantId: 'var_pb_blue', title: '20000mAh 快充充电宝', variantTitle: '远峰蓝', quantity: 1, unitPriceMinor: 14900, imageUrl: 'https://picsum.photos/seed/powerbank/200/250' }],
       contactName: '赵一鸣',
       phone: '13700007890',
       email: 'zhao@example.com',
@@ -282,6 +282,42 @@ export function findOrderByIdentity(orderId: string, identity: string): { order?
   const email = (order.contactEmail ?? '').toLowerCase();
   if (key === phoneTail || (email && key === email)) return { order };
   return { error: '单号与手机后四位 / 邮箱不匹配' };
+}
+
+/**
+ * 「再买一次」要加进购物车的行（ADR-058）。
+ *
+ * 拆成纯函数是为了能测：加购的入参错了（比如拿 productId 当变体 id），
+ * 后端会把不同规格当同一个商品，加进去的价与规格全错。
+ *
+ * 返回 skipped：历史订单快照里没有变体 id 的行 —— 界面上要如实告诉顾客
+ * 「这几件得回商品页自己选规格」，而不是静默少加两件。
+ */
+export interface BuyAgainLine {
+  variantId: string;
+  title: string;
+  variantTitle?: string;
+  unitPriceMinor: number;
+  quantity: number;
+}
+
+export function buyAgainLines(order: OrderView): { lines: BuyAgainLine[]; skipped: number } {
+  const lines: BuyAgainLine[] = [];
+  let skipped = 0;
+  for (const item of order.items) {
+    if (!item.variantId) {
+      skipped += 1;
+      continue;
+    }
+    lines.push({
+      variantId: item.variantId,
+      title: item.title,
+      ...(item.variantTitle ? { variantTitle: item.variantTitle } : {}),
+      unitPriceMinor: item.unitPriceMinor,
+      quantity: item.quantity,
+    });
+  }
+  return { lines, skipped };
 }
 
 export function formatDateTime(ts: number): string {

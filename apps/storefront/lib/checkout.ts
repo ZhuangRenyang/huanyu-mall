@@ -144,6 +144,11 @@ export function validateStep(step: number, form: CheckoutForm): CheckoutErrors {
 export interface OrderLineSnapshot {
   /** 商品 id：订单详情据此提交评价（ADR-042）。 */
   productId?: string;
+  /**
+   * 变体 id：订单详情「再买一次」据此加购（ADR-058）。
+   * 历史订单（改造前落库的快照）没有这个字段，只能回商品页手动选规格。
+   */
+  variantId?: string;
   title: string;
   variantTitle?: string;
   quantity: number;
@@ -560,6 +565,8 @@ export function toOrderRecord(order: Order): OrderRecord {
     shippingOptionName: order.shipping_method?.name ?? '',
     items: (order.line_items ?? []).map((li) => ({
       productId: li.product_id,
+      // 加购要的是变体 id（同一商品不同规格是不同变体），缺了就没法「再买一次」
+      variantId: li.variant_id,
       title: li.title,
       quantity: li.quantity,
       unitPriceMinor: li.unit_price_minor,

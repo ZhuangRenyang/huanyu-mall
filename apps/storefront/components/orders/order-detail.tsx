@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Copy, CreditCard, MapPin, MessageSquareText, Truck } from 'lucide-react';
+import { Copy, CreditCard, MapPin, MessageSquareText, Repeat, Truck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge, Button, formatMoney } from '@mall/ui';
 import {
@@ -13,7 +13,14 @@ import {
 } from '@/lib/refunds';
 import { OrderTimeline } from './order-timeline';
 import { ReviewDialog } from './review-dialog';
-import { ORDER_STATUS_META, confirmReceipt, formatDateTime, type OrderView } from '@/lib/orders';
+import {
+  ORDER_STATUS_META,
+  buyAgainLines,
+  confirmReceipt,
+  formatDateTime,
+  type OrderView,
+} from '@/lib/orders';
+import { useCart } from '@/lib/cart-store';
 
 /**
  * 申请退款（淘宝「申请售后」）。
@@ -357,6 +364,39 @@ export function OrderDetail({
    */
   const canReview = order.status === 'to_receive' || order.status === 'completed';
 
+  /*
+   * 再买一次（ADR-058）：淘宝在每个订单上都有这个入口 ——
+   * 复购是最高频的动作，让顾客从「我的订单」重新找商品再选规格，纯属多余。
+   */
+  const { addItem } = useCart();
+  const [buyNote, setBuyNote] = useState<string | null>(null);
+  const again = buyAgainLines(order);
+
+  const buyAgain = () => {
+    for (const line of again.lines) {
+      addItem(
+        {
+          id: line.variantId,
+          title: line.title,
+          ...(line.variantTitle ? { variantTitle: line.variantTitle } : {}),
+          unitPriceMinor: line.unitPriceMinor,
+          currencyCode: order.currencyCode,
+        },
+        line.quantity,
+      );
+    }
+    /*
+     * 只说「已加入」，不说「都加好了」：
+     * 加购是乐观更新，缺货的那件要等服务端回来才知道（回来时会被回退并提示）。
+     * 历史订单里没有变体 id 的行更是压根加不进来 —— 都要如实说。
+     */
+    setBuyNote(
+      again.skipped > 0
+        ? `已加入购物车；另有 ${again.skipped} 件规格信息不全，请到商品页重新选择`
+        : '已加入购物车；缺货商品会自动移出',
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-border bg-card p-4">
@@ -446,6 +486,21 @@ export function OrderDetail({
               </li>
             ))}
           </ul>
+
+          {/* 再买一次：放在金额下面，顾客看完这单花了多少，顺手复购 */}
+          {again.lines.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" onClick={buyAgain}>
+                <Repeat className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                再买一次
+              </Button>
+              {buyNote && (
+                <span className="text-xs text-muted-foreground" role="status">
+                  {buyNote}
+                </span>
+              )}
+            </div>
+          )}
 
           <dl className="space-y-1.5 rounded-lg border border-border bg-card p-4 text-sm">
             <Row label="商品小计" value={formatMoney(order.subtotalMinor, order.currencyCode)} />
