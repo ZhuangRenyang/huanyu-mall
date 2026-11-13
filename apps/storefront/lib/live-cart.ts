@@ -316,7 +316,17 @@ export function applyLiveCart(
       unitPriceMinor: line.unit_price_minor,
       currencyCode: line.currency_code,
       imageUrl: cached?.imageUrl,
-      maxQuantity: cached?.maxQuantity,
+      /*
+       * 上限以服务端为准，但**只在有货时**设：售罄时 available 是 0，
+       * 把 max 设成 0 会让数量选择器出现「值 1、上限 0」的矛盾态。
+       * 售罄行本来就被归到「失效宝贝」，不由选择器管。
+       */
+      maxQuantity:
+        line.available_quantity !== undefined && line.available_quantity > 0
+          ? line.available_quantity
+          : cached?.maxQuantity,
+      availabilityStatus: line.availability_status ?? 'ok',
+      availableQuantity: line.available_quantity,
     });
   }
   // 本地多出来的行：只有「正在写」的行才留（还没落到服务端），其余丢掉。

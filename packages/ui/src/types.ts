@@ -21,6 +21,13 @@ export interface CartLineItemProps {
   imageUrl?: string;
   /** 单行最大可购数量（库存上限）。缺省不限制。 */
   maxQuantity?: number;
+  /**
+   * 该行是否还能买（ADR-062）。缺省视为正常。
+   * delisted / out_of_stock 的行会被购物车归入「失效宝贝」，不参与结算。
+   */
+  availabilityStatus?: 'ok' | 'insufficient' | 'out_of_stock' | 'delisted';
+  /** 当前可用量（用于「仅剩 N 件」与数量上限）。 */
+  availableQuantity?: number;
 }
 
 /** 商品图（ProductGallery 使用）。 */

@@ -76,6 +76,45 @@ export function mapCart(cart: CartDetailDTO) {
   };
 }
 
+/**
+ * 购物车行加上「还能不能买」（ADR-062）。
+ *
+ * 前端需要它把失效宝贝单独分组：商品下架 / 售罄后，购物车里那一行看起来仍是
+ * 正常的商品，顾客点结算才失败 —— 那时候购物车已经关了，他看不到是哪件出了问题。
+ *
+ * 两次批量查询（库存可用量 + 是否仍可购买），不给每行各查一次。
+ * 「已下架」必须单独判：库存还有货但商品被下架，同样买不了。
+ */
+async function mapCartWithAvailability(cart: CartDetailDTO, deps: AppDeps) {
+  const mapped = mapCart(cart);
+  const variantIds = [...new Set(mapped.line_items.map((li) => li.variant_id))];
+  if (variantIds.length === 0) return mapped;
+
+  const [availability, purchasable] = await Promise.all([
+    deps.services.inventory.getAvailability({ variantIds }),
+    deps.services.product.purchasableVariantIds(variantIds),
+  ]);
+  const availableByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
+  const purchasableSet = new Set(purchasable);
+
+  return {
+    ...mapped,
+    line_items: mapped.line_items.map((li) => {
+      const available = availableByVariant.get(li.variant_id) ?? 0;
+      const status: "ok" | "insufficient" | "out_of_stock" | "delisted" = !purchasableSet.has(
+        li.variant_id,
+      )
+        ? "delisted"
+        : available <= 0
+          ? "out_of_stock"
+          : available < li.quantity
+            ? "insufficient"
+            : "ok";
+      return { ...li, availability_status: status, available_quantity: available };
+    }),
+  };
+}
+
 export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
   const auth = makeAuthHelpers(deps);
 
@@ -108,7 +147,7 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
     if (cart.customer_id && req.auth?.sub && cart.customer_id !== req.auth.sub) {
       throw errors.forbidden("not your cart");
     }
-    reply.ok(mapCart(cart));
+    reply.ok(await mapCartWithAvailability(cart, deps));
   });
 
   /**
@@ -124,7 +163,7 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { id } = req.params as { id: string };
       const b = req.body as { country: string };
       const cart = await deps.services.cart.setShippingCountry(id, b.country);
-      reply.ok(mapCart(cart));
+      reply.ok(await mapCartWithAvailability(cart, deps));
     },
   );
 
@@ -138,7 +177,7 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
         variantId: b.variant_id,
         quantity: b.quantity,
       });
-      reply.code(201).ok(mapCart(cart));
+      reply.code(201).ok(await mapCartWithAvailability(cart, deps));
     },
   );
 
@@ -149,7 +188,7 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { id, lineId } = req.params as { id: string; lineId: string };
       const b = req.body as { quantity: number };
       const cart = await deps.services.cart.updateLineItem(id, lineId, { quantity: b.quantity });
-      reply.ok(mapCart(cart));
+      reply.ok(await mapCartWithAvailability(cart, deps));
     },
   );
 
@@ -168,7 +207,7 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const cart = await deps.services.cart.setShippingMethod(id, {
         shippingOptionId: b.shipping_option_id,
       });
-      reply.ok(mapCart(cart));
+      reply.ok(await mapCartWithAvailability(cart, deps));
     },
   );
 
@@ -180,7 +219,7 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof voucherCodesBody>;
       const cart = await deps.services.cart.setVoucherCodes(id, b.codes);
-      reply.ok(mapCart(cart));
+      reply.ok(await mapCartWithAvailability(cart, deps));
     },
   );
 
@@ -192,7 +231,7 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof giftCardCodesBody>;
       const cart = await deps.services.cart.setGiftCardCodes(id, b.codes);
-      reply.ok(mapCart(cart));
+      reply.ok(await mapCartWithAvailability(cart, deps));
     },
   );
 }

@@ -79,6 +79,14 @@ export interface CartLineItem {
   unit_price_minor: number;
   currency_code: string;
   line_total_minor?: number;
+  /**
+   * 该行还能不能买（ADR-062）。
+   * delisted = 商品已下架；out_of_stock = 已售罄；insufficient = 库存不足。
+   * 老后端不返回时按 ok 处理。
+   */
+  availability_status?: "ok" | "insufficient" | "out_of_stock" | "delisted";
+  /** 该变体当前可用量（不含已预留）。 */
+  available_quantity?: number;
 }
 
 /** 购物车运费方式。 */

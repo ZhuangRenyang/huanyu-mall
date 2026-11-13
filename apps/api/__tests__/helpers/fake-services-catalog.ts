@@ -62,6 +62,12 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
        * 库存页的「N 人等到货」：假库存行的 sku 是 SKU-1，
        * 这里把它对到 var_1，人数取 registered（测试可调）。
        */
+      /*
+       * 购物车失效判定（ADR-062）：默认全部可买，
+       * 用例用 state.unpurchasableVariantIds 指定「已下架」的那几个。
+       */
+      purchasableVariantIds: async (variantIds: string[]) =>
+        variantIds.filter((id) => !(state.unpurchasableVariantIds ?? []).includes(id)),
       variantIdsBySkus: async (skus: string[]) => {
         const out: Record<string, string> = {};
         for (const sku of skus) if (sku === "SKU-1") out[sku] = "var_1";

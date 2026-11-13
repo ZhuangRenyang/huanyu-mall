@@ -26,7 +26,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           variant_id: "var_1",
           product_id: "prod_1",
           title: "T恤",
-          quantity: 1,
+          // 数量可由用例覆盖：验「库存不足」需要 quantity > 可用量
+          quantity: state.cartLineQuantity ?? 1,
           unit_price_minor: 9900n,
           currency_code: "CNY",
           discount_minor: 0n,

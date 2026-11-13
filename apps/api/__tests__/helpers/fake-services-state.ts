@@ -33,6 +33,10 @@ export interface FakeServicesState {
   orderCustomerNote?: string | null;
   /** 覆盖后台订单列表的命中总数（导出上限等「总数才重要」的用例）。 */
   ordersTotalOverride?: number;
+  /** 视为「已下架」的变体 id（购物车失效宝贝用例，ADR-062）。 */
+  unpurchasableVariantIds?: string[];
+  /** 假购物车行的数量（默认 1），验「库存不足」时调大。 */
+  cartLineQuantity?: number;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
   categories: Array<{
     id: string;

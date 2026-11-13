@@ -190,6 +190,8 @@ export interface ProductRepository {
   findById(id: string): Promise<ProductDTO | null>;
   /** sku → 变体 id（后台库存页要把「仓 × SKU」对回到变体，才能显示等货人数）。 */
   listVariantIdsBySkus(skus: string[]): Promise<Array<{ id: string; sku: string }>>;
+  /** 仍可购买的变体（商品未下架 + 变体未删），购物车失效判定用。 */
+  listPurchasableVariantIds(variantIds: string[]): Promise<string[]>;
   list(q: ProductQuery): Promise<{ items: ProductDTO[]; count: number }>;
   insert(input: CreateProductInput & { id: string }): Promise<ProductDTO>;
   update(id: string, patch: UpdateProductInput): Promise<ProductDTO | null>;
@@ -313,6 +315,11 @@ export interface IProductModuleService {
   countPendingStockAlerts(variantIds: string[]): Promise<Record<string, number>>;
   /** sku → 变体 id：库存行只有 sku，要靠它才能查到等货人数。 */
   variantIdsBySkus(skus: string[]): Promise<Record<string, string>>;
+  /**
+   * 仍可购买的变体 id（ADR-062）。
+   * 购物车拿它判断「已下架」——库存还有货但商品下架了，同样是买不了。
+   */
+  purchasableVariantIds(variantIds: string[]): Promise<string[]>;
   bulkDelete(ids: string[]): Promise<number>;
   deleteProduct(id: string): Promise<void>;
   createVariant(productId: string, input: CreateVariantInput): Promise<VariantDTO>;

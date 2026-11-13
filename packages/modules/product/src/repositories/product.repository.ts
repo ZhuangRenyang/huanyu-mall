@@ -157,6 +157,30 @@ export class DrizzleProductRepository implements ProductRepository {
     return rows.map(toVariantDTO);
   }
 
+  async listPurchasableVariantIds(variantIds: string[]): Promise<string[]> {
+    if (variantIds.length === 0) return [];
+    /*
+     * 购物车的「失效宝贝」判定（ADR-062）。
+     *
+     * 只看库存不够：商品被下架（status != active）或变体被删时，库存行还在，
+     * 可用量仍是正数，购物车会显示正常 —— 顾客点结算才发现买不了。
+     * 这里把「商品状态」和「变体存在」一起查掉，一次 join 解决。
+     */
+    const rows = await this.db
+      .select({ id: schema.productVariant.id })
+      .from(schema.productVariant)
+      .innerJoin(schema.product, eq(schema.productVariant.productId, schema.product.id))
+      .where(
+        and(
+          inArray(schema.productVariant.id, variantIds),
+          isNull(schema.productVariant.deletedAt),
+          isNull(schema.product.deletedAt),
+          eq(schema.product.status, "active"),
+        ),
+      );
+    return rows.map((r) => r.id);
+  }
+
   async listVariantIdsBySkus(skus: string[]): Promise<Array<{ id: string; sku: string }>> {
     if (skus.length === 0) return [];
     const rows = await this.db
