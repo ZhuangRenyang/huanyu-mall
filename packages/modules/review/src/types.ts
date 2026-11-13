@@ -77,6 +77,14 @@ export interface IReviewModuleService {
   listReviews(q: ListReviewsQuery): Promise<{ items: ReviewDTO[]; count: number }>;
   /** 某订单已提交的评价（「我的订单」据此显示「已评价」）。 */
   listByOrder(orderId: string): Promise<ReviewDTO[]>;
+  /**
+   * 顾客自己写过的评价（「我的评价」，ADR-054）。
+   * 含被商家隐藏的（is_visible=false）—— 顾客有权知道自己的评价没被展示。
+   */
+  listMyReviews(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: ReviewDTO[]; count: number }>;
   setVisible(id: string, visible: boolean): Promise<ReviewDTO>;
   /** 商家解释；传空串 = 清除解释。 */
   reply(id: string, content: string): Promise<ReviewDTO>;
@@ -102,6 +110,10 @@ export interface ReviewRepository {
   summaryByProduct(productId: string): Promise<ReviewSummaryDTO>;
   list(q: ListReviewsQuery): Promise<{ items: ReviewDTO[]; count: number }>;
   listByOrder(orderId: string): Promise<ReviewDTO[]>;
+  listByCustomer(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: ReviewDTO[]; count: number }>;
   setVisible(id: string, visible: boolean): Promise<ReviewDTO | null>;
   setReply(id: string, reply: string | null): Promise<ReviewDTO | null>;
 }

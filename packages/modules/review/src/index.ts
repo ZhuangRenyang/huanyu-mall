@@ -21,5 +21,5 @@ export default Module("review", {
       new DrizzleReviewRepository(createDbFor(ctx.resolve<Pool>("pool"), schema)),
       ctx.resolve<ReviewOrderPort>("review-order-port"),
     ),
-  migrations: ["migrations/0001_init.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_customer_index.sql"],
 });

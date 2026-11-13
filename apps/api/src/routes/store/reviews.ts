@@ -89,6 +89,33 @@ export function storeReviewRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
+  /**
+   * 我的评价（ADR-054）。
+   *
+   * 顾客写完评价就再也看不到它了 —— 改过了没、商家回没回、还在不在展示，都无处可查。
+   * 这里按顾客自己收敛（customerId 只从 token 取，不接受 query 覆盖，否则能翻别人的评价）。
+   * 含被隐藏的评价：顾客有权知道「这条没在商品页展示」。
+   */
+  app.get(
+    "/api/v1/store/customer/reviews",
+    { preHandler: auth.customerAuth, schema: { querystring: listReviewsQuery } },
+    async (req, reply) => {
+      const customerId = requireCustomerId(req);
+      const q = req.query as { limit: number; offset: number };
+      const res = await deps.services.review.listMyReviews(customerId, {
+        limit: q.limit,
+        offset: q.offset,
+      });
+      reply.ok({
+        items: res.items.map((r) => ({ ...mapReview(r), is_visible: r.is_visible })),
+        count: res.count,
+        offset: q.offset,
+        limit: q.limit,
+        hasMore: q.offset + res.items.length < res.count,
+      });
+    },
+  );
+
   /** 提交评价：淘宝也是「我的订单 → 评价」，一单一商品一条。 */
   app.post(
     "/api/v1/store/reviews",

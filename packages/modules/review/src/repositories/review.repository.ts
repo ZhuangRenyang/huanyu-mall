@@ -120,6 +120,28 @@ export class DrizzleReviewRepository implements ReviewRepository {
     return { average: count > 0 ? Math.round((sum / count) * 10) / 10 : null, count, distribution };
   }
 
+  async listByCustomer(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: ReviewDTO[]; count: number }> {
+    const where = and(
+      eq(schema.productReview.customerId, customerId),
+      isNull(schema.productReview.deletedAt),
+    );
+    const rows = await this.db
+      .select()
+      .from(schema.productReview)
+      .where(where)
+      .orderBy(desc(schema.productReview.createdAt))
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.productReview)
+      .where(where);
+    return { items: rows.map(toReviewDTO), count: Number(countRows[0]?.count ?? 0) };
+  }
+
   async list(q: ListReviewsQuery): Promise<{ items: ReviewDTO[]; count: number }> {
     const conditions: SQL[] = [isNull(schema.productReview.deletedAt)];
     if (q.productId) conditions.push(eq(schema.productReview.productId, q.productId));

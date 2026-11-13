@@ -272,6 +272,8 @@ export function createStoreClient(opts: ClientOptions) {
     /** 买家提交退货物流（商家同意退货后，ADR-051）。 */
     submitReturnShipment: (refundId: string, b: { carrier: string; tracking_number: string }) =>
       post(`/api/v1/store/refund-requests/${refundId}/return-shipment`, b),
+    /** 我的评价（自己写过的，含被隐藏的）。 */
+    listMyReviews: (q?: Query) => get("/api/v1/store/customer/reviews", q),
     register: (b: RegisterRequest) => post("/api/v1/store/auth/register", b),
     login: (b: LoginRequest) => post("/api/v1/store/auth/login", b),
     refresh: (refreshToken: string) =>

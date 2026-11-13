@@ -99,6 +99,13 @@ export class ReviewService implements IReviewModuleService {
     return this.repo.listByOrder(orderId);
   }
 
+  async listMyReviews(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: ReviewDTO[]; count: number }> {
+    return this.repo.listByCustomer(customerId, q);
+  }
+
   async setVisible(id: string, visible: boolean): Promise<ReviewDTO> {
     const updated = await this.repo.setVisible(id, visible);
     if (!updated) throw reviewNotFound(id);

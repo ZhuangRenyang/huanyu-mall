@@ -177,3 +177,70 @@ export async function submitReview(input: {
     ...(input.content.trim() ? { content: input.content.trim() } : {}),
   });
 }
+
+/* ------------------------------------------------------------------ *
+ * 我的评价（ADR-054）
+ * ------------------------------------------------------------------ */
+
+export interface MyReviewView {
+  id: string;
+  productId: string;
+  productTitle: string;
+  orderId: string;
+  rating: number;
+  content: string;
+  /** 商家解释（可空）。 */
+  reply: string | null;
+  /** 是否在商品页展示。被隐藏的仍然返回：顾客该知道「这条没展示」。 */
+  visible: boolean;
+  createdAt: number;
+}
+
+/**
+ * 我写过的评价。
+ *
+ * mock 模式只能摊平本地追加的那份（演示足够）；live 模式按顾客自己收敛，
+ * customerId 由服务端从 token 取，前端传不了别人的。
+ */
+export async function listMyReviews(): Promise<MyReviewView[]> {
+  if (getApiMode() !== 'live') {
+    const mine = readMine();
+    return Object.entries(mine).flatMap(([title, rows]) =>
+      rows.map((r) => ({
+        id: r.id,
+        productId: '',
+        productTitle: title,
+        orderId: '',
+        rating: r.rating,
+        content: r.content,
+        reply: r.reply,
+        visible: true,
+        createdAt: r.createdAt,
+      })),
+    );
+  }
+  const res = (await getStoreClient().listMyReviews({ limit: 50, offset: 0 })) as {
+    items?: Array<{
+      id: string;
+      product_id: string;
+      product_title: string;
+      order_id?: string;
+      rating: number;
+      content: string;
+      reply: string | null;
+      is_visible?: boolean;
+      created_at: string;
+    }>;
+  };
+  return (res.items ?? []).map((r) => ({
+    id: r.id,
+    productId: r.product_id,
+    productTitle: r.product_title,
+    orderId: r.order_id ?? '',
+    rating: r.rating,
+    content: r.content,
+    reply: r.reply,
+    visible: r.is_visible !== false,
+    createdAt: Date.parse(r.created_at),
+  }));
+}

@@ -78,6 +78,14 @@ export function makeFakeReviewServices(state: FakeServicesState) {
       summarizeProduct: async () => ({ average: null, count: 0, distribution: {} }),
       listReviews: async () => ({ items: reviews, count: reviews.length }),
       listByOrder: async (orderId: string) => reviews.filter((r) => r.order_id === orderId),
+      /*
+       * 我的评价：按传入的 customerId 过滤（路由从 token 取，不接受 query 覆盖）。
+       * 含被隐藏的评价 —— 顾客要能看到「这条没在商品页展示」。
+       */
+      listMyReviews: async (customerId: string) => {
+        const mine = reviews.filter((r) => r.customer_id === customerId);
+        return { items: mine, count: mine.length };
+      },
       setVisible: async (id: string, visible: boolean) => {
         const row = reviews.find((r) => r.id === id);
         if (!row) throw errors.notFound(`评价不存在：${id}`);

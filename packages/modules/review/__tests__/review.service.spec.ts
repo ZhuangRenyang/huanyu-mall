@@ -85,6 +85,17 @@ class InMemoryReviewRepository implements ReviewRepository {
     return this.rows.filter((r) => r.order_id === orderId);
   }
 
+  async listByCustomer(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: ReviewDTO[]; count: number }> {
+    // 与真实仓储同口径：只按顾客收敛，不含已软删的（假仓储里没有软删场景）
+    const mine = this.rows
+      .filter((r) => r.customer_id === customerId)
+      .sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+    return { items: mine.slice(q.offset, q.offset + q.limit), count: mine.length };
+  }
+
   async setVisible(id: string, visible: boolean): Promise<ReviewDTO | null> {
     const row = this.rows.find((r) => r.id === id);
     if (!row) return null;
@@ -253,5 +264,37 @@ describe("脱敏", () => {
     expect(maskName("张三")).toBe("张**");
     expect(maskName("tom@example.com")).toBe("t***");
     expect(maskName("   ")).toBe("匿名顾客");
+  });
+});
+
+describe("我的评价：只按顾客收敛（ADR-054）", () => {
+  /** 造一条评价行，只指定关心的三个字段。 */
+  function makeRow(p: { id: string; customer_id: string; product_id: string }): ReviewDTO {
+    return {
+      id: p.id,
+      product_id: p.product_id,
+      product_title: "无线静音鼠标",
+      order_id: "ord_1",
+      customer_id: p.customer_id,
+      customer_name: "张**",
+      rating: 5,
+      content: "",
+      is_visible: true,
+      reply: null,
+      replied_at: null,
+      created_at: new Date(),
+    };
+  }
+
+  it("别的顾客的评价不会出现在我的列表里", async () => {
+    const repo = new InMemoryReviewRepository();
+    const service = new ReviewService(repo, { getOrder: async () => null });
+    repo.rows.push(
+      makeRow({ id: "rev_a", customer_id: "cust_1", product_id: "prod_1" }),
+      makeRow({ id: "rev_b", customer_id: "cust_2", product_id: "prod_2" }),
+    );
+    const res = await service.listMyReviews("cust_1", { limit: 20, offset: 0 });
+    expect(res.count).toBe(1);
+    expect(res.items[0]?.id).toBe("rev_a");
   });
 });
