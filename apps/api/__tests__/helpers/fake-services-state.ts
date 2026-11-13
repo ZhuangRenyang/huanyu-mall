@@ -18,6 +18,8 @@ export interface FakeServicesState {
   variantAvailable?: number;
   /** 订单是否可评价（默认 true）；设 false 模拟「还没收货」。 */
   orderReviewable?: boolean;
+  /** 覆盖假订单状态（默认用夹具里的 pending），测确认收货等流转时用。 */
+  orderStatus?: string;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
   categories: Array<{
     id: string;

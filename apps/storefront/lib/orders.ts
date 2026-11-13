@@ -2,6 +2,7 @@
  * 订单查询数据层（mock）：合并 checkout 产生的 sessionStorage 订单 + 示例历史订单。
  * 真实接入后替换为 GET /store/orders 与 GET /store/orders/{id}。
  */
+import { getApiMode, getStoreClient } from './api';
 import type { OrderLineSnapshot, OrderRecord } from './checkout';
 
 export type OrderStatusKey =
@@ -200,9 +201,59 @@ function readSessionOrders(): OrderRecord[] {
   return out;
 }
 
-/** 全部订单（真实下单 + 示例），按下单时间倒序。 */
+/**
+ * 演示模式的「已确认收货」覆盖表。
+ *
+ * 示例订单是常量，直接把 status 改在内存里刷新就丢；写 sessionStorage 才能让
+ * 「确认收货 → 状态变已完成 → 出现评价入口」这条链在演示里完整走一遍。
+ */
+const STATUS_OVERRIDE_KEY = 'order:status-override';
+
+function readStatusOverrides(): Record<string, OrderStatusKey> {
+  try {
+    const raw = sessionStorage.getItem(STATUS_OVERRIDE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, OrderStatusKey>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStatusOverride(orderId: string, status: OrderStatusKey): void {
+  try {
+    const all = readStatusOverrides();
+    all[orderId] = status;
+    sessionStorage.setItem(STATUS_OVERRIDE_KEY, JSON.stringify(all));
+  } catch {
+    /* noop */
+  }
+}
+
+/** 全部订单（真实下单 + 示例），按下单时间倒序；演示覆盖表生效。 */
 export function listOrders(): OrderView[] {
-  return [...readSessionOrders().map(recordToView), ...seedOrders()].sort((a, b) => b.createdAt - a.createdAt);
+  const overrides = readStatusOverrides();
+  return [...readSessionOrders().map(recordToView), ...seedOrders()]
+    .map((o) => {
+      const status = overrides[o.id];
+      // 状态变了，时间线也要跟着重建，否则会出现「已完成但时间线停在已发货」
+      return status && status !== o.status
+        ? { ...o, status, timeline: buildTimeline(status, o.createdAt) }
+        : o;
+    })
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * 确认收货（淘宝「确认收货」）。
+ *
+ * 服务端只允许 fulfilled / delivered → completed；前端确认框是体验，
+ * 真正的状态校验在状态机里。
+ */
+export async function confirmReceipt(orderId: string): Promise<void> {
+  if (getApiMode() !== 'live') {
+    writeStatusOverride(orderId, 'completed');
+    return;
+  }
+  await getStoreClient().confirmOrderReceipt(orderId);
 }
 
 export function findOrder(id: string): OrderView | null {

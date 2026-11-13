@@ -1310,6 +1310,29 @@ paths:
                       hasMore: { type: boolean, example: false }
         '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
+  /store/orders/{id}/confirm-receipt:
+    post:
+      tags: [store]
+      summary: 确认收货（待收货 → 已完成）
+      description: |
+        只有买家本人、且订单处于 fulfilled / delivered 时可用（ADR-049）。
+        delivered 是承运商签收回调，不是必经步骤 —— 顾客主动确认可以直接完成。
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: 已完成
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data: { $ref: '#/components/schemas/Order' }
+        '400': { description: 当前状态不能确认收货(20001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '403': { description: 不是自己的订单(10003), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
   /store/orders/{id}:
     get:
       tags: [store]

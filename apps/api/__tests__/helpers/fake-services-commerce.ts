@@ -903,9 +903,18 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         order_email: string | null;
       }> = [];
       return {
-      retrieveOrder: async (id?: string) =>
+      retrieveOrder: async (id?: string) => {
         // ord_other 属于别的顾客：用来验「知道单号也看不到别人的订单」
-        id === "ord_other" ? { ...order, id: "ord_other", customer_id: "cust_2" } : order,
+        const base = id === "ord_other" ? { ...order, id: "ord_other", customer_id: "cust_2" } : { ...order };
+        // state.orderStatus 让测试把订单摆到指定状态（确认收货只对 fulfilled/delivered 开放）
+        return { ...base, status: state.orderStatus ?? base.status };
+      },
+      transition: async (_id: string, to: string) => {
+        // 与真实状态机同语义：改状态并留痕（此处只改内存，够驱动路由契约）
+        order.status = to;
+        state.orderStatus = to;
+        return { ...order, status: to };
+      },
       /*
        * 我的订单：只按传入的 customerId 过滤（路由从 token 取，不接受 query 覆盖）。
        * 行项直接复用 retrieveOrder 的 items，够验「列表能显示商品」。

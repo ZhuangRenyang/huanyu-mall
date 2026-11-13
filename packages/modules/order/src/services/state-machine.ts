@@ -21,7 +21,8 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   awaiting_payment: ["paid", "canceled"],
   paid: ["partially_fulfilled", "fulfilled", "refund_pending"],
   partially_fulfilled: ["fulfilled", "refund_pending"],
-  fulfilled: ["delivered", "refund_pending"],
+  // 顾客确认收货可直接完成（delivered 是承运商签收回调，不是必经步骤）
+  fulfilled: ["delivered", "completed", "refund_pending"],
   delivered: ["completed", "refund_pending"],
   completed: ["refund_pending"],
   canceled: [],

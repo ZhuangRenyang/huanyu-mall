@@ -502,3 +502,12 @@ describe("退款审核：申请即冻结", () => {
     expect((await service.retrieveOrder(order.id)).status).toBe("refunded");
   });
 });
+
+describe("状态机：顾客确认收货（ADR-049）", () => {
+  it("fulfilled 可直接 completed（delivered 不是必经步骤）", () => {
+    expect(canTransition("fulfilled", "completed")).toBe(true);
+    // 其余方向仍不允许：不能从 paid 一步完成、也不能回退
+    expect(canTransition("paid", "completed")).toBe(false);
+    expect(canTransition("completed", "fulfilled")).toBe(false);
+  });
+});

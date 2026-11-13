@@ -57,6 +57,8 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [detail, setDetail] = useState<OrderView | null>(null);
+  /** 订单详情被改动（如确认收货）后自增，触发重新拉取。 */
+  const [detailVersion, setDetailVersion] = useState(0);
   const [queryId, setQueryId] = useState('');
   const [identity, setIdentity] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -125,7 +127,7 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
     return () => {
       cancelled = true;
     };
-  }, [orderId, live]);
+  }, [orderId, live, detailVersion]);
 
   const onQuery = () => {
     const res = findOrderByIdentity(queryId.trim(), identity.trim());
@@ -150,7 +152,7 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
         {!mounted ? (
           <Skeleton className="h-48 w-full" />
         ) : detail ? (
-          <OrderDetail order={detail} />
+          <OrderDetail order={detail} onUpdated={() => setDetailVersion((v) => v + 1)} />
         ) : (
           <div className="py-16 text-center">
             <p className="text-lg font-medium text-foreground">未找到该订单</p>

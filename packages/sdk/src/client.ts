@@ -172,6 +172,9 @@ export function createStoreClient(opts: ClientOptions) {
     /** 提交评价（需登录；一单一商品一条）。 */
     createReview: (b: { order_id: string; product_id: string; rating: number; content?: string }) =>
       post("/api/v1/store/reviews", b),
+    /** 确认收货（fulfilled / delivered → completed）。 */
+    confirmOrderReceipt: (id: string) =>
+      post(`/api/v1/store/orders/${id}/confirm-receipt`, {}),
     /** 我的收藏（商品卡片，分页）。 */
     listMyFavorites: (q?: Query) => get("/api/v1/store/customer/favorites", q),
     /** 收藏的商品 id（详情页判断是否已收藏）。 */

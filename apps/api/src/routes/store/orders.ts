@@ -100,6 +100,34 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
+  /**
+   * 确认收货（淘宝「确认收货」）。
+   *
+   * 状态机允许 fulfilled → completed；delivered 是承运商签收，不是必经步骤。
+   * 只有买家自己能确认 —— 商家代确认等于替顾客承认「货收到了」。
+   */
+  app.post(
+    "/api/v1/store/orders/:id/confirm-receipt",
+    { preHandler: auth.customerAuth },
+    async (req, reply) => {
+      if (!req.auth || req.auth.scope !== "customer" || !req.auth.customerId) {
+        throw errors.unauthenticated("请先登录");
+      }
+      const { id } = req.params as { id: string };
+      const order = await deps.services.order.retrieveOrder(id);
+      assertOrderAccess(order, req.auth);
+      if (order.status !== "fulfilled" && order.status !== "delivered") {
+        throw errors.validation(`当前状态（${order.status}）不能确认收货`);
+      }
+      await deps.services.order.transition(id, "completed", {
+        actor: "customer",
+        reason: "买家确认收货",
+      });
+      // 重新取一次：transition 返回的 DTO 不带行项，前端要整单渲染
+      reply.ok(mapOrder(await deps.services.order.retrieveOrder(id)));
+    },
+  );
+
   /** GET /store/orders/{id} — 本人订单或游客按单号查（openapi 992）。 */
   app.get("/api/v1/store/orders/:id", { preHandler: auth.customerAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };

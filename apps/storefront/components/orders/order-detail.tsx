@@ -7,7 +7,7 @@ import { Badge, Button, formatMoney } from '@mall/ui';
 import { loadOrderRefunds, requestOrderRefund, type StoreRefundView } from '@/lib/refunds';
 import { OrderTimeline } from './order-timeline';
 import { ReviewDialog } from './review-dialog';
-import { ORDER_STATUS_META, formatDateTime, type OrderView } from '@/lib/orders';
+import { ORDER_STATUS_META, confirmReceipt, formatDateTime, type OrderView } from '@/lib/orders';
 
 /**
  * 申请退款（淘宝「申请售后」）。
@@ -186,8 +186,17 @@ function InfoCard({ icon: Icon, title, children }: { icon: LucideIcon; title: st
 }
 
 /** 订单详情：状态+时间线 → 商品/金额（左）+ 地址/配送/支付（右）。 */
-export function OrderDetail({ order }: { order: OrderView }) {
+export function OrderDetail({
+  order,
+  onUpdated,
+}: {
+  order: OrderView;
+  /** 状态变化后让父组件重新拉一次订单（确认收货用）。 */
+  onUpdated?: () => void;
+}) {
   const meta = ORDER_STATUS_META[order.status];
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
   /** 已评价的商品：初始来自订单详情，提交成功后本地追加（不用整页刷新）。 */
   const [reviewed, setReviewed] = useState<string[]>(order.reviewedProductIds ?? []);
   const [reviewTarget, setReviewTarget] = useState<{ productId: string; title: string } | null>(null);
@@ -213,6 +222,42 @@ export function OrderDetail({ order }: { order: OrderView }) {
       <div className="rounded-lg border border-border bg-card p-4">
         <OrderTimeline items={order.timeline} />
       </div>
+
+      {/* 确认收货（ADR-049）：淘宝在「待收货」里给一个按钮，确认后交易完成、可评价 */}
+      {order.status === 'to_receive' && (
+        <section className="rounded-lg border border-border bg-card p-4" aria-labelledby="confirm-heading">
+          <h2 id="confirm-heading" className="text-sm font-medium text-foreground">
+            收到货了吗？
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            确认收货后交易完成，就可以评价了。请先在包裹里核对商品与数量。
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <Button
+              size="sm"
+              disabled={confirming}
+              onClick={() => {
+                if (!window.confirm('确认已经收到货？确认后交易将标记为完成。')) return;
+                setConfirming(true);
+                setConfirmError(null);
+                void confirmReceipt(order.id)
+                  .then(() => onUpdated?.())
+                  .catch((err: unknown) => {
+                    setConfirmError(err instanceof Error ? err.message : '操作失败，请稍后再试');
+                  })
+                  .finally(() => setConfirming(false));
+              }}
+            >
+              {confirming ? '处理中…' : '确认收货'}
+            </Button>
+          </div>
+          {confirmError && (
+            <p className="mt-2 text-sm text-destructive" role="alert">
+              {confirmError}
+            </p>
+          )}
+        </section>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[8fr_4fr]">
         <div className="space-y-4">
