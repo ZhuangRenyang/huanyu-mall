@@ -23,6 +23,13 @@ import type { AdminOrder } from '@/lib/admin-data';
 
 type Filter = 'all' | 'unfulfilled' | 'partial' | 'shipped' | 'refunding' | 'refunded';
 
+/** 售后进度角标文案（ADR-073）：与「退款管理」页签同名，商家不用二次翻译。 */
+const REFUND_STAGE_LABEL: Record<'review' | 'awaiting_return' | 'returned', string> = {
+  review: '待审退款',
+  awaiting_return: '等买家寄回',
+  returned: '退货待收货',
+};
+
 /**
  * 状态页签（对齐淘宝订单列表）。
  *
@@ -390,10 +397,15 @@ export function OrdersPage() {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap items-center gap-1">
                         <Badge variant={pay.variant}>{pay.label}</Badge>
-                        {/* 退款中必须在列表就能看见：否则商家以为还能发货 */}
-                        {o.orderStatus === 'refund_pending' && (
+                        {/*
+                          售后进度（ADR-073）：三档动作完全不同 —— 待审要回、等寄回不用管、
+                          已寄回要去收货退款。只写「退款中」等于让商家逐单点开看。
+                        */}
+                        {o.refundStage ? (
+                          <Badge variant="warning">{REFUND_STAGE_LABEL[o.refundStage]}</Badge>
+                        ) : o.orderStatus === 'refund_pending' ? (
                           <Badge variant="warning">退款中</Badge>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-3">

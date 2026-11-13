@@ -13,6 +13,7 @@ import {
 import { assertTransition, canTransition, isRefundable, supportsReturnRefund } from "./state-machine.js";
 import { CUSTOMER_NOTE_MAX_LENGTH } from "../types.js";
 import type {
+  ActiveRefundDTO,
   Actor,
   CreateOrderInput,
   CustomerOrderSummaryDTO,
@@ -297,6 +298,23 @@ export class OrderService implements IOrderModuleService {
 
   async findRefundRequest(id: string): Promise<RefundRequestDTO | null> {
     return this.repo.findRefundRequest(id);
+  }
+
+  /**
+   * 批量取活跃售后单（ADR-073）：订单列表一次查询挂出每单的售后进度。
+   * 仓储已按订单只留最新一张，这里只做类型收窄，不改口径。
+   */
+  async listActiveRefundsByOrderIds(orderIds: string[]): Promise<Record<string, ActiveRefundDTO>> {
+    const rows = await this.repo.listActiveRefundsByOrderIds(orderIds);
+    const out: Record<string, ActiveRefundDTO> = {};
+    for (const [orderId, r] of Object.entries(rows)) {
+      out[orderId] = {
+        id: r.id,
+        status: r.status,
+        resolution: r.resolution as ActiveRefundDTO["resolution"],
+      };
+    }
+    return out;
   }
 
   /**

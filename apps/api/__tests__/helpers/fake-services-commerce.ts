@@ -1150,6 +1150,30 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         for (const r of refundRequests) counts[r.status] = (counts[r.status] ?? 0) + 1;
         return counts;
       },
+      /** 活跃售后单（ADR-073）：与真实服务同口径，只留 pending/awaiting_return/returned。 */
+      listActiveRefundsByOrderIds: async (orderIds: string[]) => {
+        const out: Record<
+          string,
+          { id: string; status: string; resolution: string }
+        > = {};
+        for (const orderId of orderIds) {
+          const hit = [...refundRequests]
+            .reverse()
+            .find(
+              (r) =>
+                r.order_id === orderId &&
+                ["pending", "awaiting_return", "returned"].includes(String(r.status)),
+            );
+          if (hit) {
+            out[orderId] = {
+              id: String(hit.id),
+              status: String(hit.status),
+              resolution: String(hit.resolution ?? "refund_only"),
+            };
+          }
+        }
+        return out;
+      },
       findRefundRequest: async (id: string) => refundRequests.find((r) => r.id === id) ?? null,
       approveRefundRequest: async (id: string, refundId: string, note?: string | null) => {
         const req = refundRequests.find((r) => r.id === id)!;

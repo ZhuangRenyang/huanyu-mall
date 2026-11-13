@@ -83,6 +83,11 @@ export interface AdminOrder {
    * paymentStatus 只看钱、fulfillmentStatus 只看货，退款审核中两者都看不出来。
    */
   orderStatus?: string;
+  /**
+   * 售后进度（ADR-073）：review = 待商家审核；awaiting_return = 等买家寄回；
+   * returned = 买家已寄回、待商家收货退款。没有在途售后单时为空。
+   */
+  refundStage?: 'review' | 'awaiting_return' | 'returned';
 }
 
 /** 退款申请单（后台列表用；与后端 refund_request 同构）。 */

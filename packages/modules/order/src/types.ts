@@ -167,6 +167,15 @@ export type RefundRequestSource = "customer" | "merchant";
 export type RefundResolution = "refund_only" | "return_refund";
 
 /** 退款申请单（售后单据）。真正打款记录在 payment.refund，这里只记业务处理。 */
+/** 订单列表上的「售后进度」角标（ADR-073）：只看还在走流程的三档。 */
+export interface ActiveRefundDTO {
+  /** 售后单 id。 */
+  id: string;
+  /** pending = 待商家审核；awaiting_return = 等买家寄回；returned = 已寄回待收货。 */
+  status: "pending" | "awaiting_return" | "returned";
+  resolution: RefundResolution;
+}
+
 export interface RefundRequestDTO {
   id: string;
   order_id: string;
@@ -275,6 +284,13 @@ export interface OrderRepository {
   listRefundRequests(q: RefundRequestQuery): Promise<{ items: RefundRequestDTO[]; count: number }>;
   /** 各状态单据数（退款管理页签角标，一次 GROUP BY）。 */
   countRefundRequestsByStatus(): Promise<Record<string, number>>;
+  /**
+   * 批量取活跃售后单（ADR-073）。
+   *
+   * 订单列表要按单显示「待审退款 / 等买家寄回 / 退货待收货」。
+   * 逐单查就是 N+1，这里一次 IN 查询按订单取最新一张。
+   */
+  listActiveRefundsByOrderIds(orderIds: string[]): Promise<Record<string, ActiveRefundDTO>>;
   updateRefundRequest(
     id: string,
     patch: {
@@ -420,6 +436,13 @@ export interface IOrderModuleService {
     q: RefundRequestQuery,
   ): Promise<{ items: RefundRequestDTO[]; count: number; counts: Record<string, number> }>;
   findRefundRequest(id: string): Promise<RefundRequestDTO | null>;
+  /**
+   * 批量取活跃售后单（ADR-073）。
+   *
+   * 订单列表要按单显示「待审退款 / 等买家寄回 / 退货待收货」。
+   * 逐单查就是 N+1，这里一次 IN 查询按订单取最新一张。
+   */
+  listActiveRefundsByOrderIds(orderIds: string[]): Promise<Record<string, ActiveRefundDTO>>;
   /** 同意「仅退款」：退款执行成功后回写资金流水 id 与状态。 */
   approveRefundRequest(id: string, refundId: string, reviewNote?: string | null): Promise<RefundRequestDTO>;
   /**

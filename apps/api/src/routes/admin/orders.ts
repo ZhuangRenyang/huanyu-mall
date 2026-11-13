@@ -163,9 +163,17 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
          */
         deps.services.order.countByStatus(),
       ]);
+      /*
+       * 售后进度角标（ADR-073）：一页订单一次 IN 查询。
+       * 没有它，列表只能靠订单状态笼统写「退款中」——
+       * 商家分不清「该我审」还是「等买家寄回」，两件事的动作完全不同。
+       */
+      const activeRefunds = await deps.services.order.listActiveRefundsByOrderIds(
+        res.items.map((o) => o.id),
+      );
       reply.ok({
         // 行项一并返回：列表的「商品」列没有它就是一列空白
-        items: res.items.map(mapOrder),
+        items: res.items.map((o) => ({ ...mapOrder(o), refund: activeRefunds[o.id] ?? null })),
         count: res.count,
         counts,
         offset: q.offset,

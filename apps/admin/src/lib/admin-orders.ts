@@ -52,6 +52,8 @@ interface ApiOrder {
   merchant_note?: string | null;
   /** 顾客留言（顾客与商家都能看到，ADR-050）。 */
   customer_note?: string | null;
+  /** 在途售后单（ADR-073）；没有就是 null。 */
+  refund?: { status: string } | null;
 }
 
 function addressText(addr?: Record<string, unknown>): string {
@@ -102,7 +104,22 @@ function mapOrder(o: ApiOrder): AdminOrder {
     merchantNote: o.merchant_note ?? null,
     customerNote: o.customer_note ?? null,
     orderStatus: o.status,
+    refundStage: refundStageFrom(o.refund),
   };
+}
+
+/** 售后单状态 → 列表角标档位（ADR-073）；已完成/已拒绝的不挂角标。 */
+function refundStageFrom(refund?: { status: string } | null): AdminOrder['refundStage'] {
+  switch (refund?.status) {
+    case 'pending':
+      return 'review';
+    case 'awaiting_return':
+      return 'awaiting_return';
+    case 'returned':
+      return 'returned';
+    default:
+      return undefined;
+  }
 }
 
 /** 写商家备注；传空串等于清空。 */

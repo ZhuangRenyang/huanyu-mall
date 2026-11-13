@@ -11,6 +11,7 @@ const SOLD_STATUSES = [
   "completed",
 ] as const;
 import type {
+  ActiveRefundDTO,
   Actor,
   CreateOrderDiscountInput,
   CustomerOrderSummaryDTO,
@@ -268,6 +269,40 @@ export class DrizzleOrderRepository implements OrderRepository {
       items: rows.map((r) => toRefundRequestDTO(r.req, r.email)),
       count: totalRows.length,
     };
+  }
+
+  async listActiveRefundsByOrderIds(
+    orderIds: string[],
+  ): Promise<Record<string, ActiveRefundDTO>> {
+    if (orderIds.length === 0) return {};
+    const rows = await this.db
+      .select({
+        orderId: schema.refundRequest.orderId,
+        id: schema.refundRequest.id,
+        status: schema.refundRequest.status,
+        resolution: schema.refundRequest.resolution,
+        createdAt: schema.refundRequest.createdAt,
+      })
+      .from(schema.refundRequest)
+      .where(
+        and(
+          inArray(schema.refundRequest.orderId, orderIds),
+          // 已处理完（approved / rejected / canceled）的不再挂角标
+          inArray(schema.refundRequest.status, ["pending", "awaiting_return", "returned"]),
+        ),
+      )
+      // 同一单可能有多张历史单据，取最新一张：列表只显示当前进度
+      .orderBy(desc(schema.refundRequest.createdAt));
+    const out: Record<string, ActiveRefundDTO> = {};
+    for (const r of rows) {
+      if (out[r.orderId]) continue;
+      out[r.orderId] = {
+        id: r.id,
+        status: r.status as "pending" | "awaiting_return" | "returned",
+        resolution: r.resolution as ActiveRefundDTO["resolution"],
+      };
+    }
+    return out;
   }
 
   async countRefundRequestsByStatus(): Promise<Record<string, number>> {
