@@ -165,6 +165,7 @@ const INITIAL_THEME: Record<string, unknown> = {
   store_name: "全球商城",
   support_phone: null,
   announcement: null,
+  return_address: null,
   metadata: null,
 };
 

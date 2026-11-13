@@ -42,7 +42,18 @@ const ORDER_FILTERS: Array<{
   { key: 'completed', label: '已完成', statuses: 'completed', view: ['completed'] },
 ];
 
-export function OrdersView({ orderId, locale, channel }: { orderId?: string; locale: string; channel: string }) {
+export function OrdersView({
+  orderId,
+  locale,
+  channel,
+  returnAddress = null,
+}: {
+  orderId?: string;
+  locale: string;
+  channel: string;
+  /** 店铺退货地址（ADR-053）：退货退款时顾客照着寄回。 */
+  returnAddress?: string | null;
+}) {
   const router = useRouter();
   const base = `/${locale}/${channel}`;
   const live = getApiMode() === 'live';
@@ -152,7 +163,11 @@ export function OrdersView({ orderId, locale, channel }: { orderId?: string; loc
         {!mounted ? (
           <Skeleton className="h-48 w-full" />
         ) : detail ? (
-          <OrderDetail order={detail} onUpdated={() => setDetailVersion((v) => v + 1)} />
+          <OrderDetail
+            order={detail}
+            returnAddress={returnAddress}
+            onUpdated={() => setDetailVersion((v) => v + 1)}
+          />
         ) : (
           <div className="py-16 text-center">
             <p className="text-lg font-medium text-foreground">未找到该订单</p>

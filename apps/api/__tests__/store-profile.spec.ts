@@ -100,4 +100,50 @@ describe("店铺资料", () => {
       expect(res.statusCode).toBe(400);
     });
   });
+
+  it("退货地址能存能读，空串存 null（顾客退货时看不到空白块）", async () => {
+    await withApp(async (app) => {
+      const addr = "收件人：张三\n电话：13800000000\n地址：广东省深圳市南山区科苑路 15 号 3 号仓";
+      const patch = await app.inject({
+        method: "PATCH",
+        url: "/api/v1/admin/settings",
+        headers: adminJson,
+        payload: { return_address: addr },
+      });
+      expect(patch.statusCode, patch.body).toBe(200);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/settings",
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(res.json().data.settings.return_address).toBe(addr);
+
+      // 清空：空串按「没配」处理，存 null（否则前台要判两种空）
+      await app.inject({
+        method: "PATCH",
+        url: "/api/v1/admin/settings",
+        headers: adminJson,
+        payload: { return_address: "   " },
+      });
+      const after = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/settings",
+        headers: { authorization: "Bearer admin" },
+      });
+      expect(after.json().data.settings.return_address).toBeNull();
+    });
+  });
+
+  it("拼错的键仍然 400（strict 未因新增退回地址而放松）", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "PATCH",
+        url: "/api/v1/admin/settings",
+        headers: adminJson,
+        payload: { return_adress: "写错了" },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });

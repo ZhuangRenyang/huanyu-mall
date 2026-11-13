@@ -17,6 +17,8 @@ export const themeSettings = pgTable("theme_settings", {
   supportPhone: text("support_phone"),
   /** 店铺公告：店面顶部公告条（ADR-047），空值不显示。 */
   announcement: text("announcement"),
+  /** 退货收件地址：顾客退货时照着寄回（ADR-053）。 */
+  returnAddress: text("return_address"),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

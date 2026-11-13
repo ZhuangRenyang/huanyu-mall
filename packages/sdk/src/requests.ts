@@ -215,6 +215,8 @@ export interface UpdateSettingsRequest {
   store_name?: string;
   /** 客服电话（可空）。 */
   support_phone?: string | null;
+  /** 退货收件地址（可空，多行：收件人/电话/地址）。顾客退货时看到（ADR-053）。 */
+  return_address?: string | null;
 }
 
 /** 更新设计变量（换肤）。 */

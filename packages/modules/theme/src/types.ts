@@ -16,6 +16,11 @@ export interface ThemeSettingsDTO {
   support_phone: string | null;
   /** 店铺公告（可空）：店面顶部公告条，空 = 不显示（ADR-047）。 */
   announcement: string | null;
+  /**
+   * 退货收件地址（可空，多行：收件人/电话/地址，ADR-053）。
+   * 顾客在「退货退款」流程里照着它寄回 —— 不配这一项，顾客只能去问客服。
+   */
+  return_address: string | null;
   metadata: Record<string, unknown> | null;
 }
 
@@ -32,6 +37,7 @@ export const DEFAULT_THEME: ThemeSettingsDTO = {
   store_name: "全球商城",
   support_phone: null,
   announcement: null,
+  return_address: null,
   metadata: null,
 };
 

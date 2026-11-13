@@ -29,6 +29,7 @@ export class DrizzleThemeRepository implements ThemeRepository {
       storeName: merged.store_name,
       supportPhone: merged.support_phone,
       announcement: merged.announcement,
+      returnAddress: merged.return_address,
       metadata: merged.metadata,
       updatedAt: new Date(),
     };
@@ -70,6 +71,7 @@ function toThemeDTO(r: typeof schema.themeSettings.$inferSelect): ThemeSettingsD
     store_name: r.storeName,
     support_phone: r.supportPhone ?? null,
     announcement: r.announcement ?? null,
+    return_address: r.returnAddress ?? null,
     metadata: (r.metadata as Record<string, unknown> | null) ?? null,
   };
 }

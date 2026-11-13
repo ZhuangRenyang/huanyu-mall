@@ -135,6 +135,11 @@ export interface StoreProfile {
   logoUrl: string | null;
   /** 店铺公告（可空）：非空时在页头之上显示一条公告条（ADR-047）。 */
   announcement: string | null;
+  /**
+   * 退货收件地址（可空，ADR-053）：顾客退货时照着它寄回。
+   * 未配置时前台要明说「联系客服」，不能让顾客对着空白框干等。
+   */
+  returnAddress: string | null;
 }
 
 const DEFAULT_PROFILE: StoreProfile = {
@@ -142,6 +147,7 @@ const DEFAULT_PROFILE: StoreProfile = {
   supportPhone: null,
   logoUrl: null,
   announcement: null,
+  returnAddress: null,
 };
 
 /**
@@ -159,6 +165,7 @@ export async function getStoreProfile(): Promise<StoreProfile> {
         support_phone?: string | null;
         logo_url?: string | null;
         announcement?: string | null;
+        return_address?: string | null;
       } | null;
     };
     return {
@@ -166,6 +173,7 @@ export async function getStoreProfile(): Promise<StoreProfile> {
       supportPhone: raw.theme?.support_phone ?? null,
       logoUrl: raw.theme?.logo_url ?? null,
       announcement: raw.theme?.announcement?.trim() || null,
+      returnAddress: raw.theme?.return_address?.trim() || null,
     };
   } catch {
     return DEFAULT_PROFILE;

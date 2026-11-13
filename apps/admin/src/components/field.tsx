@@ -17,14 +17,18 @@ function Field({
   label,
   required,
   error,
+  hint,
   children,
 }: {
   id: string;
   label: string;
   required?: boolean;
   error?: string;
+  /** 说明文案（错误时让位给错误，两者不叠加）。 */
+  hint?: string;
   children: (aria: AriaProps) => React.ReactNode;
 }) {
+  const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
   return (
     <div>
       <Label htmlFor={id} className="mb-1">
@@ -35,7 +39,12 @@ function Field({
           </span>
         )}
       </Label>
-      {children({ id, 'aria-invalid': Boolean(error), 'aria-describedby': error ? `${id}-error` : undefined })}
+      {children({ id, 'aria-invalid': Boolean(error), 'aria-describedby': describedBy })}
+      {hint && !error && (
+        <p id={`${id}-hint`} className="mt-1 text-xs text-muted-foreground">
+          {hint}
+        </p>
+      )}
       {error && (
         <p id={`${id}-error`} className="mt-1 text-xs text-destructive" role="alert">
           {error}
@@ -118,11 +127,12 @@ export type TextAreaFieldProps = React.TextareaHTMLAttributes<HTMLTextAreaElemen
   label: string;
   error?: string;
   required?: boolean;
+  hint?: string;
 };
 
-export function TextAreaField({ id, label, error, required, className, ...props }: TextAreaFieldProps) {
+export function TextAreaField({ id, label, error, required, hint, className, ...props }: TextAreaFieldProps) {
   return (
-    <Field id={id} label={label} required={required} error={error}>
+    <Field id={id} label={label} required={required} error={error} hint={hint}>
       {(aria) => (
         <Textarea
           {...aria}

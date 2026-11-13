@@ -39,6 +39,17 @@ const patchSettingsBody = themeBody
       .nullable()
       .optional()
       .transform((v) => (v && v.trim() ? v.trim() : null)),
+    /*
+     * 退货收件地址（ADR-053）：多行文本，空串按「没配」处理。
+     * 上限 300 字：国内地址 + 收件人 + 电话，一行地址一般 60 字以内，
+     * 留足转运仓备注的余量，又不至于让顾客看到一屏乱码。
+     */
+    return_address: z
+      .string()
+      .max(300)
+      .nullable()
+      .optional()
+      .transform((v) => (v && v.trim() ? v.trim() : null)),
     metadata: z.record(z.string(), z.unknown()).nullable().optional(),
   })
   // strict：拼错的键要报错，不能静默落库（设置是低频高影响的写入口）

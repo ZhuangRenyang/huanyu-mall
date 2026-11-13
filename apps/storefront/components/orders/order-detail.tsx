@@ -26,11 +26,14 @@ function RefundPanel({
   status,
   amountMinor,
   currencyCode,
+  returnAddress,
 }: {
   orderId: string;
   status: OrderView['status'];
   amountMinor: number;
   currencyCode: string;
+  /** 店铺退货地址（ADR-053，可空）。 */
+  returnAddress?: string | null;
 }) {
   const [refunds, setRefunds] = useState<StoreRefundView[]>([]);
   const [open, setOpen] = useState(false);
@@ -83,6 +86,20 @@ function RefundPanel({
           商家已同意退货。请把商品寄回（包装与配件齐全），寄出后在这里填写物流信息，
           商家确认收到货后才会退款。
         </p>
+        {/*
+          寄回地址：不显示它，顾客只能去问客服 —— 这是退货流程里最容易断的一环（ADR-053）。
+          没配就明说「联系客服」，别留一块空白让人猜。
+        */}
+        <div className="mt-3 rounded-md border border-border bg-muted/50 px-3 py-2">
+          <p className="text-xs font-medium text-foreground">寄回地址</p>
+          {returnAddress ? (
+            <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{returnAddress}</p>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">
+              店铺尚未填写退货地址，请联系客服获取后再寄回。
+            </p>
+          )}
+        </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <label className="text-xs text-muted-foreground">
             物流公司
@@ -319,9 +336,12 @@ function InfoCard({ icon: Icon, title, children }: { icon: LucideIcon; title: st
 /** 订单详情：状态+时间线 → 商品/金额（左）+ 地址/配送/支付（右）。 */
 export function OrderDetail({
   order,
+  returnAddress = null,
   onUpdated,
 }: {
   order: OrderView;
+  /** 店铺退货地址（ADR-053）：退货退款时顾客照着寄回。 */
+  returnAddress?: string | null;
   /** 状态变化后让父组件重新拉一次订单（确认收货用）。 */
   onUpdated?: () => void;
 }) {
@@ -472,6 +492,7 @@ export function OrderDetail({
           status={order.status}
           amountMinor={order.totalMinor}
           currencyCode={order.currencyCode}
+          returnAddress={returnAddress}
         />
       </div>
 
