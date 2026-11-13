@@ -397,7 +397,10 @@ export class DrizzleOrderRepository implements OrderRepository {
     return rows[0] ? toShippingDTO(rows[0]) : null;
   }
 
-  async countSoldByVariantIds(variantIds: string[]): Promise<Record<string, number>> {
+  async countSoldByVariantIds(
+    variantIds: string[],
+    opts?: { since?: Date },
+  ): Promise<Record<string, number>> {
     if (variantIds.length === 0) return {};
     const rows = await this.db
       .select({
@@ -410,6 +413,9 @@ export class DrizzleOrderRepository implements OrderRepository {
         and(
           inArray(schema.orderLineItem.variantId, variantIds),
           inArray(schema.order.status, SOLD_STATUSES),
+          // 时间窗（ADR-070）：传了 since 就只数这个时刻之后下单的，用来算「月销」。
+          // 比较的是下单时间而不是付款时间——淘宝月销也按下单口径。
+          opts?.since ? gte(schema.order.placedAt, opts.since) : undefined,
         ),
       )
       .groupBy(schema.orderLineItem.variantId);

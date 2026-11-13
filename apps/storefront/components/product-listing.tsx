@@ -103,8 +103,13 @@ export function ProductListing({
     return [...list].sort((a, b) => {
       if (sort === 'price.asc') return (a.price?.amount_minor ?? 0) - (b.price?.amount_minor ?? 0);
       if (sort === 'price.desc') return (b.price?.amount_minor ?? 0) - (a.price?.amount_minor ?? 0);
-      // 销量从高到低（ADR-068）；无销量的排最后
-      if (sort === 'sold_count.desc') return (b.soldCount ?? 0) - (a.soldCount ?? 0);
+      // 销量从高到低（ADR-068 / ADR-070）：淘宝「销量」排的是近 30 天，
+      // 月销相同再比累计，无销量的排最后
+      if (sort === 'sold_count.desc')
+        return (
+          (b.monthlySoldCount ?? 0) - (a.monthlySoldCount ?? 0) ||
+          (b.soldCount ?? 0) - (a.soldCount ?? 0)
+        );
       return b.createdAt.localeCompare(a.createdAt);
     });
   }, [products, debouncedQuery, selectedCategories, selectedAttrs, sort, attributeGroups, serverFiltered]);

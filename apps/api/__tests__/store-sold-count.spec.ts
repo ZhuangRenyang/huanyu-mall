@@ -83,3 +83,29 @@ describe("商品销量排序（ADR-068）", () => {
     });
   });
 });
+
+describe("月销（ADR-070）", () => {
+  it("详情同时给累计与近 30 天两个口径，互不覆盖", async () => {
+    await withApp(async (app, deps) => {
+      deps.state.soldByVariant = { var_1: 1000 };
+      deps.state.monthlySoldByVariant = { var_1: 8 };
+      const res = await app.inject({ method: "GET", url: "/api/v1/store/products/tee" });
+      expect(res.statusCode, res.body).toBe(200);
+      const detail = res.json().data as { sold_count?: number; monthly_sold_count?: number };
+      expect(detail.sold_count).toBe(1000);
+      expect(detail.monthly_sold_count).toBe(8);
+    });
+  });
+
+  it("列表带 monthly_sold_count，没配就是 0（前端不用判空）", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({ method: "GET", url: "/api/v1/store/products" });
+      expect(res.statusCode, res.body).toBe(200);
+      const items = res.json().data.items as Array<{ monthly_sold_count?: number }>;
+      expect(items.length).toBeGreaterThan(0);
+      for (const item of items) {
+        expect(typeof item.monthly_sold_count).toBe("number");
+      }
+    });
+  });
+});

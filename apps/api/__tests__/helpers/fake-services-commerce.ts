@@ -1050,10 +1050,12 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       // 工作台（ADR-030）：内存版计数，够驱动路由契约测试
       countByStatus: async () => (state.orderCreated ? { paid: 1 } : {}),
       // 销量（ADR-067）：默认各变体 0，用例可用 state.soldByVariant 覆盖
-      countSoldByVariants: async (variantIds: string[]) => {
+      countSoldByVariants: async (variantIds: string[], opts?: { since?: Date }) => {
+        // 传了 since 就是月销口径（ADR-070）：假服务用独立的一张表模拟近 30 天
+        const source = opts?.since ? state.monthlySoldByVariant : state.soldByVariant;
         const out: Record<string, number> = {};
         for (const id of variantIds) {
-          const n = state.soldByVariant?.[id];
+          const n = source?.[id];
           if (n !== undefined && n > 0) out[id] = n;
         }
         return out;

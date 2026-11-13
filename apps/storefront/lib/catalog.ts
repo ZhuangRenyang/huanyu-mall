@@ -44,6 +44,8 @@ export interface CatalogProduct {
   originalMinor?: number;
   /** 商品级销量（各变体之和，ADR-067 社交证明）。 */
   soldCount?: number;
+  /** 近 30 天销量（ADR-070 月销）：商品页与卡片的主展示口径。 */
+  monthlySoldCount?: number;
 }
 
 /** 列表/卡片展示模型（在 SDK ProductSummary 之上补检索与促销字段）。 */
@@ -52,6 +54,8 @@ export interface StoreProduct extends ProductSummary {
   available?: number;
   /** 商品级销量（ADR-067）。 */
   soldCount?: number;
+  /** 近 30 天销量（ADR-070 月销）。 */
+  monthlySoldCount?: number;
   originalMinor?: number;
   badge?: string;
   categoryId: string;

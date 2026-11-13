@@ -42,6 +42,8 @@ interface ApiProductDetail {
   categories?: Array<{ id: string; name: string; parent_id?: string | null }>;
   /** 商品级销量（ADR-067）。 */
   sold_count?: number;
+  /** 近 30 天销量（ADR-070 月销）。 */
+  monthly_sold_count?: number;
 }
 
 /** 真 API 返回的商品摘要（字段对齐 openapi ProductSummary）。 */
@@ -57,6 +59,8 @@ interface ApiProductSummary {
   available_quantity?: number;
   /** 商品级销量（ADR-067）。 */
   sold_count?: number;
+  /** 近 30 天销量（ADR-070 月销）。 */
+  monthly_sold_count?: number;
 }
 
 /** 真 API 的分类。 */
@@ -112,6 +116,7 @@ function mapDetail(d: ApiProductDetail): CatalogProduct {
     })),
     variants,
     soldCount: d.sold_count,
+    monthlySoldCount: d.monthly_sold_count,
     originalMinor: undefined,
   };
 }
@@ -127,6 +132,7 @@ function mapSummary(p: ApiProductSummary): StoreProduct {
     price: p.price,
     available: p.available_quantity,
     soldCount: p.sold_count,
+    monthlySoldCount: p.monthly_sold_count,
     originalMinor: undefined,
     badge: undefined,
     categoryId: "",

@@ -39,6 +39,8 @@ export interface FakeServicesState {
   cartLineQuantity?: number;
   /** 各变体销量（ADR-067）：默认不返回即 0。 */
   soldByVariant?: Record<string, number>;
+  /** 各变体近 30 天销量（ADR-070 月销）：不配就是 0，和累计分开算。 */
+  monthlySoldByVariant?: Record<string, number>;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
   categories: Array<{
     id: string;

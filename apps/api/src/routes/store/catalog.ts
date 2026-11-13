@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { errors } from "@mall/core";
+import { monthlySoldSince } from "@mall/order";
 import { PaginationQuerySchema } from "@mall/types";
 import type { AppDeps } from "../../deps.js";
 import { resolveChannelId } from "../../plugins/auth.js";
@@ -53,7 +54,7 @@ export async function mapStoreProductSummaries(
   products: Awaited<ReturnType<AppDeps["services"]["product"]["listProductsWithVariants"]>>["items"],
 ) {
   const variantIds = products.flatMap((p) => p.variants.map((v) => v.id));
-  const [prices, availability, sold] = await Promise.all([
+  const [prices, availability, sold, monthlySold] = await Promise.all([
     variantIds.length > 0
       ? deps.services.pricing.calculatePrices({
           variantIds,
@@ -64,10 +65,15 @@ export async function mapStoreProductSummaries(
     variantIds.length > 0 ? deps.services.inventory.getAvailability({ variantIds }) : Promise.resolve([]),
     // 销量：商品级「已售 N 件」是社交证明（ADR-067），一次 GROUP BY 取全
     variantIds.length > 0 ? deps.services.order.countSoldByVariants(variantIds) : Promise.resolve({}),
+    // 月销（ADR-070）：淘宝卡片写的是「月销」，按下单时间取近 30 天
+    variantIds.length > 0
+      ? deps.services.order.countSoldByVariants(variantIds, { since: monthlySoldSince() })
+      : Promise.resolve({}),
   ]);
   const priceByVariant = new Map(prices.map((p) => [p.variantId, p.amountMinor]));
   const availByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
   const soldByVariant = sold as Record<string, number>;
+  const monthlyByVariant = monthlySold as Record<string, number>;
   // 主图：批量取 URL。原来这里写死 null，导致店面列表永远没有图。
   const thumbIds = products
     .map((p) => p.thumbnail_file_id)
@@ -94,6 +100,8 @@ export async function mapStoreProductSummaries(
       available_quantity: p.variants.reduce((sum, v) => sum + (availByVariant.get(v.id) ?? 0), 0),
       // 商品级销量 = 各变体销量之和（ADR-067，社交证明）
       sold_count: p.variants.reduce((sum, v) => sum + (soldByVariant[v.id] ?? 0), 0),
+      // 月销（ADR-070）：店面卡片的主展示口径，累计值只作详情页补充
+      monthly_sold_count: p.variants.reduce((sum, v) => sum + (monthlyByVariant[v.id] ?? 0), 0),
     };
   });
 }
@@ -125,8 +133,13 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
       } else if (q.sort === "price.desc") {
         items.sort((a, b) => (b.price?.amount_minor ?? 0) - (a.price?.amount_minor ?? 0));
       } else if (q.sort === "sold_count.desc") {
-        // 按销量从高到低（ADR-068）：销量是社交证明，卖得好的排前面
-        items.sort((a, b) => (b.sold_count ?? 0) - (a.sold_count ?? 0));
+        // 按销量从高到低（ADR-068 / ADR-070）：淘宝「销量」排的是近 30 天，
+        // 卖得久的老爆款不该永远压住当季新品；月销相同再比累计，避免顺序抖动
+        items.sort(
+          (a, b) =>
+            (b.monthly_sold_count ?? 0) - (a.monthly_sold_count ?? 0) ||
+            (b.sold_count ?? 0) - (a.sold_count ?? 0),
+        );
       }
 
       reply.ok({
@@ -151,7 +164,7 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
     const detail = await deps.services.product.retrieveProduct(summary.id);
 
     const variantIds = detail.variants.map((v) => v.id);
-    const [prices, availability, sold] = await Promise.all([
+    const [prices, availability, sold, monthlySold] = await Promise.all([
       variantIds.length
         ? deps.services.pricing.calculatePrices({
             variantIds,
@@ -162,10 +175,15 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
       variantIds.length
         ? deps.services.order.countSoldByVariants(variantIds)
         : Promise.resolve({}),
+      // 月销（ADR-070）：详情页同时给「月销」与「累计」，口径与列表一致
+      variantIds.length
+        ? deps.services.order.countSoldByVariants(variantIds, { since: monthlySoldSince() })
+        : Promise.resolve({}),
     ]);
     const priceByVariant = new Map(prices.map((p) => [p.variantId, p]));
     const availByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
     const soldByVariant = sold as Record<string, number>;
+    const monthlyByVariant = monthlySold as Record<string, number>;
 
     reply.ok({
       id: detail.id,
@@ -176,6 +194,8 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
       status: detail.status,
       // 商品级销量（ADR-067）：各变体销量之和
       sold_count: detail.variants.reduce((sum, v) => sum + (soldByVariant[v.id] ?? 0), 0),
+      // 月销（ADR-070）：近 30 天下单的成交数量，卡片与购买区主展示
+      monthly_sold_count: detail.variants.reduce((sum, v) => sum + (monthlyByVariant[v.id] ?? 0), 0),
       images: await (async () => {
         // URL 必须由 file 模块按 storage key 生成；直接拼 file_id 会 404（key ≠ id）
         const urls = await deps.services.file.getPublicUrls(detail.images.map((i) => i.file_id));

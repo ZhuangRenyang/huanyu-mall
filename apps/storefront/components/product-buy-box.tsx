@@ -105,9 +105,16 @@ export function ProductBuyBox({
         <Price amountMinor={priceMinor} originalMinor={originalMinor} promo={originalMinor !== undefined} size="xl" />
         {lowStock !== undefined && <Badge variant="warning">仅剩 {lowStock} 件</Badge>}
         {soldOut && <Badge variant="neutral">已售罄</Badge>}
-        {/* 已售 N 件（ADR-067）：淘宝商品页价格旁常带月销，社交证明 */}
+        {/* 月销 + 累计（ADR-070 / ADR-067）：淘宝商品页价格旁先写「月销 N」，
+            点开才看累计。近 30 天为 0 时只显示累计，别摆一个「月销 0 件」 */}
+        {(product.monthlySoldCount ?? 0) > 0 && (
+          <span className="text-sm text-muted-foreground">月销 {product.monthlySoldCount} 件</span>
+        )}
         {(product.soldCount ?? 0) > 0 && (
-          <span className="text-sm text-muted-foreground">已售 {product.soldCount} 件</span>
+          <span className="text-sm text-muted-foreground">
+            {(product.monthlySoldCount ?? 0) > 0 ? '累计已售 ' : '已售 '}
+            {product.soldCount} 件
+          </span>
         )}
       </div>
 

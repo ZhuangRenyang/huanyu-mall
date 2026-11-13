@@ -30,6 +30,19 @@ import type {
 } from "../types.js";
 
 /**
+ * 月销口径的时间窗（ADR-070）。
+ *
+ * 淘宝商品卡与商品页写「月销 N」，不是累计——三十天前的销量对今天没什么参考价值。
+ * 这里只定窗口长度，具体过滤在仓储的 `countSoldByVariantIds({ since })`。
+ */
+export const MONTHLY_SOLD_DAYS = 30;
+
+/** 月销窗口起点：`now` 往前推 30 天。抽成纯函数便于单测，别在调用处各算一遍。 */
+export function monthlySoldSince(now: Date = new Date()): Date {
+  return new Date(now.getTime() - MONTHLY_SOLD_DAYS * 24 * 60 * 60 * 1000);
+}
+
+/**
  * 顾客留言归一化：空白 → null（不存空串，否则前端要判两种「空」），超长截断。
  *
  * 为什么不抛错：顾客已经点了一次「下单」，为一个备注拦下来，
@@ -151,8 +164,11 @@ export class OrderService implements IOrderModuleService {
     return this.repo.countByStatus();
   }
 
-  async countSoldByVariants(variantIds: string[]): Promise<Record<string, number>> {
-    return this.repo.countSoldByVariantIds(variantIds);
+  async countSoldByVariants(
+    variantIds: string[],
+    opts?: { since?: Date },
+  ): Promise<Record<string, number>> {
+    return this.repo.countSoldByVariantIds(variantIds, opts);
   }
 
   async summarizePaidSince(

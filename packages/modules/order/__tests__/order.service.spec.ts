@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DomainError } from "@mall/core";
 import { canTransition } from "../src/services/state-machine.js";
-import { OrderService } from "../src/services/order.service.js";
+import { MONTHLY_SOLD_DAYS, OrderService, monthlySoldSince } from "../src/services/order.service.js";
 import type {
   Actor,
   CreateOrderDiscountInput,
@@ -268,6 +268,22 @@ class InMemoryOrderRepository implements OrderRepository {
   async findShippingMethod(orderId: string): Promise<OrderShippingMethodDTO | null> {
     return this.shipping.get(orderId) ?? null;
   }
+  /** 销量调用记录（ADR-070）：验「since 有没有传对」，不靠返回值猜。 */
+  readonly soldCalls: Array<{ variantIds: string[]; since?: Date }> = [];
+  soldByVariant: Record<string, number> = {};
+  monthlySoldByVariant: Record<string, number> = {};
+
+  async countSoldByVariantIds(
+    variantIds: string[],
+    opts?: { since?: Date },
+  ): Promise<Record<string, number>> {
+    this.soldCalls.push({ variantIds, since: opts?.since });
+    const source = opts?.since ? this.monthlySoldByVariant : this.soldByVariant;
+    return Object.fromEntries(
+      variantIds.filter((id) => (source[id] ?? 0) > 0).map((id) => [id, source[id]!]),
+    );
+  }
+
   async list(q: OrderQuery): Promise<{ items: OrderDTO[]; count: number }> {
     let items = [...this.orders.values()];
     if (q.status) items = items.filter((o) => o.status === q.status);
@@ -777,5 +793,31 @@ describe("顾客留言：给卖家留言（ADR-050）", () => {
     const after = await service.retrieveOrder(order.id);
     expect(after.customer_note).toBe("送货前打电话");
     expect(after.merchant_note).toBe("老客户，可送赠品");
+  });
+});
+
+describe("销量口径（ADR-067 累计 / ADR-070 月销）", () => {
+  it("不传 since 数累计，传 since 只数窗口内：两个口径分开取", async () => {
+    const { repo, service } = setup();
+    repo.soldByVariant = { var_1: 1000 };
+    repo.monthlySoldByVariant = { var_1: 8 };
+    expect(await service.countSoldByVariants(["var_1"])).toEqual({ var_1: 1000 });
+    expect(
+      await service.countSoldByVariants(["var_1"], { since: monthlySoldSince() }),
+    ).toEqual({ var_1: 8 });
+  });
+
+  it("since 原样透传给仓储，不在服务层改写", async () => {
+    const { repo, service } = setup();
+    const since = new Date("2026-10-14T00:00:00.000Z");
+    await service.countSoldByVariants(["var_1"], { since });
+    expect(repo.soldCalls).toHaveLength(1);
+    expect(repo.soldCalls[0]?.since).toEqual(since);
+  });
+
+  it("月销窗口是「现在往前 30 天」，纯函数不依赖调用时刻", () => {
+    const now = new Date("2026-11-13T12:00:00.000Z");
+    expect(MONTHLY_SOLD_DAYS).toBe(30);
+    expect(monthlySoldSince(now).toISOString()).toBe("2026-10-14T12:00:00.000Z");
   });
 });

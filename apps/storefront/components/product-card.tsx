@@ -67,10 +67,12 @@ export function ProductCard({ product, basePath, priority = false }: ProductCard
             size="base"
           />
         </span>
-        {/* 已售 N 件（ADR-067）：淘宝商品卡常带月销，是社交证明；0 件不显示 */}
-        {(product.soldCount ?? 0) > 0 && (
+        {/* 月销 N 件（ADR-070）：淘宝商品卡写「月销」（近 30 天），0 件退回累计已售（ADR-067） */}
+        {(product.monthlySoldCount ?? 0) > 0 ? (
+          <span className="text-xs text-muted-foreground">月销 {product.monthlySoldCount} 件</span>
+        ) : (product.soldCount ?? 0) > 0 ? (
           <span className="text-xs text-muted-foreground">已售 {product.soldCount} 件</span>
-        )}
+        ) : null}
       </div>
     </article>
   );

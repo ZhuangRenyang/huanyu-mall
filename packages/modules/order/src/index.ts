@@ -8,7 +8,7 @@ import { OrderService } from "./services/order.service.js";
 export * from "./types.js";
 export * from "./errors.js";
 export { linkable } from "./linkable.js";
-export { OrderService } from "./services/order.service.js";
+export { OrderService, MONTHLY_SOLD_DAYS, monthlySoldSince } from "./services/order.service.js";
 export { assertTransition, canTransition, isRefundable } from "./services/state-machine.js";
 
 export default Module("order", {
