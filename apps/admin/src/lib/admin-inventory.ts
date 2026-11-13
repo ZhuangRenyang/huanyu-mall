@@ -29,6 +29,8 @@ export interface InventoryLevelView {
   stocked: number;
   reserved: number;
   available: number;
+  /** 该 SKU 等货人数（0 = 没人等；演示数据不填时为 undefined）。 */
+  stockAlertCount?: number;
 }
 
 export type TransferStatus = 'pending' | 'completed' | 'cancelled';
@@ -75,6 +77,8 @@ function mapLevel(l: InventoryLevelRow): InventoryLevelView {
     stocked: l.stocked_quantity,
     reserved: l.reserved_quantity,
     available: l.available_quantity,
+    // 缺货时「多少人在等」是补货优先级的依据（ADR-059）
+    stockAlertCount: l.stock_alert_count ?? 0,
   };
 }
 

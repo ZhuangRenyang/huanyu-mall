@@ -157,6 +157,17 @@ export class DrizzleProductRepository implements ProductRepository {
     return rows.map(toVariantDTO);
   }
 
+  async listVariantIdsBySkus(skus: string[]): Promise<Array<{ id: string; sku: string }>> {
+    if (skus.length === 0) return [];
+    const rows = await this.db
+      .select({ id: schema.productVariant.id, sku: schema.productVariant.sku })
+      .from(schema.productVariant)
+      .where(
+        and(inArray(schema.productVariant.sku, skus), isNull(schema.productVariant.deletedAt)),
+      );
+    return rows.map((r) => ({ id: r.id, sku: r.sku }));
+  }
+
   async listVariantsByProductIds(productIds: string[]): Promise<VariantDTO[]> {
     if (productIds.length === 0) return [];
     const rows = await this.db

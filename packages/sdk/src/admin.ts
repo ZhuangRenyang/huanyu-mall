@@ -83,6 +83,8 @@ export interface InventoryLevel {
 /** 按仓库存行（仓 × SKU，带 sku 便于后台展示）。 */
 export interface InventoryLevelRow extends InventoryLevel {
   sku: string;
+  /** 该 SKU 当前等货的人数（ADR-059）；老后端不返回时为 undefined。 */
+  stock_alert_count?: number;
 }
 
 /** 仓库。priority 大者优先（分配时先扣高优先级仓）。 */

@@ -136,6 +136,15 @@ export function InventoryLevelsTab() {
                         无货
                       </Badge>
                     )}
+                    {/*
+                      有多少人在等到货（ADR-059）：缺货且有 20 人等，和缺货但没人等，
+                      补货优先级完全不同。只在有人等的时候显示，不给正常行添噪音。
+                    */}
+                    {(level.stockAlertCount ?? 0) > 0 && (
+                      <Badge variant="warning" className="ml-2">
+                        {level.stockAlertCount ?? 0} 人等货
+                      </Badge>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -188,6 +188,8 @@ export interface SellableVariantDTO {
 
 export interface ProductRepository {
   findById(id: string): Promise<ProductDTO | null>;
+  /** sku → 变体 id（后台库存页要把「仓 × SKU」对回到变体，才能显示等货人数）。 */
+  listVariantIdsBySkus(skus: string[]): Promise<Array<{ id: string; sku: string }>>;
   list(q: ProductQuery): Promise<{ items: ProductDTO[]; count: number }>;
   insert(input: CreateProductInput & { id: string }): Promise<ProductDTO>;
   update(id: string, patch: UpdateProductInput): Promise<ProductDTO | null>;
@@ -309,6 +311,8 @@ export interface IProductModuleService {
   markStockAlertsNotified(ids: string[]): Promise<number>;
   /** 各变体的待通知人数（后台库存页显示「N 人等到货」）。 */
   countPendingStockAlerts(variantIds: string[]): Promise<Record<string, number>>;
+  /** sku → 变体 id：库存行只有 sku，要靠它才能查到等货人数。 */
+  variantIdsBySkus(skus: string[]): Promise<Record<string, string>>;
   bulkDelete(ids: string[]): Promise<number>;
   deleteProduct(id: string): Promise<void>;
   createVariant(productId: string, input: CreateVariantInput): Promise<VariantDTO>;

@@ -59,6 +59,20 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
     },
     product: {
       /*
+       * 库存页的「N 人等到货」：假库存行的 sku 是 SKU-1，
+       * 这里把它对到 var_1，人数取 registered（测试可调）。
+       */
+      variantIdsBySkus: async (skus: string[]) => {
+        const out: Record<string, string> = {};
+        for (const sku of skus) if (sku === "SKU-1") out[sku] = "var_1";
+        return out;
+      },
+      countPendingStockAlerts: async (variantIds: string[]) => {
+        const out: Record<string, number> = {};
+        for (const id of variantIds) if (id === "var_1") out[id] = stockAlerts.length;
+        return out;
+      },
+      /*
        * 到货提醒（ADR-059）：内存版，够跑「登记 → 幂等 → 回显」契约。
        * 「补货后发邮件」那条链路由 workflows 的订阅者测试守，不在这一层。
        */

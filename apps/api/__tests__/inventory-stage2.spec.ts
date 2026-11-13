@@ -341,4 +341,19 @@ describe("库存预警筛选（ADR-039）", () => {
       expect(miss.json().data.items).toHaveLength(0);
     });
   });
+
+  it("库存行带出「N 人等到货」（ADR-059 收口）", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/admin/inventory-levels",
+        headers: admin,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const row = res.json().data.items[0];
+      // 字段一定在：没有它，后台想标「20 人等货」只能再打一次接口
+      expect(row).toHaveProperty("stock_alert_count");
+      expect(typeof row.stock_alert_count).toBe("number");
+    });
+  });
 });

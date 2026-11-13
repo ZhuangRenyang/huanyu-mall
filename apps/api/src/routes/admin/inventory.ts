@@ -144,8 +144,25 @@ export function adminInventoryRoutes(app: FastifyInstance, deps: AppDeps): void 
         limit: q.limit,
         offset: q.offset,
       });
+
+      /*
+       * 「N 人等到货」（ADR-059 遗留项的收口）。
+       *
+       * 库存行只有 sku，没有变体 id；到货提醒按变体登记。所以先 sku → 变体，
+       * 再一次性查这些变体的待通知人数 —— 两跳都不做 N+1。
+       * 这一列是商家补货的依据：缺货且有 20 人等，和缺货但没人等，优先级完全不同。
+       */
+      const skus = res.items.map((i) => i.sku);
+      const variantBySku = await deps.services.product.variantIdsBySkus(skus);
+      const counts = await deps.services.product.countPendingStockAlerts([
+        ...new Set(Object.values(variantBySku)),
+      ]);
+
       reply.ok({
-        items: res.items,
+        items: res.items.map((item) => {
+          const variantId = variantBySku[item.sku];
+          return { ...item, stock_alert_count: variantId ? (counts[variantId] ?? 0) : 0 };
+        }),
         count: res.count,
         offset: q.offset,
         limit: q.limit,

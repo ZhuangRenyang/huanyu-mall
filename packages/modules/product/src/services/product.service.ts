@@ -242,6 +242,13 @@ export class ProductService implements IProductModuleService {
     return this.alerts.markNotified(ids, new Date());
   }
 
+  async variantIdsBySkus(skus: string[]): Promise<Record<string, string>> {
+    const rows = await this.repo.listVariantIdsBySkus(skus);
+    const out: Record<string, string> = {};
+    for (const r of rows) out[r.sku] = r.id;
+    return out;
+  }
+
   async countPendingStockAlerts(variantIds: string[]): Promise<Record<string, number>> {
     if (!this.alerts) return {};
     return this.alerts.countPendingByVariantIds(variantIds);
