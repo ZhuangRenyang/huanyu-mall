@@ -274,6 +274,12 @@ export function createStoreClient(opts: ClientOptions) {
       post(`/api/v1/store/refund-requests/${refundId}/return-shipment`, b),
     /** 我的评价（自己写过的，含被隐藏的）。 */
     listMyReviews: (q?: Query) => get("/api/v1/store/customer/reviews", q),
+    /**
+     * 顾客自助改密（ADR-055）。改完该身份的全部会话失效，前端要引导重新登录。
+     * 身份取 token，不接受 body 传 identity_id。
+     */
+    changeCustomerPassword: (b: { current_password: string; new_password: string }) =>
+      post("/api/v1/store/auth/password/change", b),
     register: (b: RegisterRequest) => post("/api/v1/store/auth/register", b),
     login: (b: LoginRequest) => post("/api/v1/store/auth/login", b),
     refresh: (refreshToken: string) =>

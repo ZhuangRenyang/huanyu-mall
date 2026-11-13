@@ -17,7 +17,7 @@ import {
   weakPassword,
 } from "../errors.js";
 import { randomInt, createHash } from "node:crypto";
-import { changeAdminPassword } from "./change-password.js";
+import { changeAdminPassword, changeCustomerPassword } from "./change-password.js";
 import { checkPasswordStrength } from "./password-policy.js";
 import { revokeIdentitySessions } from "./session-revoke.js";
 import { prefixedUlid } from "@mall/core";
@@ -437,6 +437,22 @@ export class AuthService implements IAuthModuleService {
    * 管理员自助改密：校验当前口令 → 撤销该管理员全部 refresh_token → 覆盖口令哈希。
    * 改密后不签发新 token，调用方需引导用户重新登录。实现见 change-password.ts。
    */
+  async changeCustomerPassword(input: {
+    identityId: string;
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<{ revokedRefreshTokens: number }> {
+    return changeCustomerPassword(
+      {
+        repo: this.deps.repo,
+        hasher: this.deps.hasher,
+        blacklist: this.deps.blacklist,
+        refreshTtl: (scope) => this.refreshTtl(scope),
+      },
+      input,
+    );
+  }
+
   async changeAdminPassword(input: {
     identityId: string;
     currentPassword: string;

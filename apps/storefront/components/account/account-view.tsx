@@ -8,6 +8,7 @@ import { AddressBook } from './address-book';
 import { MyVouchers } from './my-vouchers';
 import { MyFavorites } from './my-favorites';
 import { MyReviews } from './my-reviews';
+import { SecuritySettings } from './security-settings';
 import { restoreSession, logout, type CustomerProfile } from '@/lib/account';
 
 /** 账户页：未登录=登录/注册；已登录=基本信息 + 地址簿。 */
@@ -73,6 +74,9 @@ export function AccountView() {
           <MyVouchers />
 
           <AddressBook />
+
+          {/* 账号安全放最后：不打扰日常操作，但顾客找得到换密码的入口 */}
+          <SecuritySettings onChanged={() => setProfile(null)} />
         </div>
       ) : (
         <AuthForm onAuthed={setProfile} />

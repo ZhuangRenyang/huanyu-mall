@@ -627,6 +627,22 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           scope: "admin",
         };
       },
+      changeCustomerPassword: async (input: {
+        identityId: string;
+        currentPassword: string;
+        newPassword: string;
+      }) => {
+        // 与真实服务同语义：先验当前口令、再强度、再查重，最后撤销全部会话
+        if (input.currentPassword !== state.customerPassword) throw errors.invalidCredentials();
+        const strength = checkPasswordStrength(input.newPassword);
+        if (!strength.ok) throw errors.validation(strength.reason ?? "新口令强度不足");
+        if (input.newPassword === state.customerPassword) {
+          throw errors.validation("新口令不能与当前口令相同");
+        }
+        state.customerPassword = input.newPassword;
+        state.revokedRefreshTokens += 1;
+        return { revokedRefreshTokens: state.revokedRefreshTokens };
+      },
       changeAdminPassword: async (input: {
         identityId: string;
         currentPassword: string;

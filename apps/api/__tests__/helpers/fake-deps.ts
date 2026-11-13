@@ -180,6 +180,7 @@ export function makeDeps(): AppDeps & {
     providerConfig: new Map<string, Record<string, string>>(),
     theme: { ...INITIAL_THEME },
     adminPassword: "pw123456",
+    customerPassword: "demo1234",
     revokedRefreshTokens: 0,
     orderCreated: false,
     registerMode: "email",

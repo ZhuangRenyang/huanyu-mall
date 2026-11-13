@@ -347,6 +347,27 @@ export async function resetPassword(input: {
 }
 
 /**
+ * 顾客自助改密（ADR-055）。
+ *
+ * 与「忘记密码」的区别：知道当前密码时的常规操作，不需要验证码。
+ * 成功后服务端已撤销该身份的全部会话（含本机），所以这里**顺手清本地登录态**：
+ * 不清的话页面上还显示「已登录」，下一次请求才 401，顾客会以为是页面坏了。
+ */
+export async function changePassword(input: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  if (!LIVE) {
+    throw new Error('演示模式无法修改密码，请在正式环境操作');
+  }
+  await call("POST", "/api/v1/store/auth/password/change", {
+    current_password: input.currentPassword,
+    new_password: input.newPassword,
+  });
+  clearSession();
+}
+
+/**
  * 用 refresh_token 换新的 access_token（供 SDK 的 401 自动重试调用）。
  *
  * 失败时清本地登录态：refresh 也被拒说明会话真的失效，留着只会让后续请求一直 401。

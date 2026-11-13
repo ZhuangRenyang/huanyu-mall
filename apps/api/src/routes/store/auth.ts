@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { errors } from "@mall/core";
 import type { AppDeps } from "../../deps.js";
+import { makeAuthHelpers } from "../../plugins/auth.js";
 
 /**
  * 邮箱注册：邮箱 + 密码 + 手机号（必填）+ 验证码（ADR-025）。
@@ -50,6 +52,17 @@ const resetPasswordBody = z.object({
   new_password: z.string().min(8),
 });
 
+/**
+ * 顾客自助改密（ADR-055）。
+ *
+ * 与「忘记密码」的区别：这里是知道当前密码的常规操作，
+ * 不需要验证码 —— 一条本该只在「密码丢了」时才走的路，不该变成日常换密码的唯一入口。
+ */
+const changePasswordBody = z.object({
+  current_password: z.string().min(1).max(120),
+  new_password: z.string().min(8).max(120),
+});
+
 function tokenResponse(pair: { accessToken: string; refreshToken: string; accessExpiresIn: number }) {
   return {
     access_token: pair.accessToken,
@@ -61,6 +74,7 @@ function tokenResponse(pair: { accessToken: string; refreshToken: string; access
 
 /** Store 认证端点（openapi 1040/1064/1088/1112）。 */
 export function storeAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
+  const auth = makeAuthHelpers(deps);
   /**
    * 店铺对顾客开放的注册方式（公开端点）。
    *
@@ -174,6 +188,30 @@ export function storeAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
         newPassword: b.new_password,
       });
       reply.code(204).send();
+    },
+  );
+
+  /**
+   * 改密：必须登录，且只改得了自己的。
+   *
+   * identityId 取 token 里的 sub（登录主体），不接受 body 传 ——
+   * 传别人的 id 就能改别人的密码，这是最典型的越权。
+   * 改完撤销该身份全部会话（含当前这台），所以前端要引导重新登录。
+   */
+  app.post(
+    "/api/v1/store/auth/password/change",
+    { preHandler: auth.customerAuth, schema: { body: changePasswordBody } },
+    async (req, reply) => {
+      if (!req.auth || req.auth.scope !== "customer") {
+        throw errors.unauthenticated("请先登录");
+      }
+      const b = req.body as z.infer<typeof changePasswordBody>;
+      const res = await deps.services.auth.changeCustomerPassword({
+        identityId: req.auth.sub,
+        currentPassword: b.current_password,
+        newPassword: b.new_password,
+      });
+      reply.ok({ revoked_refresh_tokens: res.revokedRefreshTokens });
     },
   );
 

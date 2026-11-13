@@ -8,6 +8,8 @@ export interface FakeServicesState {
   theme: Record<string, unknown>;
   /** 管理员当前口令（明文替身，等价真实实现里的哈希）。 */
   adminPassword: string;
+  /** 顾客当前口令（明文替身）；改密成功后更新，用来验「旧口令失效」。 */
+  customerPassword: string;
   /** 改密时被撤销的 refresh_token 数量。 */
   revokedRefreshTokens: number;
   /** 购物车 cart_1 是否已下单（模拟一车一单的幂等重放）。 */

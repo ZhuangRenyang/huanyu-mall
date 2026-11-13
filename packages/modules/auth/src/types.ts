@@ -285,4 +285,15 @@ export interface IAuthModuleService {
     currentPassword: string;
     newPassword: string;
   }): Promise<{ revokedRefreshTokens: number }>;
+  /**
+   * 顾客自助改密（ADR-055）：校验当前口令 → 强度 → 撤销该身份全部会话 → 覆盖口令。
+   *
+   * 只认 scope=customer 的身份：拿顾客 token 改不了管理员口令。
+   * 改密后不签发新 token，前端要引导重新登录。
+   */
+  changeCustomerPassword(input: {
+    identityId: string;
+    currentPassword: string;
+    newPassword: string;
+  }): Promise<{ revokedRefreshTokens: number }>;
 }
