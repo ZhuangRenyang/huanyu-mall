@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { errors } from "@mall/core";
+import { STOCK_ALERT_TTL_DAYS } from "@mall/product";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 
@@ -62,6 +63,10 @@ export function storeStockAlertRoutes(app: FastifyInstance, deps: AppDeps): void
         variant_id: alert.variant_id,
         // 回显脱敏后的邮箱，让顾客确认「发到这个地址」
         email: maskEmail(alert.email),
+        // 有效期截止（ADR-069）：登记后这段时间内补货才会通知
+        expires_at: new Date(
+          alert.created_at.getTime() + STOCK_ALERT_TTL_DAYS * 24 * 60 * 60 * 1000,
+        ).toISOString(),
       });
     },
   );

@@ -97,7 +97,12 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
         const existing = stockAlerts.find(
           (a) => a.variant_id === input.variantId && a.email === input.email,
         );
-        if (existing) return existing;
+        if (existing) {
+          // 与真实仓储同契约（ADR-069）：重新登记 = 刷新有效期 + 清掉已通知标记
+          existing.created_at = new Date();
+          existing.notified_at = null;
+          return existing;
+        }
         const alert = {
           id: `salt_${stockAlerts.length + 1}`,
           product_id: input.productId,

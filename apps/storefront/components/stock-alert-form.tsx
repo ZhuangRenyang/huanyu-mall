@@ -24,7 +24,7 @@ export function StockAlertForm({
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ email: string; demo: boolean } | null>(null);
+  const [done, setDone] = useState<{ email: string; expiresAt: number | null; demo: boolean } | null>(null);
 
   // 登录了就预填账号邮箱：少一次输入
   useEffect(() => {
@@ -43,6 +43,12 @@ export function StockAlertForm({
             ? '演示模式：不会真的发送邮件，正式环境才会。'
             : '只在补货时发一封，不会重复打扰。'}
         </p>
+        {/* 有效期（ADR-069）：登记不会一直有效，过期后要重新登记 */}
+        {done.expiresAt && (
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            有效期至 {new Date(done.expiresAt).toLocaleDateString('zh-CN')}，过期后重新登记即可。
+          </p>
+        )}
       </div>
     );
   }
@@ -54,7 +60,7 @@ export function StockAlertForm({
         到货提醒
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        这个规格暂时没货。留下邮箱，补货后我们发一封邮件给你。
+        这个规格暂时没货。留下邮箱，补货后我们发一封邮件给你（登记 30 天内有效）。
       </p>
       <div className="mt-2 flex flex-col gap-2 sm:flex-row">
         <label htmlFor="stock-alert-email" className="sr-only">

@@ -88,6 +88,24 @@ describe("到货提醒", () => {
     });
   });
 
+  it("返回有效期截止时间（ADR-069）：登记后 30 天内有效", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/store/stock-alerts",
+        headers: json,
+        payload: { product_id: "prod_1", variant_id: "var_1", email: "a@b.com" },
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      const expiresAt = Date.parse(res.json().data.expires_at as string);
+      expect(Number.isNaN(expiresAt)).toBe(false);
+      // 30 天左右（允许几秒误差）
+      const days = (expiresAt - Date.now()) / (24 * 3600 * 1000);
+      expect(days).toBeGreaterThan(29.9);
+      expect(days).toBeLessThan(30.1);
+    });
+  });
+
   it("同一邮箱重复登记幂等：返回同一条，不报错", async () => {
     await withApp(async (app) => {
       const payload = { product_id: "prod_1", variant_id: "var_1", email: "a@b.com" };

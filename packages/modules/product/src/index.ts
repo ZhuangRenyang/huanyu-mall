@@ -9,7 +9,7 @@ import { ProductService } from "./services/product.service.js";
 export * from "./types.js";
 export * from "./errors.js";
 export { linkable } from "./linkable.js";
-export { ProductService } from "./services/product.service.js";
+export { ProductService, STOCK_ALERT_TTL_DAYS } from "./services/product.service.js";
 export { seedCatalog, type CatalogSeedPorts } from "./services/seed.js";
 
 export default Module("product", {

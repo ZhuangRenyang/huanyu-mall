@@ -17,6 +17,9 @@ import type {
   ProductRepository,
   ProductStatus,
   ProductTypeDTO,
+  StockAlertDTO,
+  StockAlertRepository,
+  SubscribeStockAlertInput,
   UpdateCategoryInput,
   UpdateProductInput,
   VariantDTO,
@@ -438,5 +441,154 @@ describe("商品分类（ADR-028）", () => {
     // 传空数组 = 清空（不是「不动」）
     await service.updateProduct(product.id, { categoryIds: [] });
     expect((await service.retrieveProduct(product.id)).category_ids).toEqual([]);
+  });
+});
+
+/**
+ * 到货提醒的内存仓储（ADR-069）。
+ *
+ * 按仓储契约实现：重复登记**刷新**已有那条（created_at 重新起算、notified_at 清空）。
+ * Drizzle 实现与这个替身按同一契约工作，所以这里测的就是服务层的规则。
+ */
+class InMemoryStockAlertRepository implements StockAlertRepository {
+  readonly rows = new Map<string, StockAlertDTO>();
+  private seq = 0;
+
+  async upsert(input: SubscribeStockAlertInput & { id: string }): Promise<StockAlertDTO> {
+    const key = `${input.variantId}:${input.email}`;
+    const existing = this.rows.get(key);
+    if (existing) {
+      const refreshed: StockAlertDTO = {
+        ...existing,
+        created_at: new Date(),
+        notified_at: null,
+      };
+      this.rows.set(key, refreshed);
+      return refreshed;
+    }
+    const dto: StockAlertDTO = {
+      id: input.id,
+      product_id: input.productId,
+      variant_id: input.variantId,
+      email: input.email,
+      customer_id: input.customerId ?? null,
+      notified_at: null,
+      created_at: new Date(),
+    };
+    this.rows.set(key, dto);
+    return dto;
+  }
+
+  async listPendingByVariantIds(variantIds: string[]): Promise<StockAlertDTO[]> {
+    return [...this.rows.values()].filter(
+      (r) => variantIds.includes(r.variant_id) && r.notified_at === null,
+    );
+  }
+
+  async markNotified(ids: string[], at: Date): Promise<number> {
+    let n = 0;
+    for (const [key, row] of this.rows) {
+      if (!ids.includes(row.id)) continue;
+      this.rows.set(key, { ...row, notified_at: at });
+      n += 1;
+    }
+    return n;
+  }
+
+  /** 测试专用：把某条登记改成「很久以前」（模拟已过期）。 */
+  ageOut(variantId: string, email: string, daysAgo: number): void {
+    const key = `${variantId}:${email}`;
+    const row = this.rows.get(key);
+    if (!row) return;
+    this.rows.set(key, {
+      ...row,
+      created_at: new Date(Date.now() - daysAgo * 24 * 3600 * 1000),
+    });
+  }
+}
+
+describe("到货提醒：有效期与重新登记（ADR-069）", () => {
+  function setupAlerts() {
+    const repo = new InMemoryProductRepository();
+    const alerts = new InMemoryStockAlertRepository();
+    const service = new ProductService(repo, alerts);
+    return { repo, alerts, service };
+  }
+
+  /** 建一个带一个变体的商品（提醒按变体登记）。 */
+  async function productWithVariant(service: ProductService) {
+    return service.createProduct({
+      title: "T 恤",
+      handle: "tee",
+      status: "published",
+      variants: [{ sku: "TEE-S", title: "S", status: "published" }],
+    });
+  }
+
+  it("登记后在有效期内：出现在待通知列表，计数一致", async () => {
+    const { repo, alerts, service } = setupAlerts();
+    const product = await productWithVariant(service);
+    const variantId = product.variants[0]!.id;
+
+    await service.subscribeStockAlert({
+      productId: product.id,
+      variantId,
+      email: "a@b.com",
+    });
+
+    const pending = await service.listPendingStockAlerts([variantId]);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.email).toBe("a@b.com");
+
+    const counts = await service.countPendingStockAlerts([variantId]);
+    expect(counts[variantId]).toBe(1);
+  });
+
+  it("超过有效期（30 天）的登记不再等通知，也不再计入需求热度", async () => {
+    const { repo, alerts, service } = setupAlerts();
+    const product = await productWithVariant(service);
+    const variantId = product.variants[0]!.id;
+
+    await service.subscribeStockAlert({ productId: product.id, variantId, email: "a@b.com" });
+    // 把这条登记改成 45 天前：超过 30 天有效期
+    alerts.ageOut(variantId, "a@b.com", 45);
+
+    const pending = await service.listPendingStockAlerts([variantId]);
+    expect(pending).toHaveLength(0);
+    const counts = await service.countPendingStockAlerts([variantId]);
+    expect(counts[variantId]).toBeUndefined();
+  });
+
+  it("重新登记 = 重新排队：刷新有效期并清掉已通知标记", async () => {
+    const { repo, alerts, service } = setupAlerts();
+    const product = await productWithVariant(service);
+    const variantId = product.variants[0]!.id;
+
+    await service.subscribeStockAlert({ productId: product.id, variantId, email: "a@b.com" });
+    // 补货已通知过
+    const row = [...alerts.rows.values()][0]!;
+    await alerts.markNotified([row.id], new Date());
+
+    // 过了很久，顾客又点了一次「到货提醒」
+    alerts.ageOut(variantId, "a@b.com", 45);
+    await service.subscribeStockAlert({ productId: product.id, variantId, email: "a@b.com" });
+
+    // 重新登记后：又回到待通知列表（这单补货还能再发一封）
+    const pending = await service.listPendingStockAlerts([variantId]);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.notified_at).toBeNull();
+  });
+
+  it("有效期内的登记不受影响（边界：29 天仍在，31 天不在）", async () => {
+    const { repo, alerts, service } = setupAlerts();
+    const product = await productWithVariant(service);
+    const variantId = product.variants[0]!.id;
+
+    await service.subscribeStockAlert({ productId: product.id, variantId, email: "a@b.com" });
+    alerts.ageOut(variantId, "a@b.com", 29);
+    expect(await service.listPendingStockAlerts([variantId])).toHaveLength(1);
+
+    alerts.ageOut(variantId, "a@b.com", 31);
+    expect(await service.listPendingStockAlerts([variantId])).toHaveLength(0);
   });
 });

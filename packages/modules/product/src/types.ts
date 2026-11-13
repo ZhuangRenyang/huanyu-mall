@@ -282,14 +282,18 @@ export interface SubscribeStockAlertInput {
 }
 
 export interface StockAlertRepository {
-  /** 登记提醒；同一 (变体, 邮箱) 已存在时返回已有记录（不报错、不重复）。 */
+  /**
+   * 登记提醒；同一 (变体, 邮箱) 已存在时**刷新该条**：
+   * `created_at` 置为当前时间（重新排队，有效期重新起算），
+   * `notified_at` 清空（之前发过「到货了」的话，这次补货还能再收到一封）。
+   *
+   * 不报错、不重复 —— 重复点「到货提醒」是常态。
+   */
   upsert(input: SubscribeStockAlertInput & { id: string }): Promise<StockAlertDTO>;
-  /** 补货时要通知的那批：指定变体、尚未通知。 */
+  /** 补货时要通知的那批：指定变体、尚未通知（有效期由服务层过滤）。 */
   listPendingByVariantIds(variantIds: string[]): Promise<StockAlertDTO[]>;
   /** 标记已通知（发送失败的不标记，下一轮补货或重试还会带上）。 */
   markNotified(ids: string[], at: Date): Promise<number>;
-  /** 各变体的待通知人数（后台看需求热度）。 */
-  countPendingByVariantIds(variantIds: string[]): Promise<Record<string, number>>;
 }
 
 export interface IProductModuleService {

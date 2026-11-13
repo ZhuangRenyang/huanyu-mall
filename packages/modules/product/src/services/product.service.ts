@@ -39,6 +39,19 @@ function slugify(name: string): string {
 }
 
 /** M01 对外门面（架构 §2.1 契约）。 */
+/**
+ * 到货提醒的有效期（ADR-069）：登记后 N 天内补货才发通知。
+ *
+ * 淘宝的到货提醒会过期 —— 不设期限的话，三个月后补货还会给一条半年前的登记发信，
+ * 那封信在顾客眼里是莫名其妙的骚扰。
+ */
+export const STOCK_ALERT_TTL_DAYS = 30;
+
+/** 有效期起点：now 往前 N 天。 */
+export function stockAlertSince(now: Date = new Date()): Date {
+  return new Date(now.getTime() - STOCK_ALERT_TTL_DAYS * 24 * 60 * 60 * 1000);
+}
+
 export class ProductService implements IProductModuleService {
   /**
    * `alerts` 可选：只在用到到货提醒时传。
@@ -232,9 +245,17 @@ export class ProductService implements IProductModuleService {
     });
   }
 
+  /**
+   * 补货时要通知的那批（ADR-069：只保留有效期内的）。
+   *
+   * 有效期在**服务层**过滤而不是 SQL：规则只有一条（created_at 在 N 天内），
+   * 放服务层能用确定性的纯逻辑测；提醒条数很少，内存过滤不构成负担。
+   */
   async listPendingStockAlerts(variantIds: string[]): Promise<StockAlertDTO[]> {
     if (!this.alerts) return [];
-    return this.alerts.listPendingByVariantIds(variantIds);
+    const rows = await this.alerts.listPendingByVariantIds(variantIds);
+    const since = stockAlertSince();
+    return rows.filter((r) => r.created_at.getTime() >= since.getTime());
   }
 
   async markStockAlertsNotified(ids: string[]): Promise<number> {
@@ -253,9 +274,12 @@ export class ProductService implements IProductModuleService {
     return out;
   }
 
+  /** 各变体的待通知人数（后台看需求热度）。口径与 listPendingStockAlerts 完全一致。 */
   async countPendingStockAlerts(variantIds: string[]): Promise<Record<string, number>> {
-    if (!this.alerts) return {};
-    return this.alerts.countPendingByVariantIds(variantIds);
+    const rows = await this.listPendingStockAlerts(variantIds);
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.variant_id] = (out[r.variant_id] ?? 0) + 1;
+    return out;
   }
 
   async countByStatus(): Promise<Record<string, number>> {
