@@ -7,6 +7,7 @@ import { AuthForm } from './auth-form';
 import { AddressBook } from './address-book';
 import { MyVouchers } from './my-vouchers';
 import { MyFavorites } from './my-favorites';
+import { MyFootprints } from './my-footprints';
 import { MyReviews } from './my-reviews';
 import { SecuritySettings } from './security-settings';
 import { restoreSession, logout, type CustomerProfile } from '@/lib/account';
@@ -67,6 +68,9 @@ export function AccountView() {
           </section>
 
           <MyFavorites />
+
+          {/* 浏览足迹紧跟收藏：「我看过的」与「我想要的」是同一类东西（ADR-063） */}
+          <MyFootprints />
 
           {/* 自己写过的评价：淘宝放在「评价管理」，这里紧跟收藏（都是「我产生的内容」） */}
           <MyReviews />

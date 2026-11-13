@@ -3,6 +3,7 @@ import { ProductGallery } from '@mall/ui';
 import { ProductBuyBox } from './product-buy-box';
 import { VoucherStrip } from './vouchers/voucher-strip';
 import { ProductReviews } from './product-reviews';
+import { TrackView } from './track-view';
 import type { CatalogProduct } from '@/lib/mock-products';
 import type { PublicVoucherView } from '@/lib/vouchers';
 import type { ProductReviewsView } from '@/lib/reviews';
@@ -39,8 +40,22 @@ export function ProductDetailView({
     (c): c is NonNullable<typeof c> => Boolean(c),
   );
 
+  // 展示价取最低变体：与购买区默认选中的那档一致，进足迹时不至于显示一个偏高的价
+  const fromPriceMinor = product.variants.length
+    ? Math.min(...product.variants.map((v) => v.priceMinor))
+    : 0;
+
   return (
     <div className="mx-auto max-w-content px-4 py-6 md:py-8">
+      {/* 记一次浏览（ADR-063）：只写不渲染，挂在页面根部确保任何入口进来都会记 */}
+      <TrackView
+        productId={product.id}
+        handle={product.handle}
+        title={product.title}
+        priceMinor={fromPriceMinor}
+        currencyCode="CNY"
+        {...(product.images[0]?.url ? { imageUrl: product.images[0].url } : {})}
+      />
       {/*
         面包屑带上所属分类（ADR-040）：淘宝是「首页 > 服饰 > 外套 > 商品」。
         分类是导航的一部分，也是商品页回分类页的内链 —— 之前只有「全部商品」一层。
