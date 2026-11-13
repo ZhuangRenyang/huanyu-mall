@@ -95,15 +95,23 @@ function RefundPanel({
         </p>
         {/*
           寄回地址：不显示它，顾客只能去问客服 —— 这是退货流程里最容易断的一环（ADR-053）。
-          没配就明说「联系客服」，别留一块空白让人猜。
+          优先用**同意那一刻的快照**（ADR-061）：商家后来改地址，这一单仍按当初那个寄。
+          店铺当前配置只作兜底（老单据没有快照）。没配就明说「联系客服」，别留空白让人猜。
         */}
         <div className="mt-3 rounded-md border border-border bg-muted/50 px-3 py-2">
           <p className="text-xs font-medium text-foreground">寄回地址</p>
-          {returnAddress ? (
-            <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{returnAddress}</p>
+          {active.returnAddress ?? returnAddress ? (
+            <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">
+              {active.returnAddress ?? returnAddress}
+            </p>
           ) : (
             <p className="mt-1 text-sm text-muted-foreground">
               店铺尚未填写退货地址，请联系客服获取后再寄回。
+            </p>
+          )}
+          {active.returnAddress && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              这是商家同意退货时给出的地址，之后改动店铺设置不影响本单。
             </p>
           )}
         </div>

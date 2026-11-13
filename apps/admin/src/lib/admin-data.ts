@@ -103,6 +103,8 @@ export interface AdminRefundRequest {
     | 'canceled';
   /** 售后类型：仅退款 / 退货退款（ADR-051）。 */
   resolution: 'refund_only' | 'return_refund';
+  /** 同意退货时快照的地址（ADR-061）；null = 当时店铺没配。 */
+  returnAddress: string | null;
   /** 买家退货物流（退货退款才有）。 */
   returnCarrier: string | null;
   returnTrackingNumber: string | null;

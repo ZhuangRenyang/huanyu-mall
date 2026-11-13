@@ -278,6 +278,7 @@ export class DrizzleOrderRepository implements OrderRepository {
       reviewNote?: string | null;
       refundId?: string | null;
       returnReceivedAt?: Date | null;
+      returnAddress?: string | null;
     },
   ): Promise<RefundRequestDTO | null> {
     const rows = await this.db
@@ -287,6 +288,7 @@ export class DrizzleOrderRepository implements OrderRepository {
         ...(patch.reviewNote !== undefined ? { reviewNote: patch.reviewNote } : {}),
         ...(patch.refundId !== undefined ? { refundId: patch.refundId } : {}),
         ...(patch.returnReceivedAt !== undefined ? { returnReceivedAt: patch.returnReceivedAt } : {}),
+        ...(patch.returnAddress !== undefined ? { returnAddress: patch.returnAddress } : {}),
         reviewedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -484,6 +486,7 @@ function toRefundRequestDTO(
     source: r.source as RefundRequestDTO["source"],
     status: r.status as RefundRequestDTO["status"],
     resolution: (r.resolution as RefundRequestDTO["resolution"]) ?? "refund_only",
+    return_address: r.returnAddress ?? null,
     return_carrier: r.returnCarrier ?? null,
     return_tracking_number: r.returnTrackingNumber ?? null,
     return_shipped_at: r.returnShippedAt ? r.returnShippedAt.toISOString() : null,

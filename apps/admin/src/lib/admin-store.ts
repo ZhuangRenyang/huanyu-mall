@@ -243,6 +243,7 @@ export function requestRefund(
     source,
     status: 'pending',
     resolution,
+    returnAddress: null,
     returnCarrier: null,
     returnTrackingNumber: null,
     reviewNote: null,
@@ -270,6 +271,18 @@ export function approveRefund(id: string): void {
   if (!req || req.status !== 'pending') return;
   if (req.resolution === 'return_refund') {
     req.status = 'awaiting_return';
+    /*
+     * 与真实实现同语义：地址在同意这一刻快照（ADR-061）。
+     * mock 下店铺资料存在 localStorage 的 admin:store-profile 里，
+     * 读它而不是读当前 settings 状态，演示里改地址也复现得出「老单不变」。
+     */
+    try {
+      const raw = localStorage.getItem('admin:store-profile');
+      const profile = raw ? (JSON.parse(raw) as { returnAddress?: string | null }) : null;
+      req.returnAddress = profile?.returnAddress?.trim() ? profile.returnAddress.trim() : null;
+    } catch {
+      req.returnAddress = null;
+    }
     write(KEYS.refunds, list);
     return;
   }

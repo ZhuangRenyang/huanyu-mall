@@ -178,6 +178,13 @@ export interface RefundRequestDTO {
   status: RefundRequestStatus;
   /** 售后类型：仅退款 / 退货退款（ADR-051）。 */
   resolution: RefundResolution;
+  /**
+   * 同意退货时快照的退货地址（ADR-061）。
+   *
+   * 不是实时读店铺配置：商家后来改地址，顾客看到的仍是当初被告知的那个 ——
+   * 他手上的包裹可能已经按旧地址寄出了。
+   */
+  return_address: string | null;
   /** 买家退货物流（退货退款才有）。 */
   return_carrier: string | null;
   return_tracking_number: string | null;
@@ -276,6 +283,8 @@ export interface OrderRepository {
       refundId?: string | null;
       /** 商家确认收到退货的时间（退货退款专用）。 */
       returnReceivedAt?: Date | null;
+      /** 同意退货时快照的退货地址（ADR-061）。 */
+      returnAddress?: string | null;
     },
   ): Promise<RefundRequestDTO | null>;
   /**
@@ -399,7 +408,17 @@ export interface IOrderModuleService {
    * 同意「退货退款」：只把单据推进到 awaiting_return，**不打款**。
    * 钱要等买家寄回、商家确认收货（confirmReturnReceived）才动。
    */
-  agreeReturnRequest(id: string, reviewNote?: string | null): Promise<RefundRequestDTO>;
+  agreeReturnRequest(
+    id: string,
+    opts?: {
+      reviewNote?: string | null;
+      /**
+       * 同意时的退货地址（ADR-061）：由调用方从店铺配置读出并快照。
+       * 服务层不读主题设置 —— 跨模块依赖留在组合根，模块只管存。
+       */
+      returnAddress?: string | null;
+    },
+  ): Promise<RefundRequestDTO>;
   /** 买家提交退货物流（awaiting_return → returned）。 */
   shipReturn(
     id: string,

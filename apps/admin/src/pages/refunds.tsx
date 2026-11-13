@@ -22,6 +22,7 @@ import {
   type RefundRequestView,
   type RefundStatus,
 } from '@/lib/admin-refunds';
+import { getStoreProfile } from '@/lib/admin-store-profile';
 
 /**
  * 退款管理（对齐淘宝「交易 → 退款管理」）。
@@ -85,6 +86,19 @@ export function RefundsPage() {
   /** 确认收货并退款：退货退款的打款关卡，单独一个确认框。 */
   const [receiving, setReceiving] = useState<RefundRequestView | null>(null);
   const [rejectNote, setRejectNote] = useState('');
+  /**
+   * 店铺当前配置的退货地址（ADR-061）。
+   * 只为在「同意退货」时给商家看一眼：没配地址就同意，
+   * 顾客那边只会看到「联系客服」，单子会卡在待寄回上没人推进。
+   */
+  const [storeReturnAddress, setStoreReturnAddress] = useState<string | null>(null);
+
+  useEffect(() => {
+    // 读一次就够：地址改动要刷新页面才生效，退款页不是设置页
+    void getStoreProfile()
+      .then((p) => setStoreReturnAddress(p.returnAddress))
+      .catch(() => setStoreReturnAddress(null));
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -286,6 +300,18 @@ export function RefundsPage() {
                           退回：{item.returnCarrier} {item.returnTrackingNumber}
                         </span>
                       )}
+                      {/*
+                        同意退货时给出的地址（ADR-061）。收货时要对「这包是不是寄给这单的」，
+                        所以只取首行（收件人/地址），完整内容放 title。
+                      */}
+                      {item.returnAddress && (
+                        <span
+                          className="mt-0.5 block text-xs text-muted-foreground"
+                          title={item.returnAddress}
+                        >
+                          寄往：{item.returnAddress.split('\n')[0]}
+                        </span>
+                      )}
                     </td>
                     <td className="tabular px-4 py-3 align-top">
                       {formatMoney(item.amountMinor, item.currencyCode)}
@@ -401,8 +427,22 @@ export function RefundsPage() {
                 </p>
                 <p className="text-sm text-foreground">
                   <strong className="font-medium">这一步不会打款</strong>
-                  ，请确认退货地址已告知买家（可用店铺客服电话）。
+                  ，买家寄回并填写单号后，你再确认收货才会退款。
                 </p>
+                {/* 地址会一并快照进单据（ADR-061）：现在就让他确认寄到哪 */}
+                <div className="rounded-md border border-border bg-muted/50 px-3 py-2">
+                  <p className="text-xs font-medium text-foreground">买家看到的退货地址</p>
+                  {storeReturnAddress ? (
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">
+                      {storeReturnAddress}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-sm text-destructive">
+                      店铺还没填退货地址，买家只会看到「联系客服获取」。
+                      建议先到「设置 → 店铺资料 → 退货地址」补上，否则这单会卡在待寄回。
+                    </p>
+                  )}
+                </div>
               </>
             ) : (
               <>

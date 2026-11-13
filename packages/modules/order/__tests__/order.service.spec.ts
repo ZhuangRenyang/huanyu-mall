@@ -183,6 +183,7 @@ class InMemoryOrderRepository implements OrderRepository {
       source: input.source,
       status: "pending",
       resolution: input.resolution,
+      return_address: null,
       return_carrier: null,
       return_tracking_number: null,
       return_shipped_at: null,
@@ -227,6 +228,7 @@ class InMemoryOrderRepository implements OrderRepository {
       reviewNote?: string | null;
       refundId?: string | null;
       returnReceivedAt?: Date | null;
+      returnAddress?: string | null;
     },
   ): Promise<RefundRequestDTO | null> {
     const req = this.refundRequests.find((r) => r.id === id);
@@ -234,6 +236,7 @@ class InMemoryOrderRepository implements OrderRepository {
     req.status = patch.status;
     if (patch.reviewNote !== undefined) req.review_note = patch.reviewNote;
     if (patch.refundId !== undefined) req.refund_id = patch.refundId;
+    if (patch.returnAddress !== undefined) req.return_address = patch.returnAddress;
     if (patch.returnReceivedAt !== undefined) {
       req.return_received_at = patch.returnReceivedAt
         ? patch.returnReceivedAt.toISOString()
@@ -597,11 +600,36 @@ describe("退货退款：货没回来不打款（ADR-051）", () => {
       source: "customer",
       resolution: "return_refund",
     });
-    const agreed = await service.agreeReturnRequest(req.id, "请寄回原包装");
+    const agreed = await service.agreeReturnRequest(req.id, { reviewNote: "请寄回原包装" });
     expect(agreed.status).toBe("awaiting_return");
     expect(agreed.refund_id).toBeNull();
     // 订单仍在退款中：还能发货就白送了
     expect((await service.retrieveOrder(order.id)).status).toBe("refund_pending");
+  });
+
+  it("同意退货时把地址快照进单据；空白地址存 null（ADR-061）", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    const agreed = await service.agreeReturnRequest(req.id, {
+      returnAddress: "收件人：张三\n地址：深圳南山科苑路 15 号",
+    });
+    expect(agreed.return_address).toBe("收件人：张三\n地址：深圳南山科苑路 15 号");
+
+    // 另一笔订单：店铺没配地址（或只填了空格）→ null，前端只需判一种空
+    const second = await shippedOrder();
+    const req2 = await second.service.createRefundRequest(second.order.id, {
+      amountMinor: 20600n,
+      reason: "也退",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    const agreed2 = await second.service.agreeReturnRequest(req2.id, { returnAddress: "   " });
+    expect(agreed2.return_address).toBeNull();
   });
 
   it("退货退款不能走「同意即退款」那条直路（服务端守，不靠按钮别点错）", async () => {

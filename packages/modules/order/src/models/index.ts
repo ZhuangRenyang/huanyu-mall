@@ -132,6 +132,8 @@ export const refundRequest = pgTable(
     orderStatusBefore: text("order_status_before"),
     /** 售后类型：仅退款 / 退货退款（ADR-051）。 */
     resolution: text("resolution").notNull().default("refund_only"),
+    /** 同意退货时快照的退货地址（ADR-061）；null = 当时未配置。 */
+    returnAddress: text("return_address"),
     /** 买家退货物流（退货退款才有）。 */
     returnCarrier: text("return_carrier"),
     returnTrackingNumber: text("return_tracking_number"),

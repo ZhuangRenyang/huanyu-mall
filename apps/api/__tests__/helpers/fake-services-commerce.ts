@@ -915,6 +915,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         source: "customer" | "merchant";
         status: "pending" | "awaiting_return" | "returned" | "approved" | "rejected" | "canceled";
         resolution: "refund_only" | "return_refund";
+        return_address: string | null;
         return_carrier: string | null;
         return_tracking_number: string | null;
         return_shipped_at: string | null;
@@ -1051,6 +1052,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           source: (input.source ?? "customer") as "customer" | "merchant",
           status: "pending" as const,
           resolution: (input.resolution ?? "refund_only") as "refund_only" | "return_refund",
+          return_address: null,
           return_carrier: null,
           return_tracking_number: null,
           return_shipped_at: null,
@@ -1100,13 +1102,18 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         return req;
       },
       /* 退货退款：同意只改单据，不动钱；填单号；确认收货才 approved */
-      agreeReturnRequest: async (id: string, note?: string | null) => {
+      agreeReturnRequest: async (
+        id: string,
+        opts?: { reviewNote?: string | null; returnAddress?: string | null },
+      ) => {
         const req = refundRequests.find((r) => r.id === id)!;
         if (req.resolution !== "return_refund") {
           throw new Error("售后类型不匹配：该申请是仅退款");
         }
         req.status = "awaiting_return";
-        req.review_note = note ?? null;
+        req.review_note = opts?.reviewNote ?? null;
+        // 与真实服务同口径：空串存 null
+        req.return_address = opts?.returnAddress?.trim() ? opts.returnAddress.trim() : null;
         return req;
       },
       shipReturn: async (id: string, input: { carrier: string; trackingNumber: string }) => {

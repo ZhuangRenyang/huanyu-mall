@@ -313,9 +313,15 @@ export class OrderService implements IOrderModuleService {
    * 同意「退货退款」：只推进单据，**不动钱**。
    *
    * 淘宝的「同意退货」就是这一步：卖家给出退货地址，等买家寄回。
-   * 我们不存退货地址（用店铺地址/客服沟通），只记处理说明。
+   *
+   * 地址在此时**快照**进单据（ADR-061）：商家之后改店铺地址，
+   * 这一单的顾客看到的仍是当初被告知的那个。否则顾客按旧地址寄出、
+   * 商家按新地址等货，包裹会在两个地址之间消失。
    */
-  async agreeReturnRequest(id: string, reviewNote?: string | null): Promise<RefundRequestDTO> {
+  async agreeReturnRequest(
+    id: string,
+    opts?: { reviewNote?: string | null; returnAddress?: string | null },
+  ): Promise<RefundRequestDTO> {
     const req = await this.repo.findRefundRequest(id);
     if (!req) throw refundRequestNotFound(id);
     if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
@@ -324,7 +330,9 @@ export class OrderService implements IOrderModuleService {
     }
     const updated = await this.repo.updateRefundRequest(id, {
       status: "awaiting_return",
-      reviewNote: reviewNote ?? null,
+      reviewNote: opts?.reviewNote ?? null,
+      // 空串按「没配」存 null：与店铺资料同一口径，前端只需判一种空
+      returnAddress: opts?.returnAddress?.trim() ? opts.returnAddress.trim() : null,
     });
     return updated!;
   }

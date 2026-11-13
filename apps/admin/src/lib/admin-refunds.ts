@@ -71,6 +71,7 @@ function mapRefund(r: Record<string, unknown>): RefundRequestView {
     source: r.source === 'merchant' ? 'merchant' : 'customer',
     status: (r.status as RefundStatus) ?? 'pending',
     resolution: r.resolution === 'return_refund' ? 'return_refund' : 'refund_only',
+    returnAddress: (r.return_address as string | null) ?? null,
     returnCarrier: (r.return_carrier as string | null) ?? null,
     returnTrackingNumber: (r.return_tracking_number as string | null) ?? null,
     reviewNote: (r.review_note as string | null) ?? null,

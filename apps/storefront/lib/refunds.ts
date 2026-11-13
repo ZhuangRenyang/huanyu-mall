@@ -29,6 +29,8 @@ export interface StoreRefundView {
   /** 商家处理说明（拒绝时会有）。 */
   reviewNote: string | null;
   /** 买家填的退货物流（return_refund 且已寄回时才有）。 */
+  /** 同意退货时快照的地址（ADR-061）；null = 当时店铺没配。 */
+  returnAddress: string | null;
   returnCarrier: string | null;
   returnTrackingNumber: string | null;
   createdAt: string;
@@ -41,6 +43,7 @@ interface RawRefund {
   amount_minor?: number;
   reason?: string;
   review_note?: string | null;
+  return_address?: string | null;
   return_carrier?: string | null;
   return_tracking_number?: string | null;
   created_at?: string;
@@ -54,6 +57,7 @@ function mapRefund(r: RawRefund): StoreRefundView {
     amountMinor: Number(r.amount_minor ?? 0),
     reason: r.reason ?? '',
     reviewNote: r.review_note ?? null,
+    returnAddress: r.return_address ?? null,
     returnCarrier: r.return_carrier ?? null,
     returnTrackingNumber: r.return_tracking_number ?? null,
     createdAt: r.created_at ?? '',

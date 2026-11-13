@@ -109,7 +109,16 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
        * 商家就是净亏一单，而这种亏是被自己的按钮造成的。
        */
       if (request.resolution === "return_refund") {
-        const agreed = await deps.services.order.agreeReturnRequest(id, body.note ?? null);
+        /*
+         * 地址在**这一刻**快照进单据（ADR-061）。
+         * 读主题设置放在路由层：order 模块不该认识 theme，
+         * 跨模块的取值留在组合根附近，模块只管存与取。
+         */
+        const theme = await deps.services.theme.getSettings();
+        const agreed = await deps.services.order.agreeReturnRequest(id, {
+          reviewNote: body.note ?? null,
+          returnAddress: theme.return_address,
+        });
         await deps.audit.record(
           auditEntry(req, {
             action: "refund.agree_return",
