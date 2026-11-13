@@ -223,6 +223,10 @@ export interface UpdateThemeRequest {
   font_family?: string;
   border_radius?: string;
   product_image_ratio?: string;
+  /** 店铺 logo 的文件 id；传 null = 移除（ADR-046）。 */
+  logo_file_id?: string | null;
+  /** 店铺公告（首页顶部公告条）。 */
+  announcement?: string | null;
 }
 
 /** 填写密钥并启用支付 Provider。 */

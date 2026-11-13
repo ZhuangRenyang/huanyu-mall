@@ -17,6 +17,7 @@ export {
   saveProduct,
   deleteProduct,
   uploadProductImage,
+  uploadImageAsset,
   bulkProductAction,
 } from './admin-catalog';
 

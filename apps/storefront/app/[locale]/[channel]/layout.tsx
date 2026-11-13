@@ -19,7 +19,12 @@ export default async function ChannelLayout({
     <CartProvider>
       <ThemeInjector />
       <div className="flex min-h-dvh flex-col">
-        <Header locale={locale} channel={channel} storeName={profile.name} />
+        <Header
+          locale={locale}
+          channel={channel}
+          storeName={profile.name}
+          storeLogoUrl={profile.logoUrl}
+        />
         <main className="flex-1">{children}</main>
         <Footer
           locale={locale}

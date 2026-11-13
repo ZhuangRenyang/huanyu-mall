@@ -116,6 +116,10 @@ export interface ThemeConfig {
   shadow: 'none' | 'light' | 'medium';
   productRatio: '1:1' | '4:5' | '3:4';
   announcement: string;
+  /** 店铺 Logo 的文件 id（保存时传给后端；ADR-046）。 */
+  logoFileId: string | null;
+  /** Logo 的展示 URL（读取时由后端解析，仅用于预览，不参与保存）。 */
+  logoUrl: string | null;
 }
 
 export interface ProviderConfig {
@@ -156,6 +160,8 @@ export const DEFAULT_THEME: ThemeConfig = {
   shadow: 'light',
   productRatio: '4:5',
   announcement: '',
+  logoFileId: null,
+  logoUrl: null,
 };
 
 export const DEFAULT_PROVIDERS: ProviderConfig[] = [

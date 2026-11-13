@@ -10,10 +10,17 @@ export interface HeaderProps {
   channel: string;
   /** 店铺名称（来自店铺设置，ADR-045）；缺省时用默认名。 */
   storeName?: string;
+  /** 店铺 Logo（ADR-046）：有图时替代店名文字，alt 仍用店名。 */
+  storeLogoUrl?: string | null;
 }
 
 /** 顶部导航（移动优先）：Logo / 分类 / 搜索 / 账户 / 购物车。 */
-export function Header({ locale, channel, storeName = '全球商城' }: HeaderProps) {
+export function Header({
+  locale,
+  channel,
+  storeName = '全球商城',
+  storeLogoUrl = null,
+}: HeaderProps) {
   const base = `/${locale}/${channel}`;
   const router = useRouter();
   const { count, openDrawer } = useCart();
@@ -25,8 +32,17 @@ export function Header({ locale, channel, storeName = '全球商城' }: HeaderPr
           <Menu className="size-6" strokeWidth={2} aria-hidden="true" />
         </IconButton>
 
-        <a href={base} className="text-lg font-semibold tracking-tight">
-          {storeName}
+        <a href={base} className="flex items-center gap-2">
+          {storeLogoUrl ? (
+            /*
+             * Logo 用原生 img 而不是 next/image：尺寸由商家上传决定、宽高比未知，
+             * next/image 需要显式宽高，猜一个会把 logo 拉变形。
+             */
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={storeLogoUrl} alt={storeName} className="h-8 w-auto max-w-[140px] object-contain" />
+          ) : (
+            <span className="text-lg font-semibold tracking-tight">{storeName}</span>
+          )}
         </a>
 
         <nav className="ml-6 hidden items-center gap-5 md:flex" aria-label="分类导航">

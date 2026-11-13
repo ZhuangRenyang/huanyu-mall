@@ -208,7 +208,8 @@ export async function saveProduct(product: ProductDraft): Promise<void> {
  */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
-export async function uploadProductImage(file: File): Promise<ProductImageDraft> {
+/** 通用图片上传（商品图、店铺 logo 共用同一套校验与 base64 通道）。 */
+export async function uploadImageAsset(file: File): Promise<ProductImageDraft> {
   if (file.size > MAX_IMAGE_BYTES) throw new Error('图片超过 20MB，请压缩后再传');
   if (!file.type.startsWith('image/')) throw new Error('只能上传图片文件');
 
@@ -239,4 +240,9 @@ export async function deleteProduct(id: string): Promise<void> {
     return;
   }
   await adminClient().deleteProduct(id);
+}
+
+/** 商品图上传：语义别名，内部仍是通用上传。 */
+export async function uploadProductImage(file: File): Promise<ProductImageDraft> {
+  return uploadImageAsset(file);
 }

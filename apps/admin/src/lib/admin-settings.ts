@@ -39,6 +39,8 @@ export async function getTheme(): Promise<ThemeConfig> {
       shadow: (shadow === 'none' || shadow === 'medium' ? shadow : DEFAULT_THEME.shadow) as ThemeConfig['shadow'],
       productRatio: (ratio === '1:1' || ratio === '3:4' ? ratio : DEFAULT_THEME.productRatio) as ThemeConfig['productRatio'],
       announcement: String(t?.announcement ?? ''),
+      logoFileId: (t?.logo_file_id as string | null | undefined) ?? null,
+      logoUrl: (t?.logo_url as string | null | undefined) ?? null,
     };
   } catch {
     return DEFAULT_THEME;
@@ -57,6 +59,8 @@ export async function saveTheme(theme: ThemeConfig): Promise<void> {
     font_family: font?.stack,
     border_radius: `${theme.radius}px`,
     product_image_ratio: theme.productRatio,
+    // logo 必须一起提交：外观保存原本只发 4 个字段，上传后的 logo 会被下一次保存悄悄抹掉
+    logo_file_id: theme.logoFileId,
   });
 }
 

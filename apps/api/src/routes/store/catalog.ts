@@ -11,6 +11,10 @@ export function bootstrapRoutes(app: FastifyInstance, deps: AppDeps): void {
     const channelId = await resolveChannelId(deps, req);
     const channel = await deps.services.regionChannel.getChannel(channelId);
     const theme = await deps.services.theme.getSettings();
+    // 店头 Logo：URL 必须由 file 模块按 storage key 生成（直接拼 file_id 会 404）
+    const logoUrl = theme.logo_file_id
+      ? (await deps.services.file.getPublicUrls([theme.logo_file_id]))[theme.logo_file_id] ?? null
+      : null;
     reply.ok({
       channel: {
         id: channel.id,
@@ -22,7 +26,8 @@ export function bootstrapRoutes(app: FastifyInstance, deps: AppDeps): void {
       locale: channel.default_locale,
       currencies: [channel.currency_code],
       navigation: [],
-      theme,
+      // logo_url 与 theme 平铺：前端不该知道 file_id 与 URL 的区别
+      theme: { ...theme, logo_url: logoUrl },
     });
   });
 }

@@ -80,6 +80,20 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
+  /**
+   * 读取外观设置（含 logo 的公开 URL）。
+   *
+   * 之前只有 PUT，没有 GET：后台读外观设置会 404，而前端 catch 后静默返回默认值 ——
+   * 商家改完保存成功、刷新又看到默认配色，以为没保存（ADR-046）。
+   */
+  app.get("/api/v1/admin/settings/theme", { preHandler: guard }, async (_req, reply) => {
+    const theme = await deps.services.theme.getSettings();
+    const logoUrl = theme.logo_file_id
+      ? (await deps.services.file.getPublicUrls([theme.logo_file_id]))[theme.logo_file_id] ?? null
+      : null;
+    reply.ok({ theme: { ...theme, logo_url: logoUrl } });
+  });
+
   app.put(
     "/api/v1/admin/settings/theme",
     { preHandler: guard, schema: { body: themeBody } },

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import { Button, cn } from '@mall/ui';
 import { SelectField, TextField } from './field';
-import { getTheme, saveTheme } from '@/lib/admin-api';
+import { getTheme, saveTheme, uploadImageAsset } from '@/lib/admin-api';
 import { DEFAULT_THEME, FONT_PRESETS, THEME_PRESETS, type ThemeConfig } from '@/lib/admin-data';
 
 const SHADOWS: { value: ThemeConfig['shadow']; label: string }[] = [
@@ -15,6 +15,8 @@ const RATIOS: ThemeConfig['productRatio'][] = ['1:1', '4:5', '3:4'];
 export function ThemeSettings() {
   const [theme, setTheme] = useState<ThemeConfig>(DEFAULT_THEME);
   const [saved, setSaved] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     void getTheme().then(setTheme);
@@ -33,6 +35,22 @@ export function ThemeSettings() {
     if (window.confirm('恢复默认外观？当前未保存的调整将丢失。')) {
       setTheme(DEFAULT_THEME);
       await saveTheme(DEFAULT_THEME);
+    }
+  };
+
+  /** 上传 logo：先拿到 file_id 与预览 URL，保存外观时才落库（与配色同样的交互）。 */
+  const onLogoPick = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const asset = await uploadImageAsset(file);
+      set('logoFileId', asset.fileId);
+      set('logoUrl', asset.url ?? null);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : '上传失败');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -143,6 +161,54 @@ export function ThemeSettings() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="space-y-2 border-t border-border pt-4">
+          <p className="text-sm font-medium text-foreground">店铺 Logo</p>
+          <p className="text-xs text-muted-foreground">
+            显示在店头（左上角）与页脚；不上传则显示店铺名称文字。建议横向 PNG，高 64px 以上。
+          </p>
+          <div className="flex items-center gap-3">
+            {theme.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- 后台预览，尺寸固定
+              <img
+                src={theme.logoUrl}
+                alt="店铺 Logo"
+                className="h-10 max-w-[160px] rounded border border-border object-contain"
+              />
+            ) : (
+              <div className="grid h-10 w-24 place-items-center rounded border border-dashed border-border text-xs text-muted-foreground">
+                无 Logo
+              </div>
+            )}
+            <label className="inline-flex h-8 cursor-pointer items-center rounded-md border border-border px-3 text-sm text-foreground transition-colors duration-150 hover:bg-muted">
+              {uploading ? '上传中…' : theme.logoUrl ? '更换' : '上传'}
+              <input
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                disabled={uploading}
+                onChange={(e) => void onLogoPick(e.target.files?.[0])}
+              />
+            </label>
+            {theme.logoUrl && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  set('logoFileId', null);
+                  set('logoUrl', null);
+                }}
+              >
+                移除
+              </Button>
+            )}
+          </div>
+          {uploadError && (
+            <p className="text-xs text-destructive" role="alert">
+              {uploadError}
+            </p>
+          )}
         </div>
 
         <TextField

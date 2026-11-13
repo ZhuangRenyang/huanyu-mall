@@ -532,6 +532,11 @@ components:
           nullable: true
           example: "400-800-1234"
           description: 客服电话；为空时页脚与发货单不显示这一行
+        logo_url:
+          type: string
+          nullable: true
+          example: "/uploads/file_logo_01H"
+          description: 店铺 Logo 的公开 URL（由 file 模块按存储 key 生成，ADR-046）；未设置时为 null
 
     FileInfo:
       type: object
@@ -2706,6 +2711,50 @@ paths:
                   code: { type: integer, example: 0 }
                   data: { $ref: '#/components/schemas/Settings' }
                   message: { type: string, example: "" }
+
+  /admin/settings/theme:
+    get:
+      tags: [admin]
+      summary: 读取外观设置（含 Logo 的公开 URL）
+      description: |
+        此前该端点只有 PUT 没有 GET（ADR-046）：后台读外观设置 404，
+        前端 catch 后静默回落默认值 —— 商家改完保存成功、刷新又看到默认配色。
+      security: [{ adminJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      theme: { $ref: '#/components/schemas/ThemeSettings' }
+    put:
+      tags: [admin]
+      summary: 更新外观设置（合并语义：只传要改的字段）
+      security: [{ adminJWT: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ThemeSettings' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      theme: { $ref: '#/components/schemas/ThemeSettings' }
 
   /admin/settings/auth:
     get:

@@ -131,9 +131,11 @@ export interface StoreProfile {
   name: string;
   /** 客服电话（可空）：页脚与订单页展示。 */
   supportPhone: string | null;
+  /** 店铺 Logo（可空）：有图显示图，没图显示店名文字（ADR-046）。 */
+  logoUrl: string | null;
 }
 
-const DEFAULT_PROFILE: StoreProfile = { name: '全球商城', supportPhone: null };
+const DEFAULT_PROFILE: StoreProfile = { name: '全球商城', supportPhone: null, logoUrl: null };
 
 /**
  * 店铺资料（店名 / 客服电话，ADR-045）。
@@ -145,11 +147,12 @@ export async function getStoreProfile(): Promise<StoreProfile> {
   if (getApiMode() !== 'live') return DEFAULT_PROFILE;
   try {
     const raw = (await getStoreClient().bootstrap()) as {
-      theme?: { store_name?: string; support_phone?: string | null } | null;
+      theme?: { store_name?: string; support_phone?: string | null; logo_url?: string | null } | null;
     };
     return {
       name: raw.theme?.store_name?.trim() || DEFAULT_PROFILE.name,
       supportPhone: raw.theme?.support_phone ?? null,
+      logoUrl: raw.theme?.logo_url ?? null,
     };
   } catch {
     return DEFAULT_PROFILE;
