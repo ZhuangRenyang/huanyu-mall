@@ -12,6 +12,8 @@ import { getApiMode, getStoreClient } from './api';
 export interface PublicVoucherView {
   id: string;
   name: string;
+  /** 整单 / 运费 / 指定商品（ADR-064：specific_product 只对命中范围的行生效）。 */
+  type: 'entire_order' | 'shipping' | 'specific_product';
   /** fixed = 减固定金额（minor）；percentage = 减百分比（bps）。 */
   discountType: 'fixed' | 'percentage';
   discountValue: number;
@@ -40,6 +42,7 @@ export interface MyVoucherView {
 interface ApiVoucher {
   id: string;
   name: string;
+  type?: 'entire_order' | 'shipping' | 'specific_product';
   discount_type: 'fixed' | 'percentage';
   discount_value: number | string;
   min_spent: number | string | null;
@@ -73,6 +76,7 @@ const MOCK_PUBLIC: PublicVoucherView[] = [
   {
     id: 'vch_demo_1',
     name: '满 199 减 20',
+    type: 'entire_order',
     discountType: 'fixed',
     discountValue: 2000,
     minSpentMinor: 19900,
@@ -85,6 +89,7 @@ const MOCK_PUBLIC: PublicVoucherView[] = [
   {
     id: 'vch_demo_2',
     name: '全店 9 折（减 10%）',
+    type: 'entire_order',
     discountType: 'percentage',
     discountValue: 1000,
     minSpentMinor: null,
@@ -148,6 +153,7 @@ export async function getStoreVouchers(): Promise<{
       items: (res.items ?? []).map((v) => ({
       id: v.id,
       name: v.name,
+      type: v.type ?? 'entire_order',
       discountType: v.discount_type,
       discountValue: toNum(v.discount_value),
       minSpentMinor: v.min_spent === null ? null : toNum(v.min_spent),

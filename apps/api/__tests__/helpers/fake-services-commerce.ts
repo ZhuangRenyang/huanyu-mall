@@ -62,6 +62,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
 
   // —— 促销/优惠券内存替身（阶段 4 后台管理路由用）——
   const vouchers = new Map<string, Record<string, unknown>>();
+  /** 券适用范围（ADR-064）：voucherId → 范围列表。 */
+  const voucherScopes = new Map<string, Array<{ scope_type: string; scope_id: string }>>();
   const voucherCodes = new Map<string, Record<string, unknown>>();
   let vCounter = 0;
   let vcCounter = 0;
@@ -163,7 +165,22 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         collect_limit: input.collectLimit ?? 1,
       };
       vouchers.set(id, v);
+      if (Array.isArray(input.scopes)) {
+        voucherScopes.set(
+          id,
+          input.scopes.map((sc) => ({ scope_type: sc.scopeType, scope_id: sc.scopeId })),
+        );
+      }
       return v;
+    },
+    listVoucherScopes: async (voucherId: string) => voucherScopes.get(voucherId) ?? [],
+    listVoucherScopesByVoucherIds: async (voucherIds: string[]) => {
+      const out: Record<string, Array<{ scope_type: string; scope_id: string }>> = {};
+      for (const id of voucherIds) {
+        const rows = voucherScopes.get(id);
+        if (rows && rows.length > 0) out[id] = rows;
+      }
+      return out;
     },
     retrieveVoucher: async (id: string) => {
       const v = vouchers.get(id);
@@ -173,6 +190,15 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     updateVoucher: async (id: string, patch: Record<string, unknown>) => {
       const cur = vouchers.get(id);
       if (!cur) throw errors.notFound("voucher not found");
+      if (Array.isArray(patch.scopes)) {
+        voucherScopes.set(
+          id,
+          (patch.scopes as Array<{ scopeType: string; scopeId: string }>).map((sc) => ({
+            scope_type: sc.scopeType,
+            scope_id: sc.scopeId,
+          })),
+        );
+      }
       const next: Record<string, unknown> = { ...cur };
       if (patch.name !== undefined) next.name = patch.name;
       if (patch.type !== undefined) next.type = patch.type;

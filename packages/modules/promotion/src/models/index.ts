@@ -134,6 +134,27 @@ export const voucherCollection = pgTable(
   ],
 );
 
+/**
+ * 优惠券适用范围（ADR-064）：券 × 商品/分类 的多对多。
+ * 只有 type='specific_product' 的券会读它；其它类型忽略。
+ */
+export const voucherScope = pgTable(
+  "voucher_scope",
+  {
+    id: text("id").primaryKey(),
+    voucherId: text("voucher_id").notNull(),
+    /** 'product' | 'category'。 */
+    scopeType: text("scope_type").notNull(),
+    /** 商品 id 或分类 id（不建外键，跨模块不钉死）。 */
+    scopeId: text("scope_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_voucher_scope_voucher_type_id").on(t.voucherId, t.scopeType, t.scopeId),
+    index("idx_voucher_scope_voucher").on(t.voucherId),
+  ],
+);
+
 export const giftCard = pgTable(
   "gift_card",
   {

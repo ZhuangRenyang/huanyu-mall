@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
-import { type NodePgDatabase } from "@mall/core";
+import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
 import type {
@@ -10,6 +10,8 @@ import type {
   CreateVoucherCodeInput,
   CreateVoucherInput,
   GiftCardDTO,
+  VoucherScopeDTO,
+  VoucherScopeInput,
   GiftCardEventDTO,
   GiftCardEventType,
   ListQuery,
@@ -315,6 +317,51 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .where(eq(schema.voucher.id, id))
       .returning();
     return rows[0] ? toVoucherDTO(rows[0]) : null;
+  }
+
+  // —— voucher_scope（ADR-064）——
+
+  async listScopesByVoucherIds(voucherIds: string[]): Promise<Record<string, VoucherScopeDTO[]>> {
+    const out: Record<string, VoucherScopeDTO[]> = {};
+    if (voucherIds.length === 0) return out;
+    const rows = await this.db
+      .select()
+      .from(schema.voucherScope)
+      .where(inArray(schema.voucherScope.voucherId, voucherIds));
+    for (const r of rows) {
+      const dto = toVoucherScopeDTO(r);
+      (out[dto.voucher_id] ??= []).push(dto);
+    }
+    return out;
+  }
+
+  async listScopesByVoucherId(voucherId: string): Promise<VoucherScopeDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.voucherScope)
+      .where(eq(schema.voucherScope.voucherId, voucherId));
+    return rows.map(toVoucherScopeDTO);
+  }
+
+  async replaceScopes(voucherId: string, scopes: VoucherScopeInput[]): Promise<void> {
+    await this.db.delete(schema.voucherScope).where(eq(schema.voucherScope.voucherId, voucherId));
+    if (scopes.length === 0) return;
+    // 去重：重复勾选是常态，别让唯一索引抛错
+    const seen = new Set<string>();
+    const rows = scopes
+      .filter((s) => {
+        const key = `${s.scopeType}:${s.scopeId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((s) => ({
+        id: prefixedUlid("vscope"),
+        voucherId,
+        scopeType: s.scopeType,
+        scopeId: s.scopeId,
+      }));
+    await this.db.insert(schema.voucherScope).values(rows);
   }
 
   async softDeleteVoucher(id: string): Promise<void> {
@@ -724,6 +771,15 @@ function toVoucherDTO(r: typeof schema.voucher.$inferSelect): VoucherDTO {
     status: r.status as VoucherDTO["status"],
     is_public: r.isPublic,
     collect_limit: r.collectLimit,
+  };
+}
+
+function toVoucherScopeDTO(r: typeof schema.voucherScope.$inferSelect): VoucherScopeDTO {
+  return {
+    id: r.id,
+    voucher_id: r.voucherId,
+    scope_type: r.scopeType as VoucherScopeDTO["scope_type"],
+    scope_id: r.scopeId,
   };
 }
 

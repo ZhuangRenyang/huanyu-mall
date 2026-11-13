@@ -62,6 +62,8 @@ export class CartService implements ICartModuleService {
       items: items.map((i) => ({
         id: i.id,
         variantId: i.variant_id,
+        // 指定商品券按它判定命中（ADR-064）
+        productId: i.product_id,
         categoryIds: categoryMap.get(i.product_id) ?? [],
         quantity: i.quantity,
         unitPriceMinor: i.unit_price_minor,

@@ -205,6 +205,8 @@ export interface AdminVoucher {
   is_public?: boolean;
   /** 每人限领张数。 */
   collect_limit?: number;
+  /** 适用范围（ADR-064）：type='specific_product' 时返回。 */
+  scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }
 
 /** 券码（一券多码）。 */

@@ -34,6 +34,8 @@ import type {
   UpdateVoucherInput,
   VoucherCodeDTO,
   VoucherDTO,
+  VoucherScopeDTO,
+  VoucherScopeInput,
 } from "../types.js";
 import { evalPredicate } from "./predicate.js";
 
@@ -89,7 +91,11 @@ export class PromotionService implements IPromotionModuleService {
 
   // —— voucher ——
   async createVoucher(input: CreateVoucherInput): Promise<VoucherDTO> {
-    return this.repo.insertVoucher({ ...input, id: prefixedUlid("vouch") });
+    const voucher = await this.repo.insertVoucher({ ...input, id: prefixedUlid("vouch") });
+    if (input.scopes !== undefined) {
+      await this.repo.replaceScopes(voucher.id, input.scopes);
+    }
+    return voucher;
   }
 
   async retrieveVoucher(id: string): Promise<VoucherDTO> {
@@ -105,7 +111,21 @@ export class PromotionService implements IPromotionModuleService {
   async updateVoucher(id: string, patch: UpdateVoucherInput): Promise<VoucherDTO> {
     await this.retrieveVoucher(id);
     const updated = await this.repo.updateVoucher(id, patch);
+    // 只有显式传了 scopes 才替换：undefined = 不碰范围（编辑只改名称时别把范围清掉）
+    if (patch.scopes !== undefined) {
+      await this.repo.replaceScopes(id, patch.scopes);
+    }
     return updated!;
+  }
+
+  async listVoucherScopes(voucherId: string): Promise<VoucherScopeDTO[]> {
+    return this.repo.listScopesByVoucherId(voucherId);
+  }
+
+  async listVoucherScopesByVoucherIds(
+    voucherIds: string[],
+  ): Promise<Record<string, VoucherScopeDTO[]>> {
+    return this.repo.listScopesByVoucherIds(voucherIds);
   }
 
   async deleteVoucher(id: string): Promise<void> {
@@ -481,7 +501,11 @@ export class PromotionService implements IPromotionModuleService {
     let voucherDiscountMinor = 0n;
     const voucherDiscounts: ComputeDiscountsResult["voucherDiscounts"] = [];
     if (flags.voucher && ctx.voucherCodes.length > 0) {
-      let bestVoucher: { promotionId: string; code: string; amountMinor: bigint } | null = null;
+      /*
+       * 先做「存在性 / 状态 / 有效期 / 用量」这类基础校验，把候选攒起来；
+       * 范围与金额再统一算 —— 这样范围能按 voucherId 一次查全（禁 N+1）。
+       */
+      const candidates: Array<{ code: VoucherCodeDTO; voucher: VoucherDTO }> = [];
       for (const code of ctx.voucherCodes) {
         const found = await this.repo.findVoucherCodeWithVoucherByCode(code);
         if (!found) continue; // 券码不存在 → 静默跳过（预览语义，不抛错）
@@ -491,9 +515,30 @@ export class PromotionService implements IPromotionModuleService {
         if (voucher.starts_at && voucher.starts_at.getTime() > now.getTime()) continue;
         if (voucher.ends_at && voucher.ends_at.getTime() < now.getTime()) continue;
         if (voucher.usage_limit !== null && vc.used >= voucher.usage_limit) continue;
-        if (voucher.min_spent !== null && ctx.subtotalMinor < voucher.min_spent) continue;
+        candidates.push({ code: vc, voucher });
+      }
 
-        const amount = computeVoucherDiscount(voucher, ctx.subtotalMinor);
+      const scopesByVoucher = await this.repo.listScopesByVoucherIds(
+        candidates.map((c) => c.voucher.id),
+      );
+
+      let bestVoucher: { promotionId: string; code: string; amountMinor: bigint } | null = null;
+      for (const { code: vc, voucher } of candidates) {
+        const baseMinor = eligibleVoucherBase(voucher, scopesByVoucher[voucher.id] ?? [], ctx);
+        // 指定商品券但车里没有一件适用商品 → 这张券用不了（不静默降级成整单）
+        if (baseMinor <= 0n) continue;
+        // 满减门槛按**适用小计**算：指定商品券的门槛只数命中的那些行
+        if (voucher.min_spent !== null && baseMinor < voucher.min_spent) continue;
+
+        let amount = computeVoucherDiscount(voucher, baseMinor);
+        if (voucher.type === "shipping") {
+          // 运费券只抵运费：没有运费时用不了，抵扣也不超过运费本身
+          if (ctx.shippingMinor <= 0n) continue;
+          if (amount > ctx.shippingMinor) amount = ctx.shippingMinor;
+        } else if (voucher.type === "specific_product") {
+          // 指定商品券的折扣不能超过它覆盖的那部分小计
+          if (amount > baseMinor) amount = baseMinor;
+        }
         if (amount <= 0n) continue;
         if (bestVoucher === null || amount > bestVoucher.amountMinor) {
           bestVoucher = { promotionId: voucher.id, code: vc.code, amountMinor: amount };
@@ -593,6 +638,31 @@ function computeVoucherDiscount(voucher: VoucherDTO, subtotalMinor: bigint): big
   // percentage（bps）：round half up。
   const numerator = subtotalMinor * voucher.discount_value;
   return (numerator + 5000n) / 10000n;
+}
+
+/**
+ * 一张券「用来算钱」的基数小计（ADR-064）。
+ *
+ * - entire_order：整单小计；
+ * - shipping：整单小计（门槛看商品钱），抵扣金额在调用方封顶到运费；
+ * - specific_product：命中范围（商品/分类）的那些行的小计，没配范围或一行没命中 → 0。
+ */
+function eligibleVoucherBase(
+  voucher: VoucherDTO,
+  scopes: VoucherScopeDTO[],
+  ctx: ComputeDiscountsInput,
+): bigint {
+  if (voucher.type !== "specific_product") return ctx.subtotalMinor;
+  if (scopes.length === 0) return 0n;
+  const productIds = new Set(scopes.filter((s) => s.scope_type === "product").map((s) => s.scope_id));
+  const categoryIds = new Set(scopes.filter((s) => s.scope_type === "category").map((s) => s.scope_id));
+  let sum = 0n;
+  for (const item of ctx.items) {
+    const hitProduct = item.productId !== undefined && productIds.has(item.productId);
+    const hitCategory = item.categoryIds.some((c) => categoryIds.has(c));
+    if (hitProduct || hitCategory) sum += item.unitPriceMinor * BigInt(item.quantity);
+  }
+  return sum;
 }
 
 /** 券是否在有效期内（起止都可空，空 = 不限）。 */

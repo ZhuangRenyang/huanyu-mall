@@ -26,6 +26,9 @@ import {
   updateVoucher,
 } from '@/lib/admin-api';
 import type { VoucherCodeView, VoucherDetailView, VoucherInput, VoucherView } from '@/lib/admin-api';
+import { listCategories, type CategoryView } from '@/lib/admin-categories';
+import { listProducts } from '@/lib/admin-api';
+import type { ProductDraft } from '@/lib/admin-data';
 
 /* ------------------------------------------------------------------ *
  * 输入换算：金额一律 minor unit（分）；百分比为万分比 bps（2000=20%）。
@@ -248,8 +251,39 @@ function VoucherEditor({
   /** 店铺券：公开可领 + 每人限领（ADR-029）。 */
   const [isPublic, setIsPublic] = useState(false);
   const [collectLimit, setCollectLimit] = useState('1');
+  /* 适用范围（ADR-064）：只有 type='specific_product' 时显示与提交 */
+  const [categoryIds, setCategoryIds] = useState<string[]>([]);
+  const [productIds, setProductIds] = useState<string[]>([]);
+  const [productTitles, setProductTitles] = useState<Record<string, string>>({});
+  const [categories, setCategories] = useState<CategoryView[]>([]);
+  const [productQuery, setProductQuery] = useState('');
+  const [productOptions, setProductOptions] = useState<ProductDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // 分类加载一次就够（低频改）；商品搜索随关键词查
+  useEffect(() => {
+    if (!open) return;
+    void listCategories()
+      .then((rows) => setCategories(rows))
+      .catch(() => setCategories([]));
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || type !== 'specific_product') return;
+    const q = productQuery.trim();
+    let cancelled = false;
+    void listProducts({ q, limit: 20, offset: 0 })
+      .then((res) => {
+        if (!cancelled) setProductOptions(res.items);
+      })
+      .catch(() => {
+        if (!cancelled) setProductOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, type, productQuery]);
 
   useEffect(() => {
     if (!open) return;
@@ -265,6 +299,12 @@ function VoucherEditor({
     setCodesText('');
     setIsPublic(voucher?.isPublic ?? false);
     setCollectLimit(String(voucher?.collectLimit ?? 1));
+    // 范围回填（ADR-064）
+    const scopes = voucher?.scopes ?? [];
+    setCategoryIds(scopes.filter((sc) => sc.scopeType === 'category').map((sc) => sc.scopeId));
+    setProductIds(scopes.filter((sc) => sc.scopeType === 'product').map((sc) => sc.scopeId));
+    setProductTitles({});
+    setProductQuery('');
     setError(null);
     setSubmitting(false);
   }, [open, voucher]);
@@ -286,6 +326,14 @@ function VoucherEditor({
       setError(discountType === 'fixed' ? '请输入有效的优惠金额' : '请输入有效的折扣百分比');
       return;
     }
+    const scopes: VoucherInput['scopes'] = [
+      ...categoryIds.map((id) => ({ scopeType: 'category' as const, scopeId: id })),
+      ...productIds.map((id) => ({ scopeType: 'product' as const, scopeId: id })),
+    ];
+    if (type === 'specific_product' && scopes.length === 0) {
+      setError('指定商品券必须至少选择一个分类或商品');
+      return;
+    }
     const input: VoucherInput = {
       name: name.trim(),
       type,
@@ -298,6 +346,7 @@ function VoucherEditor({
       isPublic,
       collectLimit: collectLimit.trim() ? Math.max(1, Math.round(Number(collectLimit))) : 1,
       ...(voucher ? {} : { codes: parseCodes() }),
+      ...(type === 'specific_product' ? { scopes } : {}),
     };
     setSubmitting(true);
     try {
@@ -353,6 +402,100 @@ function VoucherEditor({
               ]}
             />
           </div>
+
+          {type === 'specific_product' && (
+            <div className="space-y-3 rounded-md border border-border p-3">
+              <p className="text-sm font-medium text-foreground">适用范围</p>
+              <p className="text-xs text-muted-foreground">
+                只有勾选的商品或分类参与满减门槛与折扣计算；不选任何范围这张券用不了。
+              </p>
+
+              {/* 分类勾选 */}
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">按分类</p>
+                {categories.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">暂无分类，可只选商品</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {categories.map((c) => {
+                      const on = categoryIds.includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() =>
+                            setCategoryIds((prev) =>
+                              on ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                            )
+                          }
+                          className={
+                            on
+                              ? 'rounded-md border border-primary bg-primary-subtle px-2 py-1 text-xs text-foreground'
+                              : 'rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted'
+                          }
+                        >
+                          {c.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 商品搜索 + 勾选 */}
+              <div>
+                <p className="mb-1 text-xs text-muted-foreground">按商品（搜索后勾选）</p>
+                <TextField
+                  id="v-scope-product-q"
+                  label=""
+                  placeholder="搜索商品名称"
+                  value={productQuery}
+                  onChange={(e) => setProductQuery(e.target.value)}
+                />
+                <div className="mt-2 flex max-h-40 flex-wrap gap-1.5 overflow-auto">
+                  {productOptions.map((p) => {
+                    const on = productIds.includes(p.id);
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => {
+                          if (on) {
+                            setProductIds((prev) => prev.filter((x) => x !== p.id));
+                          } else {
+                            setProductIds((prev) => [...prev, p.id]);
+                            setProductTitles((prev) => ({ ...prev, [p.id]: p.title }));
+                          }
+                        }}
+                        className={
+                          on
+                            ? 'rounded-md border border-primary bg-primary-subtle px-2 py-1 text-xs text-foreground'
+                            : 'rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted'
+                        }
+                      >
+                        {p.title}
+                      </button>
+                    );
+                  })}
+                  {productQuery.trim() && productOptions.length === 0 && (
+                    <p className="text-xs text-muted-foreground">没有匹配的商品</p>
+                  )}
+                </div>
+              </div>
+
+              {/* 已选摘要 */}
+              {(categoryIds.length > 0 || productIds.length > 0) && (
+                <p className="text-xs text-muted-foreground">
+                  已选 {categoryIds.length} 个分类、{productIds.length} 个商品
+                  {productIds.map((id) => productTitles[id]).filter(Boolean).length > 0
+                    ? `（${productIds.map((id) => productTitles[id]).filter(Boolean).join('、')}）`
+                    : ''}
+                </p>
+              )}
+            </div>
+          )}
           {discountType === 'fixed' ? (
             <TextField
               id="v-discount-fixed"

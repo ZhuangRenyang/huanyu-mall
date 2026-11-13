@@ -36,6 +36,11 @@ function assertDiscountWithinCap(type: "fixed" | "percentage", value: number, la
   }
 }
 
+/** 券适用范围（ADR-064）：product=指定商品，category=指定分类。 */
+const voucherScopeSchema = z.object({
+  scope_type: z.enum(["product", "category"]),
+  scope_id: z.string().min(1),
+});
 const createVoucherBody = z
   .object({
     name: z.string().min(1),
@@ -53,10 +58,17 @@ const createVoucherBody = z
     is_public: z.boolean().optional(),
     /** 每人限领张数。 */
     collect_limit: z.number().int().min(1).max(99).optional(),
+    /** 适用范围：仅 type='specific_product' 时需要。 */
+    scopes: z.array(voucherScopeSchema).min(1).max(200).optional(),
   })
   .refine(
     (b) => b.discount_type !== "percentage" || b.discount_value <= MAX_PERCENTAGE_BPS,
     { path: ["discount_value"], message: "百分比折扣不得超过 100%（10000 bps）" },
+  )
+  .refine(
+    // 指定商品券必须说清楚「哪些商品/分类」，否则范围为空会变成一张永远用不了的券
+    (b) => b.type !== "specific_product" || (b.scopes !== undefined && b.scopes.length > 0),
+    { path: ["scopes"], message: "指定商品券必须至少选择一个商品或分类" },
   );
 
 const updateVoucherBody = z.object({
@@ -70,9 +82,11 @@ const updateVoucherBody = z.object({
   ends_at: z.string().datetime().nullable().optional(),
   is_public: z.boolean().optional(),
   collect_limit: z.number().int().min(1).max(99).optional(),
+  scopes: z.array(voucherScopeSchema).min(1).max(200).optional(),
 });
 
 const addCodesBody = z.object({ codes: z.array(z.string().min(1)).min(1).max(100) });
+
 
 /** 48-bit 随机高熵券码（hex 大写），唯一性由 voucher_code.code unique index 兜底。 */
 function generateVoucherCode(): string {
@@ -94,6 +108,10 @@ function mapVoucher(v: VoucherDTO) {
     is_public: v.is_public,
     collect_limit: v.collect_limit,
   };
+}
+
+function mapScope(sc: { scope_type: string; scope_id: string }) {
+  return { scope_type: sc.scope_type, scope_id: sc.scope_id };
 }
 
 function mapCode(c: VoucherCodeDTO) {
@@ -501,8 +519,15 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         offset: q.offset,
         ...(q.q ? { q: q.q } : {}),
       });
+      // 范围按页内 voucherId 一次取全（一页 20 张只多一条查询）
+      const scopesByVoucher = await deps.services.promotion.listVoucherScopesByVoucherIds(
+        res.items.map((v) => v.id),
+      );
       reply.ok({
-        items: res.items.map(mapVoucher),
+        items: res.items.map((v) => ({
+          ...mapVoucher(v),
+          scopes: (scopesByVoucher[v.id] ?? []).map(mapScope),
+        })),
         count: res.count,
         offset: q.offset,
         limit: q.limit,
@@ -527,6 +552,7 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         endsAt: b.ends_at ? new Date(b.ends_at) : b.ends_at === null ? null : undefined,
         isPublic: b.is_public,
         collectLimit: b.collect_limit,
+        ...(b.scopes ? { scopes: b.scopes.map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })) } : {}),
       });
       const codes = b.codes && b.codes.length > 0 ? b.codes : [generateVoucherCode()];
       for (const code of codes) {
@@ -544,7 +570,11 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
           after: { ...mapVoucher(voucher), codes: createdCodes.map(mapCode) },
         }),
       );
-      reply.code(201).ok({ ...mapVoucher(voucher), codes: createdCodes.map(mapCode) });
+      reply.code(201).ok({
+        ...mapVoucher(voucher),
+        codes: createdCodes.map(mapCode),
+        scopes: (await deps.services.promotion.listVoucherScopes(voucher.id)).map(mapScope),
+      });
     },
   );
 
@@ -552,7 +582,8 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
     const { id } = req.params as { id: string };
     const voucher = await deps.services.promotion.retrieveVoucher(id);
     const codes = await deps.services.promotion.listVoucherCodes(id);
-    reply.ok({ ...mapVoucher(voucher), codes: codes.map(mapCode) });
+    const scopes = await deps.services.promotion.listVoucherScopes(id);
+    reply.ok({ ...mapVoucher(voucher), codes: codes.map(mapCode), scopes: scopes.map(mapScope) });
   });
 
   app.put(
@@ -568,6 +599,14 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         b.discount_value ?? Number(before.discount_value),
         "优惠券",
       );
+      // 改成指定商品券时，必须给出范围（或原本就有范围），否则这张券永远用不了
+      const resultingType = b.type ?? before.type;
+      if (resultingType === "specific_product" && b.scopes === undefined) {
+        const existing = await deps.services.promotion.listVoucherScopes(id);
+        if (existing.length === 0) {
+          throw errors.validation("指定商品券必须至少选择一个商品或分类");
+        }
+      }
       const updated = await deps.services.promotion.updateVoucher(id, {
         name: b.name,
         type: b.type,
@@ -579,6 +618,9 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         endsAt: b.ends_at !== undefined ? (b.ends_at ? new Date(b.ends_at) : null) : undefined,
         isPublic: b.is_public,
         collectLimit: b.collect_limit,
+        ...(b.scopes !== undefined
+          ? { scopes: b.scopes.map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })) }
+          : {}),
       });
       await deps.audit.record(
         auditEntry(req, {

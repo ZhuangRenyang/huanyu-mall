@@ -280,6 +280,35 @@ class InMemoryPromotionRepository implements PromotionRepository {
   async findVoucherCodeByCode(code: string): Promise<VoucherCodeDTO | null> {
     return [...this.voucherCodes.values()].find((c) => c.code === code) ?? null;
   }
+  // voucher_scope（ADR-064）
+  private voucherScopes = new Map<string, { id: string; voucher_id: string; scope_type: "product" | "category"; scope_id: string }[]>();
+  async listScopesByVoucherIds(
+    voucherIds: string[],
+  ): Promise<Record<string, Array<{ id: string; voucher_id: string; scope_type: "product" | "category"; scope_id: string }>>> {
+    const out: Record<string, Array<{ id: string; voucher_id: string; scope_type: "product" | "category"; scope_id: string }>> = {};
+    for (const id of voucherIds) {
+      const rows = this.voucherScopes.get(id) ?? [];
+      if (rows.length > 0) out[id] = rows;
+    }
+    return out;
+  }
+  async listScopesByVoucherId(voucherId: string) {
+    return this.voucherScopes.get(voucherId) ?? [];
+  }
+  async replaceScopes(voucherId: string, scopes: Array<{ scopeType: "product" | "category"; scopeId: string }>) {
+    this.voucherScopes.set(
+      voucherId,
+      scopes.map((s, i) => ({ id: `vs_${voucherId}_${i}`, voucher_id: voucherId, scope_type: s.scopeType, scope_id: s.scopeId })),
+    );
+  }
+  /** 测试专用：直接塞范围（不必走 replaceScopes）。 */
+  seedScopes(voucherId: string, scopes: Array<{ scopeType: "product" | "category"; scopeId: string }>) {
+    this.voucherScopes.set(
+      voucherId,
+      scopes.map((s, i) => ({ id: `vs_${voucherId}_${i}`, voucher_id: voucherId, scope_type: s.scopeType, scope_id: s.scopeId })),
+    );
+  }
+
   async findVoucherCodeWithVoucherByCode(
     code: string,
   ): Promise<{ code: VoucherCodeDTO; voucher: VoucherDTO } | null> {
@@ -1139,6 +1168,127 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
     const events = await service.listGiftCardEvents(card.id);
     expect(events.some((e) => e.type === "deactivated")).toBe(true);
     expect(events.some((e) => e.type === "activated")).toBe(true);
+  });
+});
+
+describe("优惠券适用范围（ADR-064）", () => {
+  /** 两行购物车：行 A 是「指定商品」，行 B 是别的商品（不在范围里）。 */
+  function twoLineCtx(over: Partial<Record<string, unknown>> = {}) {
+    return {
+      currencyCode: "CNY",
+      items: [
+        { id: "cli_1", variantId: "var_1", productId: "prod_a", categoryIds: ["cat_x"], quantity: 1, unitPriceMinor: 9900n },
+        { id: "cli_2", variantId: "var_2", productId: "prod_b", categoryIds: ["cat_y"], quantity: 2, unitPriceMinor: 5000n },
+      ],
+      subtotalMinor: 19900n,
+      shippingMinor: 0n,
+      voucherCodes: ["CODE"],
+      giftCardCodes: [],
+      ...over,
+    };
+  }
+
+  it("指定商品券只对命中商品算钱：固定减免封顶到那部分小计", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const v = await service.createVoucher({
+      name: "A 商品专享减 200",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 20000n, // 远超 A 的小计 9900
+      scopes: [{ scopeType: "product", scopeId: "prod_a" }],
+    });
+    await service.addVoucherCode({ voucherId: v.id, code: "CODE" });
+
+    const res = await service.computeDiscounts(twoLineCtx() as never);
+    // A 的小计是 9900，折扣 20000 被压到 9900；B 完全不算
+    expect(res.voucherDiscountMinor).toBe(9900n);
+  });
+
+  it("指定分类券命中分类内的行", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const v = await service.createVoucher({
+      name: "cat_x 分类 8 折",
+      type: "specific_product",
+      discountType: "percentage",
+      discountValue: 2000n,
+      scopes: [{ scopeType: "category", scopeId: "cat_x" }],
+    });
+    await service.addVoucherCode({ voucherId: v.id, code: "CODE" });
+
+    const res = await service.computeDiscounts(twoLineCtx() as never);
+    // 只有 A（9900）参与：9900 × 2000/10000 = 1980
+    expect(res.voucherDiscountMinor).toBe(1980n);
+  });
+
+  it("满减门槛按适用小计算：整单够、适用部分不够 → 不命中", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const v = await service.createVoucher({
+      name: "A 商品满 150 减 30",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 3000n,
+      minSpent: 15000n, // A 只有 9900，不够；整单 19900 够
+      scopes: [{ scopeType: "product", scopeId: "prod_a" }],
+    });
+    await service.addVoucherCode({ voucherId: v.id, code: "CODE" });
+
+    const res = await service.computeDiscounts(twoLineCtx() as never);
+    expect(res.voucherDiscountMinor).toBe(0n);
+  });
+
+  it("车里没有一件适用商品 → 不命中（不静默降级成整单）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const v = await service.createVoucher({
+      name: "不存在的商品专享",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 1000n,
+      scopes: [{ scopeType: "product", scopeId: "prod_none" }],
+    });
+    await service.addVoucherCode({ voucherId: v.id, code: "CODE" });
+
+    const res = await service.computeDiscounts(twoLineCtx() as never);
+    expect(res.voucherDiscountMinor).toBe(0n);
+  });
+
+  it("type 是 specific_product 但没配范围 → 永远用不了（不退回整单）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const v = await service.createVoucher({
+      name: "忘了配范围",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 1000n,
+      scopes: [],
+    });
+    await service.addVoucherCode({ voucherId: v.id, code: "CODE" });
+
+    const res = await service.computeDiscounts(twoLineCtx() as never);
+    expect(res.voucherDiscountMinor).toBe(0n);
+  });
+
+  it("运费券：只抵运费，无运费时用不了；抵扣封顶到运费", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const v = await service.createVoucher({
+      name: "免运费券",
+      type: "shipping",
+      discountType: "fixed",
+      discountValue: 100000n, // 想全免
+    });
+    await service.addVoucherCode({ voucherId: v.id, code: "CODE" });
+
+    // 没有运费：用不了
+    const noShip = await service.computeDiscounts(twoLineCtx({ shippingMinor: 0n }) as never);
+    expect(noShip.voucherDiscountMinor).toBe(0n);
+
+    // 有 800 分运费：封顶到 800
+    const withShip = await service.computeDiscounts(twoLineCtx({ shippingMinor: 800n }) as never);
+    expect(withShip.voucherDiscountMinor).toBe(800n);
   });
 });
 

@@ -18,6 +18,7 @@ export default Module("promotion", {
     "migrations/0001_init.sql",
     "migrations/0002_features.sql",
     "migrations/0003_voucher_collection.sql",
+    "migrations/0004_voucher_scope.sql",
   ],
   linkable,
 });

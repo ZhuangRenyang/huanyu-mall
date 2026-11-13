@@ -67,6 +67,16 @@ export interface VoucherDTO {
   collect_limit: number;
 }
 
+/** 券适用范围（ADR-064）：product=指定商品，category=指定分类。 */
+export interface VoucherScopeDTO {
+  id: string;
+  voucher_id: string;
+  scope_type: "product" | "category";
+  scope_id: string;
+}
+
+export type VoucherScopeInput = { scopeType: "product" | "category"; scopeId: string };
+
 export interface VoucherCodeDTO {
   id: string;
   voucher_id: string;
@@ -158,6 +168,11 @@ export interface CreateVoucherInput {
   isPublic?: boolean;
   /** 每人限领。 */
   collectLimit?: number;
+  /**
+   * 适用范围（ADR-064）：仅 type='specific_product' 时生效。
+   * 创建时 type 为 specific_product 必须给至少一条；更新时不给 = 不改变范围。
+   */
+  scopes?: VoucherScopeInput[];
 }
 export type UpdateVoucherInput = Partial<CreateVoucherInput>;
 
@@ -200,6 +215,8 @@ export interface ComputeDiscountsInput {
     categoryIds: string[];
     quantity: number;
     unitPriceMinor: bigint;
+    /** 商品 id：指定商品券按它判定（缺省时只能按分类命中）。 */
+    productId?: string;
   }>;
   subtotalMinor: bigint;
   shippingMinor: bigint;
@@ -260,6 +277,14 @@ export interface PromotionRepository {
   listVouchers(q: ListQuery): Promise<{ items: VoucherDTO[]; count: number }>;
   updateVoucher(id: string, patch: UpdateVoucherInput): Promise<VoucherDTO | null>;
   softDeleteVoucher(id: string): Promise<void>;
+
+  // voucher_scope（ADR-064）
+  /** 批量取多张券的范围（computeDiscounts 一次查全，禁 N+1）。 */
+  listScopesByVoucherIds(voucherIds: string[]): Promise<Record<string, VoucherScopeDTO[]>>;
+  /** 单张券的范围（编辑回填用）。 */
+  listScopesByVoucherId(voucherId: string): Promise<VoucherScopeDTO[]>;
+  /** 整表替换范围（先删后插）：编辑时随券一起保存。 */
+  replaceScopes(voucherId: string, scopes: VoucherScopeInput[]): Promise<void>;
 
   // voucher_collection（ADR-029）
   insertVoucherCollection(input: {
@@ -346,6 +371,10 @@ export interface IPromotionModuleService {
   listVouchers(q: ListQuery): Promise<{ items: VoucherDTO[]; count: number }>;
   updateVoucher(id: string, patch: UpdateVoucherInput): Promise<VoucherDTO>;
   deleteVoucher(id: string): Promise<void>;
+  /** 单张券的范围（后台编辑回填）。 */
+  listVoucherScopes(voucherId: string): Promise<VoucherScopeDTO[]>;
+  /** 批量取范围（后台列表附上「限 N 个商品/分类」用）。 */
+  listVoucherScopesByVoucherIds(voucherIds: string[]): Promise<Record<string, VoucherScopeDTO[]>>;
 
   // 领券（ADR-029）
   /** 店面可领的店铺券（含当前顾客是否已领、已领几张）。 */

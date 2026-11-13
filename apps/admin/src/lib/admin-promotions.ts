@@ -22,6 +22,11 @@ import { adminClient, getAdminApiMode } from './admin-client';
 // 视图模型
 // ------------------------------------------------------------------ *
 
+export interface VoucherScopeView {
+  scopeType: 'product' | 'category';
+  scopeId: string;
+}
+
 export interface VoucherView {
   id: string;
   name: string;
@@ -37,6 +42,8 @@ export interface VoucherView {
   isPublic: boolean;
   /** 每人限领张数。 */
   collectLimit: number;
+  /** 适用范围（ADR-064）：type='specific_product' 时非空。 */
+  scopes: VoucherScopeView[];
 }
 
 export interface VoucherCodeView {
@@ -86,6 +93,8 @@ export interface VoucherInput {
   isPublic: boolean;
   /** 每人限领。 */
   collectLimit: number;
+  /** 适用范围（ADR-064）：仅 type='specific_product' 时传。 */
+  scopes?: VoucherScopeView[];
 }
 
 export interface GiftCardInput {
@@ -113,6 +122,7 @@ function mapVoucher(v: AdminVoucher): VoucherView {
     status: v.status,
     isPublic: v.is_public ?? false,
     collectLimit: v.collect_limit ?? 1,
+    scopes: (v.scopes ?? []).map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })),
   };
 }
 
@@ -174,6 +184,7 @@ const SEED_VOUCHERS: VoucherView[] = [
     status: 'active',
     isPublic: true,
     collectLimit: 1,
+    scopes: [],
   },
 ];
 
@@ -316,6 +327,7 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
       status: 'active',
       isPublic: input.isPublic,
       collectLimit: input.collectLimit,
+      scopes: input.scopes ?? [],
     };
     mockSaveVoucher(v);
     return { ...v, codes: [] };
@@ -332,6 +344,9 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
     is_public: input.isPublic,
     collect_limit: input.collectLimit,
     ...(input.codes && input.codes.length > 0 ? { codes: input.codes } : {}),
+    ...(input.scopes && input.scopes.length > 0
+      ? { scopes: input.scopes.map((sc) => ({ scope_type: sc.scopeType, scope_id: sc.scopeId })) }
+      : {}),
   })) as AdminVoucher & { codes?: AdminVoucherCode[] };
   return { ...mapVoucher(res), codes: (res.codes ?? []).map(mapCode) };
 }
@@ -351,6 +366,7 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
         endsAt: input.endsAt,
         isPublic: input.isPublic,
         collectLimit: input.collectLimit,
+        scopes: input.scopes ?? [],
       });
       mockSaveVoucher(v);
     }
@@ -367,6 +383,9 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
     ends_at: input.endsAt,
     is_public: input.isPublic,
     collect_limit: input.collectLimit,
+    ...(input.scopes && input.scopes.length > 0
+      ? { scopes: input.scopes.map((sc) => ({ scope_type: sc.scopeType, scope_id: sc.scopeId })) }
+      : {}),
   });
 }
 

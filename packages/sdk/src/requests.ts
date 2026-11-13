@@ -256,6 +256,8 @@ export interface CreateVoucherRequest {
   is_public?: boolean;
   /** 每人限领张数。 */
   collect_limit?: number;
+  /** 适用范围（ADR-064）：指定商品/分类。 */
+  scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }
 
 /** 更新优惠券。 */
@@ -270,6 +272,7 @@ export interface UpdateVoucherRequest {
   ends_at?: string | null;
   is_public?: boolean;
   collect_limit?: number;
+  scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }
 
 /** 追加券码（一券多码）。 */
