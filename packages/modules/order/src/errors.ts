@@ -35,3 +35,19 @@ export function refundAlreadyReviewed(status: string): DomainError {
 export function refundReviewNoteRequired(): DomainError {
   return new DomainError({ code: 20001, message: "拒绝退款必须填写理由" });
 }
+
+/**
+ * 售后类型与操作不匹配（ADR-051）。
+ *
+ * 两种典型误用：
+ *   - 未发货订单申请「退货退款」（买家没货可寄）；
+ *   - 对「退货退款」直接调同意打款（货没回来钱先走）。
+ */
+export function refundResolutionMismatch(reason: string): DomainError {
+  return new DomainError({ code: 30002, message: `售后类型不匹配：${reason}` });
+}
+
+/** 退货物流信息不完整（公司或单号为空）。 */
+export function returnShipmentInvalid(reason: string): DomainError {
+  return new DomainError({ code: 20001, message: reason });
+}

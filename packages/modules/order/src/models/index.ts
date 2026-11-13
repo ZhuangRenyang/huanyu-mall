@@ -130,6 +130,13 @@ export const refundRequest = pgTable(
     refundId: text("refund_id"),
     /** 申请时的订单状态，拒绝/撤销时据此恢复。 */
     orderStatusBefore: text("order_status_before"),
+    /** 售后类型：仅退款 / 退货退款（ADR-051）。 */
+    resolution: text("resolution").notNull().default("refund_only"),
+    /** 买家退货物流（退货退款才有）。 */
+    returnCarrier: text("return_carrier"),
+    returnTrackingNumber: text("return_tracking_number"),
+    returnShippedAt: timestamp("return_shipped_at", { withTimezone: true }),
+    returnReceivedAt: timestamp("return_received_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

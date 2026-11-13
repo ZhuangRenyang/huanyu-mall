@@ -144,8 +144,27 @@ export interface CreateOrderInput {
   customerNote?: string | null;
 }
 
-export type RefundRequestStatus = "pending" | "approved" | "rejected" | "canceled";
+export type RefundRequestStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "canceled"
+  /** 商家已同意退货，等买家寄回（**不动钱**）。 */
+  | "awaiting_return"
+  /** 买家已寄回，等商家确认收货（此时才允许打款）。 */
+  | "returned";
 export type RefundRequestSource = "customer" | "merchant";
+
+/**
+ * 售后类型（淘宝的「仅退款 / 退货退款」）。
+ *
+ * - `refund_only`：没收到货 / 不想要了 → 商家同意即打款，货不用寄回；
+ * - `return_refund`：已收到货要退 → 商家同意后进入「待买家寄回」，
+ *   **买家填了退货单号、商家确认收到货才打款**。
+ *
+ * 两者混用就是资金风险：把已发货的订单按「仅退款」处理，等于钱退货不还。
+ */
+export type RefundResolution = "refund_only" | "return_refund";
 
 /** 退款申请单（售后单据）。真正打款记录在 payment.refund，这里只记业务处理。 */
 export interface RefundRequestDTO {
@@ -157,6 +176,15 @@ export interface RefundRequestDTO {
   reason: string;
   source: RefundRequestSource;
   status: RefundRequestStatus;
+  /** 售后类型：仅退款 / 退货退款（ADR-051）。 */
+  resolution: RefundResolution;
+  /** 买家退货物流（退货退款才有）。 */
+  return_carrier: string | null;
+  return_tracking_number: string | null;
+  /** 买家提交退货物流的时间。 */
+  return_shipped_at: string | null;
+  /** 商家确认收到退货的时间。 */
+  return_received_at: string | null;
   /** 商家处理说明（拒绝时必填）。 */
   review_note: string | null;
   reviewed_at: string | null;
@@ -220,16 +248,36 @@ export interface OrderRepository {
     reason: string;
     source: RefundRequestSource;
     orderStatusBefore: OrderStatus;
+    resolution: RefundResolution;
   }): Promise<RefundRequestDTO>;
   findRefundRequest(id: string): Promise<RefundRequestDTO | null>;
-  /** 该订单是否已有待处理申请（唯一索引也拦，但先给友好错误）。 */
-  findPendingRefundRequest(orderId: string): Promise<RefundRequestDTO | null>;
+  /**
+   * 该订单是否已有**在途**申请（pending / awaiting_return / returned）。
+   *
+   * 只查 pending 是不够的：买家在「等寄回」期间再提一张，商家会退两次。
+   * 唯一索引也拦（两条 partial 索引合起来），但先给友好错误。
+   */
+  findActiveRefundRequest(orderId: string): Promise<RefundRequestDTO | null>;
   listRefundRequests(q: RefundRequestQuery): Promise<{ items: RefundRequestDTO[]; count: number }>;
   /** 各状态单据数（退款管理页签角标，一次 GROUP BY）。 */
   countRefundRequestsByStatus(): Promise<Record<string, number>>;
   updateRefundRequest(
     id: string,
-    patch: { status: RefundRequestStatus; reviewNote?: string | null; refundId?: string | null },
+    patch: {
+      status: RefundRequestStatus;
+      reviewNote?: string | null;
+      refundId?: string | null;
+      /** 商家确认收到退货的时间（退货退款专用）。 */
+      returnReceivedAt?: Date | null;
+    },
+  ): Promise<RefundRequestDTO | null>;
+  /**
+   * 买家提交退货物流：只改 `return_*` 与状态，**不碰 reviewed_at**
+   * —— 那是商家处理时间，买家寄件不算商家处理。
+   */
+  setReturnShipment(
+    id: string,
+    input: { carrier: string; trackingNumber: string; shippedAt: Date },
   ): Promise<RefundRequestDTO | null>;
   insertOrder(input: {
     id: string;
@@ -324,18 +372,44 @@ export interface IOrderModuleService {
   /** 创建退款申请单（买家申请或商家主动），落库为 pending。 */
   createRefundRequest(
     orderId: string,
-    input: { amountMinor: bigint; reason: string; source: RefundRequestSource; customerId?: string | null },
+    input: {
+      amountMinor: bigint;
+      reason: string;
+      source: RefundRequestSource;
+      customerId?: string | null;
+      /** 售后类型，缺省「仅退款」（老客户端不带这个字段）。 */
+      resolution?: RefundResolution;
+    },
   ): Promise<RefundRequestDTO>;
   /** 后台退款列表（按状态筛选，分页），附各状态计数供页签角标使用。 */
   listRefundRequests(
     q: RefundRequestQuery,
   ): Promise<{ items: RefundRequestDTO[]; count: number; counts: Record<string, number> }>;
   findRefundRequest(id: string): Promise<RefundRequestDTO | null>;
-  /** 同意退款：退款执行成功后回写资金流水 id 与状态。 */
+  /** 同意「仅退款」：退款执行成功后回写资金流水 id 与状态。 */
   approveRefundRequest(id: string, refundId: string, reviewNote?: string | null): Promise<RefundRequestDTO>;
-  /** 拒绝退款：理由必填。 */
+  /**
+   * 同意「退货退款」：只把单据推进到 awaiting_return，**不打款**。
+   * 钱要等买家寄回、商家确认收货（confirmReturnReceived）才动。
+   */
+  agreeReturnRequest(id: string, reviewNote?: string | null): Promise<RefundRequestDTO>;
+  /** 买家提交退货物流（awaiting_return → returned）。 */
+  shipReturn(
+    id: string,
+    input: { carrier: string; trackingNumber: string },
+  ): Promise<RefundRequestDTO>;
+  /**
+   * 商家确认收到退货：退货退款的**唯一打款关卡**。
+   * 调用方必须先跑完退款 workflow，再把 refundId 传进来（顺序与仅退款一致：先钱后状态）。
+   */
+  confirmReturnReceived(
+    id: string,
+    refundId: string,
+    reviewNote?: string | null,
+  ): Promise<RefundRequestDTO>;
+  /** 拒绝退款：理由必填。只有 pending 可拒（已同意退货的不在此列）。 */
   rejectRefundRequest(id: string, reviewNote: string): Promise<RefundRequestDTO>;
-  /** 买家撤销（只有 pending 可撤）。 */
+  /** 买家撤销（pending / awaiting_return 可撤）。 */
   cancelRefundRequest(id: string): Promise<RefundRequestDTO>;
   markRefundSettled(orderId: string, refundRequestId: string): Promise<OrderDTO>;
   cancelOrder(id: string): Promise<void>;

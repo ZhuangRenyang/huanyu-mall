@@ -6,9 +6,11 @@ import {
   refundAlreadyReviewed,
   refundNotAllowed,
   refundRequestNotFound,
+  refundResolutionMismatch,
   refundReviewNoteRequired,
+  returnShipmentInvalid,
 } from "../errors.js";
-import { assertTransition, canTransition, isRefundable } from "./state-machine.js";
+import { assertTransition, canTransition, isRefundable, supportsReturnRefund } from "./state-machine.js";
 import { CUSTOMER_NOTE_MAX_LENGTH } from "../types.js";
 import type {
   Actor,
@@ -24,6 +26,7 @@ import type {
   RefundRequestDTO,
   RefundRequestQuery,
   RefundRequestSource,
+  RefundResolution,
 } from "../types.js";
 
 /**
@@ -209,13 +212,25 @@ export class OrderService implements IOrderModuleService {
       reason: string;
       source: RefundRequestSource;
       customerId?: string | null;
+      resolution?: RefundResolution;
     },
   ): Promise<RefundRequestDTO> {
     const order = await this.repo.findById(orderId);
     if (!order) throw orderNotFound(orderId);
     if (!isRefundable(order.status)) throw refundNotAllowed(`order status ${order.status}`);
     if (input.amountMinor !== order.total_minor) throw partialRefundNotSupported();
-    if (await this.repo.findPendingRefundRequest(orderId)) throw refundAlreadyPending(orderId);
+    const resolution: RefundResolution = input.resolution ?? "refund_only";
+    /*
+     * 未发货的订单只能「仅退款」。
+     * 让顾客对一个还没出库的订单选「退货退款」，商家同意了会进「等买家寄回」——
+     * 买家手里根本没货可寄，单据就永久卡在那里。
+     */
+    if (resolution === "return_refund" && !supportsReturnRefund(order.status)) {
+      throw refundResolutionMismatch(
+        `订单当前状态（${order.status}）尚未发货，只能申请仅退款`,
+      );
+    }
+    if (await this.repo.findActiveRefundRequest(orderId)) throw refundAlreadyPending(orderId);
 
     /*
      * 申请即冻结：订单转「退款中」，商家在此期间不能发货。
@@ -230,6 +245,7 @@ export class OrderService implements IOrderModuleService {
       reason: input.reason,
       source: input.source,
       orderStatusBefore: order.status,
+      resolution,
     });
 
     try {
@@ -277,6 +293,14 @@ export class OrderService implements IOrderModuleService {
     const req = await this.repo.findRefundRequest(id);
     if (!req) throw refundRequestNotFound(id);
     if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
+    /*
+     * 只有「仅退款」能走这条直路。
+     * 退货退款如果误调这里，等于货还没回来就把钱打了 —— 服务端守住，
+     * 不能只靠后台按钮别点错。
+     */
+    if (req.resolution !== "refund_only") {
+      throw refundResolutionMismatch("退货退款不能直接同意打款，需先等买家寄回并确认收货");
+    }
     const updated = await this.repo.updateRefundRequest(id, {
       status: "approved",
       refundId,
@@ -285,9 +309,85 @@ export class OrderService implements IOrderModuleService {
     return updated!;
   }
 
+  /**
+   * 同意「退货退款」：只推进单据，**不动钱**。
+   *
+   * 淘宝的「同意退货」就是这一步：卖家给出退货地址，等买家寄回。
+   * 我们不存退货地址（用店铺地址/客服沟通），只记处理说明。
+   */
+  async agreeReturnRequest(id: string, reviewNote?: string | null): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
+    if (req.resolution !== "return_refund") {
+      throw refundResolutionMismatch("该申请是仅退款，应直接同意退款而不是同意退货");
+    }
+    const updated = await this.repo.updateRefundRequest(id, {
+      status: "awaiting_return",
+      reviewNote: reviewNote ?? null,
+    });
+    return updated!;
+  }
+
+  /**
+   * 买家提交退货物流（awaiting_return → returned）。
+   *
+   * 单号必须真实填写：没有单号，「货已寄出」就是一句话，
+   * 商家收到空包裹也无从对账。物流公司与单号都必填。
+   */
+  async shipReturn(
+    id: string,
+    input: { carrier: string; trackingNumber: string },
+  ): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "awaiting_return") {
+      throw refundAlreadyReviewed(req.status);
+    }
+    const carrier = input.carrier?.trim() ?? "";
+    const trackingNumber = input.trackingNumber?.trim() ?? "";
+    if (carrier === "" || trackingNumber === "") {
+      throw returnShipmentInvalid("请填写退货物流公司与单号");
+    }
+    const updated = await this.repo.setReturnShipment(id, {
+      carrier,
+      trackingNumber,
+      shippedAt: new Date(),
+    });
+    return updated!;
+  }
+
+  /**
+   * 商家确认收到退货：退货退款的**唯一打款关卡**。
+   *
+   * 与仅退款同一顺序：调用方先跑完退款 workflow（钱真的退了），再把 refundId 传进来。
+   * 反过来先标 approved，一旦打款失败就成了「单据显示已退款、钱没退」。
+   */
+  async confirmReturnReceived(
+    id: string,
+    refundId: string,
+    reviewNote?: string | null,
+  ): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "returned") throw refundAlreadyReviewed(req.status);
+    const updated = await this.repo.updateRefundRequest(id, {
+      status: "approved",
+      refundId,
+      reviewNote: reviewNote ?? null,
+      returnReceivedAt: new Date(),
+    });
+    return updated!;
+  }
+
   async rejectRefundRequest(id: string, reviewNote: string): Promise<RefundRequestDTO> {
     const req = await this.repo.findRefundRequest(id);
     if (!req) throw refundRequestNotFound(id);
+    /*
+     * 只有「待处理」可以拒绝。已经同意退货（awaiting_return）的不能再拒：
+     * 买家可能已经把货寄出去了，商家此时反悔，货和钱都在路上。
+     * 想反悔只能等买家自己撤销。
+     */
     if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
     const note = reviewNote.trim();
     if (note === "") throw refundReviewNoteRequired();
@@ -300,7 +400,11 @@ export class OrderService implements IOrderModuleService {
   async cancelRefundRequest(id: string): Promise<RefundRequestDTO> {
     const req = await this.repo.findRefundRequest(id);
     if (!req) throw refundRequestNotFound(id);
-    if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
+    // 撤销：待处理可以，已同意退货但还没寄回的也可以（买家改主意了）。
+    // 已寄回（returned）不允许单方面撤销 —— 货在路上，得商家确认收到后走拒绝。
+    if (req.status !== "pending" && req.status !== "awaiting_return") {
+      throw refundAlreadyReviewed(req.status);
+    }
     const updated = await this.repo.updateRefundRequest(id, { status: "canceled" });
     await this.restoreOrderAfterRefund(req);
     return updated!;

@@ -229,6 +229,7 @@ export function requestRefund(
   orderId: string,
   reason: string,
   source: 'customer' | 'merchant',
+  resolution: 'refund_only' | 'return_refund' = 'refund_only',
 ): AdminRefundRequest {
   const order = getOrder(orderId);
   const before = order?.orderStatus ?? 'paid';
@@ -241,6 +242,9 @@ export function requestRefund(
     reason,
     source,
     status: 'pending',
+    resolution,
+    returnCarrier: null,
+    returnTrackingNumber: null,
     reviewNote: null,
     createdAt: new Date().toISOString(),
     refundId: null,
@@ -254,13 +258,38 @@ export function requestRefund(
   return req;
 }
 
-/** mock：同意退款 → 单据通过、订单已退款。 */
+/**
+ * mock：同意退款。
+ *
+ * 退货退款只推进到「待买家寄回」，**不动钱**（与真实实现同一语义）；
+ * 仅退款才直接通过。
+ */
 export function approveRefund(id: string): void {
   const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
   const req = list.find((r) => r.id === id);
   if (!req || req.status !== 'pending') return;
+  if (req.resolution === 'return_refund') {
+    req.status = 'awaiting_return';
+    write(KEYS.refunds, list);
+    return;
+  }
   req.status = 'approved';
   req.refundId = `rfd_${Date.now().toString(36)}`;
+  write(KEYS.refunds, list);
+  updateOrder(req.orderId, (o) => {
+    o.orderStatus = 'refunded';
+    o.paymentStatus = 'refunded';
+  });
+}
+
+/** mock：确认收到退货并退款（退货退款的打款关卡）。 */
+export function receiveReturn(id: string, note?: string): void {
+  const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  const req = list.find((r) => r.id === id);
+  if (!req || req.status !== 'returned') return;
+  req.status = 'approved';
+  req.refundId = `rfd_${Date.now().toString(36)}`;
+  req.reviewNote = note?.trim() ? note.trim() : req.reviewNote;
   write(KEYS.refunds, list);
   updateOrder(req.orderId, (o) => {
     o.orderStatus = 'refunded';

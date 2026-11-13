@@ -11,17 +11,28 @@ import { adminClient, getAdminApiMode } from './admin-client';
 import {
   approveRefund as mockApproveRefund,
   listRefunds as mockListRefunds,
+  receiveReturn as mockReceiveReturn,
   rejectRefund as mockRejectRefund,
 } from './admin-store';
 import type { AdminRefundRequest } from './admin-data';
 
-export type RefundStatus = 'pending' | 'approved' | 'rejected' | 'canceled';
+export type RefundStatus =
+  | 'pending'
+  /** 商家已同意退货，等买家寄回（ADR-051）。 */
+  | 'awaiting_return'
+  /** 买家已寄回，等商家确认收货（此时才允许打款）。 */
+  | 'returned'
+  | 'approved'
+  | 'rejected'
+  | 'canceled';
 export type RefundSource = 'customer' | 'merchant';
 
 export type RefundRequestView = AdminRefundRequest;
 
 export interface RefundCounts {
   pending: number;
+  awaiting_return: number;
+  returned: number;
   approved: number;
   rejected: number;
   canceled: number;
@@ -38,7 +49,15 @@ export interface RefundListResult {
 const EMPTY: RefundListResult = {
   items: [],
   total: 0,
-  counts: { pending: 0, approved: 0, rejected: 0, canceled: 0, all: 0 },
+  counts: {
+    pending: 0,
+    awaiting_return: 0,
+    returned: 0,
+    approved: 0,
+    rejected: 0,
+    canceled: 0,
+    all: 0,
+  },
 };
 
 function mapRefund(r: Record<string, unknown>): RefundRequestView {
@@ -51,6 +70,9 @@ function mapRefund(r: Record<string, unknown>): RefundRequestView {
     reason: String(r.reason ?? ''),
     source: r.source === 'merchant' ? 'merchant' : 'customer',
     status: (r.status as RefundStatus) ?? 'pending',
+    resolution: r.resolution === 'return_refund' ? 'return_refund' : 'refund_only',
+    returnCarrier: (r.return_carrier as string | null) ?? null,
+    returnTrackingNumber: (r.return_tracking_number as string | null) ?? null,
     reviewNote: (r.review_note as string | null) ?? null,
     createdAt: String(r.created_at ?? ''),
     refundId: (r.refund_id as string | null) ?? null,
@@ -73,6 +95,8 @@ export async function listRefundRequests(q: {
       total: all.length,
       counts: {
         pending: count('pending'),
+        awaiting_return: count('awaiting_return'),
+        returned: count('returned'),
         approved: count('approved'),
         rejected: count('rejected'),
         canceled: count('canceled'),
@@ -103,6 +127,19 @@ export async function approveRefundRequest(id: string, note?: string): Promise<v
     return;
   }
   await adminClient().approveRefundRequest(id, note ? { note } : {});
+}
+
+/**
+ * 确认收到退货并退款（退货退款的打款关卡）。
+ *
+ * 与「同意退款」一样会真正打款，调用前必须让商家确认过「货确实收到了」。
+ */
+export async function receiveReturn(id: string, note?: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    mockReceiveReturn(id, note);
+    return;
+  }
+  await adminClient().receiveReturn(id, note ? { note } : {});
 }
 
 /** 拒绝退款：理由必填（顾客要看到为什么被拒）。 */

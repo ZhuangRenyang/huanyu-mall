@@ -4,7 +4,13 @@ import { useEffect, useState } from 'react';
 import { Copy, CreditCard, MapPin, MessageSquareText, Truck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge, Button, formatMoney } from '@mall/ui';
-import { loadOrderRefunds, requestOrderRefund, type StoreRefundView } from '@/lib/refunds';
+import {
+  loadOrderRefunds,
+  requestOrderRefund,
+  submitReturnShipment,
+  type StoreRefundResolution,
+  type StoreRefundView,
+} from '@/lib/refunds';
 import { OrderTimeline } from './order-timeline';
 import { ReviewDialog } from './review-dialog';
 import { ORDER_STATUS_META, confirmReceipt, formatDateTime, type OrderView } from '@/lib/orders';
@@ -29,11 +35,25 @@ function RefundPanel({
   const [refunds, setRefunds] = useState<StoreRefundView[]>([]);
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
+  const [resolution, setResolution] = useState<StoreRefundResolution>('refund_only');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  /** 退货物流（商家同意退货后由顾客填写，ADR-051）。 */
+  const [carrier, setCarrier] = useState('');
+  const [tracking, setTracking] = useState('');
 
   const refundable = status === 'to_ship' || status === 'to_receive' || status === 'completed';
+  /*
+   * 只有已发货/已收货的订单才能选「退货退款」——
+   * 未发货的订单买家手里没货可寄，选了会卡在「等寄回」出不来。
+   * 服务端同样拦（createRefundRequest），这里只是别让顾客白选一次。
+   */
+  const canReturn = status === 'to_receive' || status === 'completed';
+
+  const refresh = () => {
+    void loadOrderRefunds(orderId).then(setRefunds);
+  };
 
   useEffect(() => {
     if (!refundable) return;
@@ -48,16 +68,91 @@ function RefundPanel({
 
   if (!refundable) return null;
 
-  const pending = refunds.find((r) => r.status === 'pending');
+  const active = refunds.find(
+    (r) => r.status === 'pending' || r.status === 'awaiting_return' || r.status === 'returned',
+  );
   const approved = refunds.find((r) => r.status === 'approved');
   const rejected = refunds.find((r) => r.status === 'rejected');
 
-  if (pending || done) {
+  // 商家已同意退货：顾客要在这里寄回并填单号，钱不会在货回来前先退
+  if (active?.status === 'awaiting_return') {
+    return (
+      <section className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-medium text-foreground">退货退款 · 请寄回商品</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          商家已同意退货。请把商品寄回（包装与配件齐全），寄出后在这里填写物流信息，
+          商家确认收到货后才会退款。
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <label className="text-xs text-muted-foreground">
+            物流公司
+            <input
+              value={carrier}
+              onChange={(e) => setCarrier(e.target.value)}
+              placeholder="如：顺丰"
+              className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none focus:border-ring"
+            />
+          </label>
+          <label className="text-xs text-muted-foreground">
+            退货单号
+            <input
+              value={tracking}
+              onChange={(e) => setTracking(e.target.value)}
+              placeholder="快递单号"
+              className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none focus:border-ring"
+            />
+          </label>
+        </div>
+        {error && (
+          <p className="mt-2 text-xs text-destructive" role="alert">
+            {error}
+          </p>
+        )}
+        <Button
+          className="mt-3"
+          size="sm"
+          disabled={busy || carrier.trim() === '' || tracking.trim().length < 4}
+          onClick={() => {
+            setBusy(true);
+            setError(null);
+            void submitReturnShipment(active.id, carrier, tracking)
+              .then(() => {
+                setCarrier('');
+                setTracking('');
+                refresh();
+              })
+              .catch((err: unknown) => setError(err instanceof Error ? err.message : '提交失败'))
+              .finally(() => setBusy(false));
+          }}
+        >
+          {busy ? '提交中…' : '已寄出，提交单号'}
+        </Button>
+      </section>
+    );
+  }
+
+  if (active?.status === 'returned') {
+    return (
+      <section className="rounded-lg border border-border bg-card p-4">
+        <h3 className="text-sm font-medium text-foreground">退货退款 · 已寄回</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          退货物流：{active.returnCarrier} {active.returnTrackingNumber}
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          等待商家确认收货，确认后原路退款。到账时间以支付渠道为准（通常 1–3 个工作日）。
+        </p>
+      </section>
+    );
+  }
+
+  if (active?.status === 'pending' || done) {
     return (
       <section className="rounded-lg border border-border bg-card p-4">
         <h3 className="text-sm font-medium text-foreground">退款申请</h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          已提交，商家处理中。处理结果会显示在这里，也会通知到你的邮箱。
+          {active?.resolution === 'return_refund' || resolution === 'return_refund'
+            ? '已提交退货退款申请，商家同意后请把商品寄回并填写退货单号。'
+            : '已提交仅退款申请，商家处理中。处理结果会显示在这里，也会通知到你的邮箱。'}
         </p>
       </section>
     );
@@ -88,6 +183,40 @@ function RefundPanel({
         </Button>
       ) : (
         <div className="mt-3 space-y-2">
+          {/* 售后类型：淘宝同一组选项。未发货的订单不出现「退货退款」 */}
+          <fieldset>
+            <legend className="mb-1 block text-xs font-medium text-foreground">售后类型</legend>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  { value: 'refund_only' as const, label: '仅退款', hint: '货不用寄回' },
+                  ...(canReturn
+                    ? [{ value: 'return_refund' as const, label: '退货退款', hint: '需寄回商品' }]
+                    : []),
+                ]
+              ).map((opt) => (
+                <label
+                  key={opt.value}
+                  className={
+                    resolution === opt.value
+                      ? 'flex cursor-pointer items-center gap-1.5 rounded-md border border-primary bg-primary-subtle px-2.5 py-1.5 text-xs text-foreground'
+                      : 'flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted'
+                  }
+                >
+                  <input
+                    type="radio"
+                    name="refund-resolution"
+                    value={opt.value}
+                    checked={resolution === opt.value}
+                    onChange={() => setResolution(opt.value)}
+                    className="size-3.5"
+                  />
+                  <span className="font-medium">{opt.label}</span>
+                  <span className="text-muted-foreground">· {opt.hint}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <label htmlFor="refund-reason" className="block text-xs font-medium text-foreground">
             退款原因
           </label>
@@ -100,7 +229,9 @@ function RefundPanel({
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring"
           />
           <p className="text-xs text-muted-foreground">
-            将全额退回 {formatMoney(amountMinor, currencyCode)}，商家同意后原路退回。
+            {resolution === 'return_refund'
+              ? `将全额退回 ${formatMoney(amountMinor, currencyCode)}：商家同意后请把商品寄回，确认收到货后原路退款。`
+              : `将全额退回 ${formatMoney(amountMinor, currencyCode)}，商家同意后原路退回。`}
           </p>
           {error && (
             <p className="text-xs text-destructive" role="alert">
@@ -114,7 +245,7 @@ function RefundPanel({
               onClick={() => {
                 setBusy(true);
                 setError(null);
-                void requestOrderRefund(orderId, reason.trim())
+                void requestOrderRefund(orderId, reason.trim(), resolution)
                   .then(() => {
                     setOpen(false);
                     setDone(true);

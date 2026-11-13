@@ -16,6 +16,7 @@ import { TextAreaField } from '../components/field';
 import {
   approveRefundRequest,
   listRefundRequests,
+  receiveReturn,
   rejectRefundRequest,
   type RefundCounts,
   type RefundRequestView,
@@ -37,15 +38,26 @@ import {
  */
 const PAGE_SIZE = 20;
 
+/**
+ * 页签顺序照淘宝「退款管理」：要商家动手的排前面。
+ * 待买家退货 / 待收货不是「已处理」，是等对方动作，所以夹在待处理与已同意之间。
+ */
 const STATUS_TABS: { value: RefundStatus | 'all'; label: string }[] = [
   { value: 'pending', label: '待处理' },
+  { value: 'awaiting_return', label: '待买家退货' },
+  { value: 'returned', label: '待收货' },
   { value: 'approved', label: '已同意' },
   { value: 'rejected', label: '已拒绝' },
   { value: 'all', label: '全部' },
 ];
 
-const STATUS_META: Record<RefundStatus, { label: string; tone: 'warning' | 'success' | 'neutral' }> = {
+const STATUS_META: Record<
+  RefundStatus,
+  { label: string; tone: 'warning' | 'success' | 'neutral' | 'info' }
+> = {
   pending: { label: '待处理', tone: 'warning' },
+  awaiting_return: { label: '待买家退货', tone: 'info' },
+  returned: { label: '待收货', tone: 'warning' },
   approved: { label: '已同意', tone: 'success' },
   rejected: { label: '已拒绝', tone: 'neutral' },
   canceled: { label: '已撤销', tone: 'neutral' },
@@ -56,6 +68,8 @@ export function RefundsPage() {
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState<RefundCounts>({
     pending: 0,
+    awaiting_return: 0,
+    returned: 0,
     approved: 0,
     rejected: 0,
     canceled: 0,
@@ -68,6 +82,8 @@ export function RefundsPage() {
   const [flash, setFlash] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<RefundRequestView | null>(null);
   const [approving, setApproving] = useState<RefundRequestView | null>(null);
+  /** 确认收货并退款：退货退款的打款关卡，单独一个确认框。 */
+  const [receiving, setReceiving] = useState<RefundRequestView | null>(null);
   const [rejectNote, setRejectNote] = useState('');
 
   const load = useCallback(async () => {
@@ -102,8 +118,13 @@ export function RefundsPage() {
     setError(null);
     try {
       await approveRefundRequest(approving.id);
+      const wasReturn = approving.resolution === 'return_refund';
       setApproving(null);
-      setFlash('已同意，退款已原路退回');
+      setFlash(
+        wasReturn
+          ? '已同意退货，等待买家寄回；收到货后在这里确认收货才会退款'
+          : '已同意，退款已原路退回',
+      );
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '退款失败');
@@ -128,6 +149,22 @@ export function RefundsPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '操作失败');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const receive = async () => {
+    if (!receiving) return;
+    setBusyId(receiving.id);
+    setError(null);
+    try {
+      await receiveReturn(receiving.id);
+      setReceiving(null);
+      setFlash('已确认收货，退款已原路退回');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '退款失败');
     } finally {
       setBusyId(null);
     }
@@ -232,7 +269,23 @@ export function RefundsPage() {
                       <span className="mt-0.5 block text-xs text-muted-foreground">
                         {item.customerEmail ?? '游客'}
                         {item.source === 'merchant' ? ' · 商家发起' : ' · 顾客申请'}
+                        {' · '}
+                        <span
+                          className={
+                            item.resolution === 'return_refund'
+                              ? 'font-medium text-foreground'
+                              : undefined
+                          }
+                        >
+                          {item.resolution === 'return_refund' ? '退货退款' : '仅退款'}
+                        </span>
                       </span>
+                      {/* 退货单号是商家收货时的对账依据，直接显示在行里 */}
+                      {item.returnTrackingNumber && (
+                        <span className="mt-0.5 block font-mono text-xs text-muted-foreground">
+                          退回：{item.returnCarrier} {item.returnTrackingNumber}
+                        </span>
+                      )}
                     </td>
                     <td className="tabular px-4 py-3 align-top">
                       {formatMoney(item.amountMinor, item.currencyCode)}
@@ -267,7 +320,8 @@ export function RefundsPage() {
                             onClick={() => setApproving(item)}
                           >
                             <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            同意退款
+                            {/* 退货退款这一步只是同意退货，不打款，按钮文案必须说实话 */}
+                            {item.resolution === 'return_refund' ? '同意退货' : '同意退款'}
                           </Button>
                           <Button
                             size="sm"
@@ -282,13 +336,22 @@ export function RefundsPage() {
                             拒绝
                           </Button>
                         </div>
+                      ) : item.status === 'returned' ? (
+                        <div className="flex justify-end">
+                          <Button size="sm" disabled={busyId === item.id} onClick={() => setReceiving(item)}>
+                            <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                            确认收货并退款
+                          </Button>
+                        </div>
                       ) : (
                         <span className="block text-right text-xs text-muted-foreground">
                           {item.status === 'approved'
                             ? item.refundId
                               ? '已打款'
                               : '已同意（无资金流水，请核对）'
-                            : '已处理'}
+                            : item.status === 'awaiting_return'
+                              ? '等买家寄回'
+                              : '已处理'}
                         </span>
                       )}
                     </td>
@@ -320,31 +383,89 @@ export function RefundsPage() {
         </div>
       )}
 
-      {/* 同意 = 真正打款，单独确认并写明金额 */}
+      {/* 同意：仅退款会**真的打款**；退货退款只同意，不打款。文案不能混 */}
       <Dialog open={approving !== null} onOpenChange={(open) => !open && setApproving(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>同意退款</DialogTitle>
+            <DialogTitle>
+              {approving?.resolution === 'return_refund' ? '同意退货' : '同意退款'}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              将向订单 <span className="font-mono text-foreground">{approving?.orderId}</span>{' '}
-              原路退回{' '}
-              <span className="tabular font-medium text-foreground">
-                {approving ? formatMoney(approving.amountMinor, approving.currencyCode) : ''}
-              </span>
-              ，订单同时转为「已退款」。
-            </p>
-            <p className="text-sm text-destructive">
-              退款一经提交无法撤销，请确认已收到退货或与顾客协商一致。
-            </p>
+            {approving?.resolution === 'return_refund' ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  订单 <span className="font-mono text-foreground">{approving?.orderId}</span>{' '}
+                  转为「待买家退货」，买家寄回并填写退货单号后，
+                  你再确认收货才会退款。
+                </p>
+                <p className="text-sm text-foreground">
+                  <strong className="font-medium">这一步不会打款</strong>
+                  ，请确认退货地址已告知买家（可用店铺客服电话）。
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  将向订单 <span className="font-mono text-foreground">{approving?.orderId}</span>{' '}
+                  原路退回{' '}
+                  <span className="tabular font-medium text-foreground">
+                    {approving ? formatMoney(approving.amountMinor, approving.currencyCode) : ''}
+                  </span>
+                  ，订单同时转为「已退款」。
+                </p>
+                <p className="text-sm text-destructive">
+                  退款一经提交无法撤销，请确认已收到退货或与顾客协商一致。
+                </p>
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setApproving(null)}>
               取消
             </Button>
             <Button disabled={busyId === approving?.id} onClick={() => void approve()}>
-              {busyId === approving?.id ? '退款中…' : '确认同意并退款'}
+              {busyId === approving?.id
+                ? '处理中…'
+                : approving?.resolution === 'return_refund'
+                  ? '确认同意退货'
+                  : '确认同意并退款'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 确认收货 = 退货退款真正打款的那一下，必须单独确认 */}
+      <Dialog open={receiving !== null} onOpenChange={(open) => !open && setReceiving(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确认收货并退款</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              将向订单 <span className="font-mono text-foreground">{receiving?.orderId}</span>{' '}
+              原路退回{' '}
+              <span className="tabular font-medium text-foreground">
+                {receiving ? formatMoney(receiving.amountMinor, receiving.currencyCode) : ''}
+              </span>
+              ，订单同时转为「已退款」。
+            </p>
+            {receiving?.returnTrackingNumber && (
+              <p className="text-sm text-muted-foreground">
+                退货物流：{receiving.returnCarrier} {receiving.returnTrackingNumber}
+              </p>
+            )}
+            <p className="text-sm text-destructive">
+              请确认<strong className="font-medium">货已收到且无误</strong>再点。
+              退款提交后无法撤销，货没回来就退，等于白送。
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setReceiving(null)}>
+              取消
+            </Button>
+            <Button disabled={busyId === receiving?.id} onClick={() => void receive()}>
+              {busyId === receiving?.id ? '退款中…' : '确认已收到货并退款'}
             </Button>
           </DialogFooter>
         </DialogContent>

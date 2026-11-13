@@ -897,7 +897,12 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         currency_code: string;
         reason: string;
         source: "customer" | "merchant";
-        status: "pending" | "approved" | "rejected" | "canceled";
+        status: "pending" | "awaiting_return" | "returned" | "approved" | "rejected" | "canceled";
+        resolution: "refund_only" | "return_refund";
+        return_carrier: string | null;
+        return_tracking_number: string | null;
+        return_shipped_at: string | null;
+        return_received_at: string | null;
         review_note: string | null;
         reviewed_at: string | null;
         refund_id: string | null;
@@ -994,7 +999,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
        */
       createRefundRequest: async (
         orderId: string,
-        input: { amountMinor: bigint; reason: string; source?: string; customerId?: string | null },
+        input: {
+          amountMinor: bigint;
+          reason: string;
+          source?: string;
+          customerId?: string | null;
+          resolution?: "refund_only" | "return_refund";
+        },
       ) => {
         const req = {
           id: `rfr_${++refundSeq}`,
@@ -1005,6 +1016,11 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           reason: input.reason,
           source: (input.source ?? "customer") as "customer" | "merchant",
           status: "pending" as const,
+          resolution: (input.resolution ?? "refund_only") as "refund_only" | "return_refund",
+          return_carrier: null,
+          return_tracking_number: null,
+          return_shipped_at: null,
+          return_received_at: null,
           review_note: null,
           reviewed_at: null,
           refund_id: null,
@@ -1039,9 +1055,43 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       findRefundRequest: async (id: string) => refundRequests.find((r) => r.id === id) ?? null,
       approveRefundRequest: async (id: string, refundId: string, note?: string | null) => {
         const req = refundRequests.find((r) => r.id === id)!;
+        // 与真实服务同守卫：退货退款不能走这条直路（货没回来钱先走）
+        if (req.resolution !== "refund_only") {
+          throw new Error("售后类型不匹配：退货退款不能直接同意打款");
+        }
         req.status = "approved";
         req.refund_id = refundId;
         req.review_note = note ?? null;
+        order.status = "refunded";
+        return req;
+      },
+      /* 退货退款：同意只改单据，不动钱；填单号；确认收货才 approved */
+      agreeReturnRequest: async (id: string, note?: string | null) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        if (req.resolution !== "return_refund") {
+          throw new Error("售后类型不匹配：该申请是仅退款");
+        }
+        req.status = "awaiting_return";
+        req.review_note = note ?? null;
+        return req;
+      },
+      shipReturn: async (id: string, input: { carrier: string; trackingNumber: string }) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        if (!input.carrier.trim() || !input.trackingNumber.trim()) {
+          throw new Error("请填写退货物流公司与单号");
+        }
+        req.status = "returned";
+        req.return_carrier = input.carrier.trim();
+        req.return_tracking_number = input.trackingNumber.trim();
+        req.return_shipped_at = new Date().toISOString();
+        return req;
+      },
+      confirmReturnReceived: async (id: string, refundId: string, note?: string | null) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        req.status = "approved";
+        req.refund_id = refundId;
+        req.return_received_at = new Date().toISOString();
+        if (note) req.review_note = note;
         order.status = "refunded";
         return req;
       },

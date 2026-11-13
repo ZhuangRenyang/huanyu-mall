@@ -262,10 +262,16 @@ export function createStoreClient(opts: ClientOptions) {
     /** 我的订单列表：只看 token 里的 customerId，不接受 query 传顾客 id。 */
     listMyOrders: (q?: Query) => get("/api/v1/store/orders", q),
     getOrder: (id: string) => get(`/api/v1/store/orders/${id}`),
-    /** 顾客申请退款：只传原因，金额由服务端按订单实付取。 */
-    requestOrderRefund: (id: string, b: { reason: string }) =>
+    /**
+     * 顾客申请退款：只传原因与售后类型，金额由服务端按订单实付取。
+     * resolution 缺省 refund_only（仅退款）；return_refund 需订单已发货。
+     */
+    requestOrderRefund: (id: string, b: { reason: string; resolution?: "refund_only" | "return_refund" }) =>
       post(`/api/v1/store/orders/${id}/refund-requests`, b),
     listOrderRefunds: (id: string) => get(`/api/v1/store/orders/${id}/refund-requests`),
+    /** 买家提交退货物流（商家同意退货后，ADR-051）。 */
+    submitReturnShipment: (refundId: string, b: { carrier: string; tracking_number: string }) =>
+      post(`/api/v1/store/refund-requests/${refundId}/return-shipment`, b),
     register: (b: RegisterRequest) => post("/api/v1/store/auth/register", b),
     login: (b: LoginRequest) => post("/api/v1/store/auth/login", b),
     refresh: (refreshToken: string) =>
@@ -347,6 +353,9 @@ export function createAdminClient(opts: ClientOptions) {
       post(`/api/v1/admin/refund-requests/${id}/approve`, b),
     rejectRefundRequest: (id: string, b: { note: string }) =>
       post(`/api/v1/admin/refund-requests/${id}/reject`, b),
+    /** 确认收到退货并退款（退货退款的打款关卡，ADR-051）。 */
+    receiveReturn: (id: string, b: { note?: string }) =>
+      post(`/api/v1/admin/refund-requests/${id}/receive-return`, b),
     /** 该订单的操作日志（审计流水，orders 权限即可查）。 */
     listOrderLogs: (id: string) => get(`/api/v1/admin/orders/${id}/logs`),
     cancelOrder: (id: string) => post(`/api/v1/admin/orders/${id}/cancel`),

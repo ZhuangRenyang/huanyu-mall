@@ -171,6 +171,7 @@ class InMemoryOrderRepository implements OrderRepository {
     reason: string;
     source: RefundRequestDTO["source"];
     orderStatusBefore: RefundRequestDTO["order_status_before"];
+    resolution: RefundRequestDTO["resolution"];
   }): Promise<RefundRequestDTO> {
     const dto: RefundRequestDTO = {
       id: input.id,
@@ -181,6 +182,11 @@ class InMemoryOrderRepository implements OrderRepository {
       reason: input.reason,
       source: input.source,
       status: "pending",
+      resolution: input.resolution,
+      return_carrier: null,
+      return_tracking_number: null,
+      return_shipped_at: null,
+      return_received_at: null,
       review_note: null,
       reviewed_at: null,
       refund_id: null,
@@ -195,9 +201,10 @@ class InMemoryOrderRepository implements OrderRepository {
     return this.refundRequests.find((r) => r.id === id) ?? null;
   }
 
-  async findPendingRefundRequest(orderId: string): Promise<RefundRequestDTO | null> {
+  async findActiveRefundRequest(orderId: string): Promise<RefundRequestDTO | null> {
+    const ACTIVE: RefundRequestDTO["status"][] = ["pending", "awaiting_return", "returned"];
     return (
-      this.refundRequests.find((r) => r.order_id === orderId && r.status === "pending") ?? null
+      this.refundRequests.find((r) => r.order_id === orderId && ACTIVE.includes(r.status)) ?? null
     );
   }
 
@@ -219,6 +226,7 @@ class InMemoryOrderRepository implements OrderRepository {
       status: RefundRequestDTO["status"];
       reviewNote?: string | null;
       refundId?: string | null;
+      returnReceivedAt?: Date | null;
     },
   ): Promise<RefundRequestDTO | null> {
     const req = this.refundRequests.find((r) => r.id === id);
@@ -226,7 +234,25 @@ class InMemoryOrderRepository implements OrderRepository {
     req.status = patch.status;
     if (patch.reviewNote !== undefined) req.review_note = patch.reviewNote;
     if (patch.refundId !== undefined) req.refund_id = patch.refundId;
+    if (patch.returnReceivedAt !== undefined) {
+      req.return_received_at = patch.returnReceivedAt
+        ? patch.returnReceivedAt.toISOString()
+        : null;
+    }
     req.reviewed_at = new Date().toISOString();
+    return req;
+  }
+
+  async setReturnShipment(
+    id: string,
+    input: { carrier: string; trackingNumber: string; shippedAt: Date },
+  ): Promise<RefundRequestDTO | null> {
+    const req = this.refundRequests.find((r) => r.id === id);
+    if (!req) return null;
+    req.status = "returned";
+    req.return_carrier = input.carrier;
+    req.return_tracking_number = input.trackingNumber;
+    req.return_shipped_at = input.shippedAt.toISOString();
     return req;
   }
 
@@ -513,6 +539,175 @@ describe("退款审核：申请即冻结", () => {
     });
     await service.markRefundSettled(order.id, req.id);
     expect((await service.retrieveOrder(order.id)).status).toBe("refunded");
+  });
+});
+
+describe("退货退款：货没回来不打款（ADR-051）", () => {
+  /** 造一笔「已发货」订单 —— 只有发出去的货才谈得上退货。 */
+  async function shippedOrder() {
+    const { repo, service } = setup();
+    const order = await service.createOrder(makeInput());
+    await service.transition(order.id, "awaiting_payment", { actor: "workflow" });
+    await service.transition(order.id, "paid", { actor: "workflow" });
+    await service.transition(order.id, "fulfilled", { actor: "admin" });
+    return { repo, service, order };
+  }
+
+  it("未发货的订单不能申请退货退款（买家没货可寄，单据会永久卡住）", async () => {
+    const { service } = setup();
+    const order = await service.createOrder(makeInput());
+    await service.transition(order.id, "awaiting_payment", { actor: "workflow" });
+    await service.transition(order.id, "paid", { actor: "workflow" });
+    await expect(
+      service.createRefundRequest(order.id, {
+        amountMinor: 20600n,
+        reason: "不想要了",
+        source: "customer",
+        resolution: "return_refund",
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("已发货的订单可以申请退货退款，缺省仍是仅退款（老客户端不受影响）", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    expect(req.resolution).toBe("return_refund");
+    expect(req.status).toBe("pending");
+
+    // 缺省：不传 resolution 就是仅退款
+    const { service: s2, order: o2 } = await shippedOrder();
+    const req2 = await s2.createRefundRequest(o2.id, {
+      amountMinor: 20600n,
+      reason: "不想要了",
+      source: "customer",
+    });
+    expect(req2.resolution).toBe("refund_only");
+  });
+
+  it("同意退货只改单据、**不打款**：状态进 awaiting_return，没有资金流水", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    const agreed = await service.agreeReturnRequest(req.id, "请寄回原包装");
+    expect(agreed.status).toBe("awaiting_return");
+    expect(agreed.refund_id).toBeNull();
+    // 订单仍在退款中：还能发货就白送了
+    expect((await service.retrieveOrder(order.id)).status).toBe("refund_pending");
+  });
+
+  it("退货退款不能走「同意即退款」那条直路（服务端守，不靠按钮别点错）", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    await expect(service.approveRefundRequest(req.id, "rfd_x")).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("仅退款不能走「同意退货」那条路（两条路各自守）", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "不想要了",
+      source: "customer",
+    });
+    await expect(service.agreeReturnRequest(req.id)).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("买家填退货单号：进 returned；物流公司或单号为空则拒绝", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    // 必须先「同意退货」，否则单据还在待处理（status 守卫先拦）
+    await service.agreeReturnRequest(req.id);
+    await expect(
+      service.shipReturn(req.id, { carrier: "  ", trackingNumber: "SF123" }),
+    ).rejects.toBeInstanceOf(DomainError);
+    await expect(
+      service.shipReturn(req.id, { carrier: "顺丰", trackingNumber: "" }),
+    ).rejects.toBeInstanceOf(DomainError);
+
+    const shipped = await service.shipReturn(req.id, { carrier: "顺丰", trackingNumber: " SF123456 " });
+    expect(shipped.status).toBe("returned");
+    expect(shipped.return_carrier).toBe("顺丰");
+    expect(shipped.return_tracking_number).toBe("SF123456");
+    expect(shipped.return_shipped_at).not.toBeNull();
+  });
+
+  it("确认收货才打款：returned → approved，并记下收货时间", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    await service.agreeReturnRequest(req.id);
+    await service.shipReturn(req.id, { carrier: "顺丰", trackingNumber: "SF123456" });
+
+    const settled = await service.confirmReturnReceived(req.id, "rfd_ok", "已收到，包装完好");
+    expect(settled.status).toBe("approved");
+    expect(settled.refund_id).toBe("rfd_ok");
+    expect(settled.return_received_at).not.toBeNull();
+  });
+
+  it("还没寄回就确认收货：拒绝（防止商家手快把钱退了）", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    await service.agreeReturnRequest(req.id);
+    await expect(service.confirmReturnReceived(req.id, "rfd_x")).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("等寄回期间不能再提一张（否则商家会退两次）", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    await service.agreeReturnRequest(req.id);
+    await expect(
+      service.createRefundRequest(order.id, {
+        amountMinor: 20600n,
+        reason: "再申请一次",
+        source: "customer",
+      }),
+    ).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("买家可以在寄回前撤销，订单恢复原状态", async () => {
+    const { service, order } = await shippedOrder();
+    const req = await service.createRefundRequest(order.id, {
+      amountMinor: 20600n,
+      reason: "尺码不对",
+      source: "customer",
+      resolution: "return_refund",
+    });
+    await service.agreeReturnRequest(req.id);
+    const canceled = await service.cancelRefundRequest(req.id);
+    expect(canceled.status).toBe("canceled");
+    expect((await service.retrieveOrder(order.id)).status).toBe("fulfilled");
   });
 });
 

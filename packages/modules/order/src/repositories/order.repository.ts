@@ -14,6 +14,7 @@ import type {
   OrderShippingMethodDTO,
   OrderStatus,
   PaymentStatus,
+  RefundResolution,
   RefundRequestDTO,
   RefundRequestQuery,
   RefundRequestSource,
@@ -186,6 +187,7 @@ export class DrizzleOrderRepository implements OrderRepository {
     reason: string;
     source: RefundRequestSource;
     orderStatusBefore: OrderStatus;
+    resolution: RefundResolution;
   }): Promise<RefundRequestDTO> {
     const rows = await this.db
       .insert(schema.refundRequest)
@@ -198,6 +200,7 @@ export class DrizzleOrderRepository implements OrderRepository {
         reason: input.reason,
         source: input.source,
         orderStatusBefore: input.orderStatusBefore,
+        resolution: input.resolution,
       })
       .returning();
     return toRefundRequestDTO(rows[0]!);
@@ -217,12 +220,16 @@ export class DrizzleOrderRepository implements OrderRepository {
     return row ? toRefundRequestDTO(row.req, row.email) : null;
   }
 
-  async findPendingRefundRequest(orderId: string): Promise<RefundRequestDTO | null> {
+  async findActiveRefundRequest(orderId: string): Promise<RefundRequestDTO | null> {
     const rows = await this.db
       .select()
       .from(schema.refundRequest)
       .where(
-        and(eq(schema.refundRequest.orderId, orderId), eq(schema.refundRequest.status, "pending")),
+        and(
+          eq(schema.refundRequest.orderId, orderId),
+          // 在途 = 还没走完的三种：待处理 / 待买家寄回 / 待商家收货
+          inArray(schema.refundRequest.status, ["pending", "awaiting_return", "returned"]),
+        ),
       )
       .limit(1);
     return rows[0] ? toRefundRequestDTO(rows[0]) : null;
@@ -266,7 +273,12 @@ export class DrizzleOrderRepository implements OrderRepository {
 
   async updateRefundRequest(
     id: string,
-    patch: { status: RefundRequestStatus; reviewNote?: string | null; refundId?: string | null },
+    patch: {
+      status: RefundRequestStatus;
+      reviewNote?: string | null;
+      refundId?: string | null;
+      returnReceivedAt?: Date | null;
+    },
   ): Promise<RefundRequestDTO | null> {
     const rows = await this.db
       .update(schema.refundRequest)
@@ -274,7 +286,26 @@ export class DrizzleOrderRepository implements OrderRepository {
         status: patch.status,
         ...(patch.reviewNote !== undefined ? { reviewNote: patch.reviewNote } : {}),
         ...(patch.refundId !== undefined ? { refundId: patch.refundId } : {}),
+        ...(patch.returnReceivedAt !== undefined ? { returnReceivedAt: patch.returnReceivedAt } : {}),
         reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.refundRequest.id, id))
+      .returning();
+    return rows[0] ? toRefundRequestDTO(rows[0]) : null;
+  }
+
+  async setReturnShipment(
+    id: string,
+    input: { carrier: string; trackingNumber: string; shippedAt: Date },
+  ): Promise<RefundRequestDTO | null> {
+    const rows = await this.db
+      .update(schema.refundRequest)
+      .set({
+        status: "returned",
+        returnCarrier: input.carrier,
+        returnTrackingNumber: input.trackingNumber,
+        returnShippedAt: input.shippedAt,
         updatedAt: new Date(),
       })
       .where(eq(schema.refundRequest.id, id))
@@ -449,6 +480,11 @@ function toRefundRequestDTO(
     reason: r.reason,
     source: r.source as RefundRequestDTO["source"],
     status: r.status as RefundRequestDTO["status"],
+    resolution: (r.resolution as RefundRequestDTO["resolution"]) ?? "refund_only",
+    return_carrier: r.returnCarrier ?? null,
+    return_tracking_number: r.returnTrackingNumber ?? null,
+    return_shipped_at: r.returnShippedAt ? r.returnShippedAt.toISOString() : null,
+    return_received_at: r.returnReceivedAt ? r.returnReceivedAt.toISOString() : null,
     review_note: r.reviewNote ?? null,
     reviewed_at: r.reviewedAt ? r.reviewedAt.toISOString() : null,
     refund_id: r.refundId ?? null,

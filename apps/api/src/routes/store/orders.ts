@@ -9,6 +9,17 @@ import { makeAuthHelpers } from "../../plugins/auth.js";
 const refundRequestBody = z.object({
   /** 顾客只说明原因；金额一律由服务端按订单实付取（铁律 13，客户端不传金额）。 */
   reason: z.string().min(2).max(500),
+  /**
+   * 售后类型（ADR-051）：仅退款 / 退货退款。
+   * 缺省 refund_only —— 老客户端不带这个字段时保持原行为，不会突然进「等寄回」。
+   */
+  resolution: z.enum(["refund_only", "return_refund"]).default("refund_only"),
+});
+
+/** 退货物流：公司 + 单号都必填（没有单号，「已寄出」无从对账）。 */
+const returnShipmentBody = z.object({
+  carrier: z.string().min(1).max(60),
+  tracking_number: z.string().min(4).max(60),
 });
 
 /** 页签可含多个状态（待收货 = fulfilled + delivered），用逗号分隔。 */
@@ -189,8 +200,35 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         reason: body.reason,
         source: "customer",
         customerId: order.customer_id,
+        resolution: body.resolution,
       });
       reply.code(201).ok(request);
+    },
+  );
+
+  /**
+   * 买家提交退货物流（退货退款第二步，ADR-051）。
+   *
+   * 商家同意退货后，顾客把货寄回，在这里填物流公司与单号。
+   * 之后单据进「待商家收货」，商家确认收到才打款 —— 钱不会在货没回来时先走。
+   */
+  app.post(
+    "/api/v1/store/refund-requests/:id/return-shipment",
+    { preHandler: auth.customerAuth, schema: { body: returnShipmentBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = req.body as z.infer<typeof returnShipmentBody>;
+      const request = await deps.services.order.findRefundRequest(id);
+      if (!request) throw errors.notFound(`退款申请不存在：${id}`);
+      // 归属按**订单**判定：单据上的 customer_id 可能为空（游客单），订单口径才统一
+      const order = await deps.services.order.retrieveOrder(request.order_id);
+      assertOrderAccess(order, req.auth);
+
+      const after = await deps.services.order.shipReturn(id, {
+        carrier: body.carrier,
+        trackingNumber: body.tracking_number,
+      });
+      reply.ok(after);
     },
   );
 

@@ -54,6 +54,22 @@ export function isRefundable(status: OrderStatus): boolean {
 }
 
 /**
+ * 能申请「退货退款」的订单状态 = 货已经在路上或已到手。
+ *
+ * 未发货（paid / partially_fulfilled 的部分）只能「仅退款」：
+ * 买家手里没货可寄，进了「待买家寄回」就永远走不出来。
+ * partially_fulfilled 算已发货 —— 部分发出时，顾客收到的那部分可以退。
+ */
+export function supportsReturnRefund(status: OrderStatus): boolean {
+  return (
+    status === "partially_fulfilled" ||
+    status === "fulfilled" ||
+    status === "delivered" ||
+    status === "completed"
+  );
+}
+
+/**
  * 该状态是否还能发货。
  *
  * 退款审核中禁止发货 —— 这是「人工审核」真正生效的地方：

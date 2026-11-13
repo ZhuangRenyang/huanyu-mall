@@ -94,7 +94,18 @@ export interface AdminRefundRequest {
   currencyCode: string;
   reason: string;
   source: 'customer' | 'merchant';
-  status: 'pending' | 'approved' | 'rejected' | 'canceled';
+  status:
+    | 'pending'
+    | 'awaiting_return'
+    | 'returned'
+    | 'approved'
+    | 'rejected'
+    | 'canceled';
+  /** 售后类型：仅退款 / 退货退款（ADR-051）。 */
+  resolution: 'refund_only' | 'return_refund';
+  /** 买家退货物流（退货退款才有）。 */
+  returnCarrier: string | null;
+  returnTrackingNumber: string | null;
   reviewNote: string | null;
   createdAt: string;
   /** 资金流水 id；未执行退款时为空。 */
