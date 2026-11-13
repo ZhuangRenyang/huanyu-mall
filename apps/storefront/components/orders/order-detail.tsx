@@ -34,6 +34,7 @@ function RefundPanel({
   amountMinor,
   currencyCode,
   returnAddress,
+  autoOpen = false,
 }: {
   orderId: string;
   status: OrderView['status'];
@@ -41,9 +42,12 @@ function RefundPanel({
   currencyCode: string;
   /** 店铺退货地址（ADR-053，可空）。 */
   returnAddress?: string | null;
+  /** 从订单列表点「申请售后」进来时，直接展开退款表单（ADR-065）。 */
+  autoOpen?: boolean;
 }) {
+  const refundable = status === 'to_ship' || status === 'to_receive' || status === 'completed';
   const [refunds, setRefunds] = useState<StoreRefundView[]>([]);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(autoOpen && refundable);
   const [reason, setReason] = useState('');
   const [resolution, setResolution] = useState<StoreRefundResolution>('refund_only');
   const [busy, setBusy] = useState(false);
@@ -53,7 +57,6 @@ function RefundPanel({
   const [carrier, setCarrier] = useState('');
   const [tracking, setTracking] = useState('');
 
-  const refundable = status === 'to_ship' || status === 'to_receive' || status === 'completed';
   /*
    * 只有已发货/已收货的订单才能选「退货退款」——
    * 未发货的订单买家手里没货可寄，选了会卡在「等寄回」出不来。
@@ -352,11 +355,14 @@ function InfoCard({ icon: Icon, title, children }: { icon: LucideIcon; title: st
 export function OrderDetail({
   order,
   returnAddress = null,
+  autoOpenRefund = false,
   onUpdated,
 }: {
   order: OrderView;
   /** 店铺退货地址（ADR-053）：退货退款时顾客照着寄回。 */
   returnAddress?: string | null;
+  /** 从订单列表点「申请售后」进来时，自动展开退款表单（ADR-065）。 */
+  autoOpenRefund?: boolean;
   /** 状态变化后让父组件重新拉一次订单（确认收货用）。 */
   onUpdated?: () => void;
 }) {
@@ -556,6 +562,7 @@ export function OrderDetail({
           amountMinor={order.totalMinor}
           currencyCode={order.currencyCode}
           returnAddress={returnAddress}
+          autoOpen={autoOpenRefund}
         />
       </div>
 

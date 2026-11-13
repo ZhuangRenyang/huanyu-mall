@@ -12,6 +12,8 @@ export default async function OrdersPage({
   const { locale, channel } = await params;
   const sp = await searchParams;
   const orderId = typeof sp.order === 'string' ? sp.order : undefined;
+  // 列表页「申请售后」带 refund=1，进来直接展开退款表单（ADR-065）
+  const autoOpenRefund = sp.refund === '1';
 
   // 退货地址是店铺配置（ADR-053），在服务端取一次传下去，别让明细组件自己再打一次接口
   const profile = await getStoreProfile();
@@ -22,6 +24,7 @@ export default async function OrdersPage({
       locale={locale}
       channel={channel}
       returnAddress={profile.returnAddress}
+      autoOpenRefund={autoOpenRefund}
     />
   );
 }

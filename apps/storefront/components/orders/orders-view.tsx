@@ -47,12 +47,15 @@ export function OrdersView({
   locale,
   channel,
   returnAddress = null,
+  autoOpenRefund = false,
 }: {
   orderId?: string;
   locale: string;
   channel: string;
   /** 店铺退货地址（ADR-053）：退货退款时顾客照着寄回。 */
   returnAddress?: string | null;
+  /** 从订单列表点「申请售后」进来时，自动展开退款表单（ADR-065）。 */
+  autoOpenRefund?: boolean;
 }) {
   const router = useRouter();
   const base = `/${locale}/${channel}`;
@@ -166,6 +169,7 @@ export function OrdersView({
           <OrderDetail
             order={detail}
             returnAddress={returnAddress}
+            autoOpenRefund={autoOpenRefund}
             onUpdated={() => setDetailVersion((v) => v + 1)}
           />
         ) : (
@@ -307,11 +311,12 @@ export function OrdersView({
 function OrderRow({ order, base }: { order: OrderView; base: string }) {
   const meta = ORDER_STATUS_META[order.status];
   const totalQty = order.items.reduce((n, i) => n + i.quantity, 0);
+  const canRefund = order.status === 'to_ship' || order.status === 'to_receive' || order.status === 'completed';
   return (
-    <li>
+    <li className="rounded-lg border border-border bg-card p-4">
       <a
         href={`${base}/orders?order=${order.id}`}
-        className="block rounded-lg border border-border bg-card p-4 transition-colors duration-150 hover:border-border-strong"
+        className="block transition-colors duration-150 hover:border-border-strong"
       >
         <div className="flex items-center justify-between gap-2">
           <span className="tabular font-mono text-xs text-muted-foreground">{order.id}</span>
@@ -336,6 +341,21 @@ function OrderRow({ order, base }: { order: OrderView; base: string }) {
           <span className="tabular shrink-0 text-sm font-semibold">{formatMoney(order.totalMinor, order.currencyCode)}</span>
         </div>
       </a>
+      {/*
+        申请售后（ADR-065）：淘宝订单列表每单都有「退款/售后」入口。
+        之前退款藏在详情页最下面，顾客想退还要先翻完物流和金额 —— 找不到就是没有。
+        只在可退状态出现，避免「已取消/已退款」的订单还挂着售后入口。
+      */}
+      {canRefund && (
+        <div className="mt-3 flex justify-end border-t border-border pt-3">
+          <a
+            href={`${base}/orders?order=${order.id}&refund=1`}
+            className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors duration-150 hover:bg-muted"
+          >
+            申请售后
+          </a>
+        </div>
+      )}
     </li>
   );
 }
