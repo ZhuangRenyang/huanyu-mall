@@ -144,8 +144,13 @@ function writeMockCollected(next: Record<string, unknown>): void {
   }
 }
 
-/** 店面可领的券（商品页券条用；服务端渲染时也可以调）。 */
-export async function getStoreVouchers(): Promise<{
+/**
+ * 店面可领的券（商品页券条用；服务端渲染时也可以调）。
+ *
+ * 传 `handle` 就只取这个商品能用的券（ADR-071）：淘宝商品页的领券区不会
+ * 摆一张「限别的商品」的券 —— 顾客领了也用不了，等于骗他点一下。
+ */
+export async function getStoreVouchers(handle?: string): Promise<{
   items: PublicVoucherView[];
   currencyCode: string;
 }> {
@@ -161,7 +166,10 @@ export async function getStoreVouchers(): Promise<{
     };
   }
   try {
-    const res = (await getStoreClient().listPublicVouchers()) as {
+    const client = getStoreClient();
+    const res = (await (handle
+      ? client.listProductVouchers(handle)
+      : client.listPublicVouchers())) as {
       items?: ApiVoucher[];
       currency_code?: string;
     };

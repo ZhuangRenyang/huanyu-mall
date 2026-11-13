@@ -162,6 +162,9 @@ export function createStoreClient(opts: ClientOptions) {
     getPromotionFeatures: () => get("/api/v1/store/promotions/features"),
     /** 可领取的店铺券（匿名可读；登录后带 collected 标记）。 */
     listPublicVouchers: () => get("/api/v1/store/vouchers"),
+    /** 本商品可用的店铺券（ADR-071）：商品页领券区只摆这个商品能用得上的。 */
+    listProductVouchers: (handle: string) =>
+      get(`/api/v1/store/products/${handle}/vouchers`),
     /** 领取一张店铺券（返回专属券码，重复领取幂等）。 */
     collectVoucher: (id: string) => post(`/api/v1/store/vouchers/${id}/collect`, {}),
     /** 我的卡券（未用在前）。 */

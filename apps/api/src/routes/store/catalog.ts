@@ -4,7 +4,7 @@ import { errors } from "@mall/core";
 import { monthlySoldSince } from "@mall/order";
 import { PaginationQuerySchema } from "@mall/types";
 import type { AppDeps } from "../../deps.js";
-import { resolveChannelId } from "../../plugins/auth.js";
+import { makeAuthHelpers, resolveChannelId } from "../../plugins/auth.js";
 
 /** GET /store/bootstrap — 一次性拿 channel/locale/币种/导航/主题（openapi 659）。 */
 export function bootstrapRoutes(app: FastifyInstance, deps: AppDeps): void {
@@ -108,6 +108,7 @@ export async function mapStoreProductSummaries(
 
 /** GET /store/products + /store/products/{handle} + /store/categories（openapi 686/720/741）。 */
 export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
+  const auth = makeAuthHelpers(deps);
   app.get(
     "/api/v1/store/products",
     { schema: { querystring: productListQuery } },
@@ -149,6 +150,38 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
         limit: q.limit,
         hasMore: q.offset + items.length < res.count,
       });
+    },
+  );
+
+  /**
+   * 本商品可用券（ADR-071）。
+   *
+   * 商品页的领券区只该摆「这个商品能用」的券：整单券、运费券都算可用，
+   * 指定商品券必须命中本商品或它的分类。之前这里是全店券直接铺开 ——
+   * 顾客在 B 商品页领了一张「限 A 商品」的券，结账时才发现用不了。
+   *
+   * 匿名可访问（券条要能展示），登录后每条多一个 `collected` 标记。
+   */
+  app.get(
+    "/api/v1/store/products/:handle/vouchers",
+    { preHandler: auth.customerAuth },
+    async (req, reply) => {
+      const { handle } = req.params as { handle: string };
+      const customerId = req.auth?.customerId ?? null;
+      const channelId = await resolveChannelId(deps, req);
+      const channel = await deps.services.regionChannel.getChannel(channelId);
+
+      const listed = await deps.services.product.listProducts({ handle, status: "published", limit: 1 });
+      const summary = listed.items[0];
+      if (!summary) throw errors.notFound(`product not found: ${handle}`);
+      const detail = await deps.services.product.retrieveProduct(summary.id);
+
+      const items = await deps.services.promotion.listPublicVouchersForProduct({
+        productId: detail.id,
+        categoryIds: detail.category_ids,
+        customerId,
+      });
+      reply.ok({ items, count: items.length, currency_code: channel.currency_code });
     },
   );
 

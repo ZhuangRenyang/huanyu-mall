@@ -174,6 +174,33 @@ export class PromotionService implements IPromotionModuleService {
   }
 
   /**
+   * 本商品可用券（ADR-071）。
+   *
+   * 淘宝商品页的领券区只摆「这个商品能用」的券：整单券、运费券都算可用，
+   * 指定商品券必须命中本商品或它挂的分类。空范围的指定商品券按「用不了」排除 ——
+   * 与结账时的 eligibleVoucherBase 同一判定，不能出现「这里能领、结账用不了」。
+   *
+   * 直接复用 listPublicVouchers 再过滤：开关、有效期、已领张数只有一处口径。
+   */
+  async listPublicVouchersForProduct(input: {
+    productId: string;
+    categoryIds?: string[];
+    customerId?: string | null;
+  }): Promise<PublicVoucherDTO[]> {
+    const all = await this.listPublicVouchers(input.customerId);
+    const categories = new Set(input.categoryIds ?? []);
+    return all.filter((v) => {
+      if (v.type !== "specific_product") return true;
+      const scopes = v.scopes ?? [];
+      return scopes.some((sc) =>
+        sc.scope_type === "product"
+          ? sc.scope_id === input.productId
+          : categories.has(sc.scope_id),
+      );
+    });
+  }
+
+  /**
    * 领取一张店铺券。
    *
    * 实现方式是「自动发一条专属券码」：核销链路（consumeVoucherCodes /

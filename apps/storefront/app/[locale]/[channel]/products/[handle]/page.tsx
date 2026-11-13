@@ -16,7 +16,8 @@ export default async function ProductPage({
 
   // 评价与券都在拿到商品之后拉：mock 模式下评价按商品标题归类
   const [vouchers, reviews] = await Promise.all([
-    getStoreVouchers(),
+    // 只取本商品可用的券（ADR-071）：全店券列表会混进「限别的商品」的券
+    getStoreVouchers(product.handle),
     getProductReviews(handle, product.title),
   ]);
 

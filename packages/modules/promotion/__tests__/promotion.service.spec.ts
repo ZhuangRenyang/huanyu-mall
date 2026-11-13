@@ -1441,3 +1441,79 @@ describe("领券（ADR-029）", () => {
     expect(mine[1]!.status).toBe("used");
   });
 });
+
+describe("本商品可用券（ADR-071）", () => {
+  it("整单券/运费券都算可用；指定商品券只认命中本商品或本分类的", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.setFeatureEnabled("voucher", true);
+
+    const order = await service.createVoucher({
+      name: "整单券",
+      discountType: "fixed",
+      discountValue: 1000n,
+      isPublic: true,
+    });
+    const shipping = await service.createVoucher({
+      name: "运费券",
+      type: "shipping",
+      discountType: "fixed",
+      discountValue: 800n,
+      isPublic: true,
+    });
+    const hitProduct = await service.createVoucher({
+      name: "限本商品",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 500n,
+      isPublic: true,
+      scopes: [{ scopeType: "product", scopeId: "prod_a" }],
+    });
+    const hitCategory = await service.createVoucher({
+      name: "限本分类",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 300n,
+      isPublic: true,
+      scopes: [{ scopeType: "category", scopeId: "cat_x" }],
+    });
+    await service.createVoucher({
+      name: "限别的商品",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 200n,
+      isPublic: true,
+      scopes: [{ scopeType: "product", scopeId: "prod_b" }],
+    });
+    await service.createVoucher({
+      name: "非公开券",
+      discountType: "fixed",
+      discountValue: 100n,
+      isPublic: false,
+    });
+
+    const list = await service.listPublicVouchersForProduct({
+      productId: "prod_a",
+      categoryIds: ["cat_x"],
+    });
+    expect(list.map((v) => v.id).sort()).toEqual(
+      [order.id, shipping.id, hitProduct.id, hitCategory.id].sort(),
+    );
+  });
+
+  it("空范围的指定商品券不出现（结账时它也用不了，不能在这里骗人领）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.setFeatureEnabled("voucher", true);
+    const broken = await service.createVoucher({
+      name: "没范围的指定商品券",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 500n,
+      isPublic: true,
+    });
+
+    const list = await service.listPublicVouchersForProduct({ productId: "prod_a" });
+    expect(list.some((v) => v.id === broken.id)).toBe(false);
+  });
+});

@@ -386,6 +386,15 @@ export interface IPromotionModuleService {
   // 领券（ADR-029）
   /** 店面可领的店铺券（含当前顾客是否已领、已领几张）。 */
   listPublicVouchers(customerId?: string | null): Promise<PublicVoucherDTO[]>;
+  /**
+   * 本商品可用的店铺券（商品页领券区，ADR-071）。
+   * 整单券与运费券都算可用；指定商品券必须命中本商品或其分类。
+   */
+  listPublicVouchersForProduct(input: {
+    productId: string;
+    categoryIds?: string[];
+    customerId?: string | null;
+  }): Promise<PublicVoucherDTO[]>;
   /** 领取：生成一条专属券码并记领取人。重复领取直接返回已领的码。 */
   collectVoucher(voucherId: string, customerId: string): Promise<{ code: string; alreadyCollected: boolean }>;
   /** 我的卡券（未用在前）。 */

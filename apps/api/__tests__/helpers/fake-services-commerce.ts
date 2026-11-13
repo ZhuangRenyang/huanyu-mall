@@ -100,8 +100,32 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         .filter((v) => v.is_public === true && v.status === "active")
         .map((v) => {
           const count = mine.filter((c) => c.voucherId === v.id).length;
-          return { ...v, collected: count > 0, collected_count: count };
+          // 范围要带出来（ADR-066）：店面靠它提示「限 N 件商品」，路由也要按它过滤
+          return {
+            ...v,
+            scopes: voucherScopes.get(String(v.id)) ?? [],
+            collected: count > 0,
+            collected_count: count,
+          };
         });
+    },
+    /** 本商品可用券（ADR-071）：与真实服务同一判定，整单/运费券不过滤。 */
+    listPublicVouchersForProduct: async (input: {
+      productId: string;
+      categoryIds?: string[];
+      customerId?: string | null;
+    }) => {
+      const all = (await promotion.listPublicVouchers(input.customerId)) as Array<{
+        type?: string;
+        scopes?: Array<{ scope_type: string; scope_id: string }>;
+      }>;
+      const categories = new Set(input.categoryIds ?? []);
+      return all.filter((v) => {
+        if (v.type !== "specific_product") return true;
+        return (v.scopes ?? []).some((sc) =>
+          sc.scope_type === "product" ? sc.scope_id === input.productId : categories.has(sc.scope_id),
+        );
+      });
     },
     collectVoucher: async (voucherId: string, customerId: string) => {
       const v = vouchers.get(voucherId);
