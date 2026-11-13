@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ClipboardList, ChevronRight, Search } from 'lucide-react';
+import { ClipboardList, ChevronRight, Search, Truck } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -16,6 +16,7 @@ import {
   cn,
 } from '@mall/ui';
 import { OrderDetail } from '@/components/order-detail';
+import { BatchShipDialog } from '@/components/batch-ship-dialog';
 import { listOrders, type OrderListResult } from '@/lib/admin-api';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
@@ -58,6 +59,9 @@ export function OrdersPage() {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [page, setPage] = useState(0);
+  /** 批量发货选中的订单 id（只含可发货的单）。 */
+  const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  const [batchOpen, setBatchOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // 搜索防抖 300ms：每敲一个字都打一次接口既浪费也会让结果闪
@@ -70,6 +74,11 @@ export function OrdersPage() {
   useEffect(() => {
     setPage(0);
   }, [filter, debounced]);
+
+  // 换页签 / 换页 / 换关键字就清空勾选：留着会导致「对看不见的订单发货」
+  useEffect(() => {
+    setPickedIds(new Set());
+  }, [filter, debounced, page]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -107,6 +116,24 @@ export function OrdersPage() {
   const orders = result.items;
   const selected = orders.find((o) => o.id === selectedId) ?? null;
 
+  /** 只有「待发货」的订单能被批量选中：退款中的单发了就是净亏。 */
+  const pickable = orders.filter((o) => o.orderStatus === 'paid');
+  const pickedOrders = orders.filter((o) => pickedIds.has(o.id));
+  const allPicked = pickable.length > 0 && pickable.every((o) => pickedIds.has(o.id));
+
+  const togglePick = (id: string) => {
+    setPickedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const togglePickAll = () => {
+    setPickedIds(allPicked ? new Set() : new Set(pickable.map((o) => o.id)));
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -123,6 +150,23 @@ export function OrdersPage() {
           />
         </label>
       </div>
+
+      {/* 批量操作条：只在勾了单之后出现，不占常驻空间 */}
+      {pickedOrders.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2">
+          <span className="text-sm text-foreground">已选 {pickedOrders.length} 单</span>
+          <Button size="sm" onClick={() => setBatchOpen(true)}>
+            <Truck className="mr-1 size-3.5" strokeWidth={2} aria-hidden="true" />
+            批量发货
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setPickedIds(new Set())}>
+            取消选择
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            只有待发货订单可批量发；退款中的单不在此列
+          </span>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-1" role="tablist" aria-label="订单筛选">
         {FILTERS.map((f) => (
@@ -162,6 +206,16 @@ export function OrdersPage() {
           <table className="w-full text-sm">
             <thead className="bg-muted text-left text-xs text-muted-foreground">
               <tr>
+                <th scope="col" className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="全选待发货订单"
+                    checked={allPicked}
+                    disabled={pickable.length === 0}
+                    onChange={togglePickAll}
+                    className="size-4 align-middle"
+                  />
+                </th>
                 <th scope="col" className="px-4 py-3 font-medium">订单</th>
                 <th scope="col" className="px-4 py-3 font-medium">商品</th>
                 <th scope="col" className="px-4 py-3 font-medium">金额</th>
@@ -177,6 +231,20 @@ export function OrdersPage() {
                 const qty = o.items.reduce((n, i) => n + i.quantity, 0);
                 return (
                   <tr key={o.id} className="transition-colors duration-150 hover:bg-muted/50">
+                    <td className="px-4 py-3">
+                      {o.orderStatus === 'paid' ? (
+                        <input
+                          type="checkbox"
+                          aria-label={`选中订单 ${o.id}`}
+                          checked={pickedIds.has(o.id)}
+                          onChange={() => togglePick(o.id)}
+                          className="size-4 align-middle"
+                        />
+                      ) : (
+                        // 非待发货不可选：留空位保持列对齐，不显示禁用框（省一列噪音）
+                        <span aria-hidden="true" className="block size-4" />
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className="block font-mono text-xs text-foreground">{o.id}</span>
                       <span className="block text-xs text-muted-foreground">
@@ -211,6 +279,17 @@ export function OrdersPage() {
           </table>
         </div>
       )}
+
+      <BatchShipDialog
+        open={batchOpen}
+        orders={pickedOrders}
+        onOpenChange={setBatchOpen}
+        onDone={() => {
+          // 发完清空勾选并刷新列表：状态徽标要立刻变成「已发货」
+          setPickedIds(new Set());
+          refresh();
+        }}
+      />
 
       <Sheet
         open={selected !== null}
