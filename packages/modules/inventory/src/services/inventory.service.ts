@@ -274,6 +274,12 @@ export class InventoryService implements IInventoryModuleService {
     });
   }
 
+  async releaseReservationIfReserved(reservationId: string): Promise<void> {
+    const rsv = await this.repo.findReservation(reservationId);
+    if (!rsv || rsv.status !== "reserved") return;
+    await this.releaseReservation(reservationId);
+  }
+
   async commitReservation(reservationId: string): Promise<void> {
     await this.repo.withTransaction(async (repo) => {
       const rsv = await repo.findReservation(reservationId);

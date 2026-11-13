@@ -4,6 +4,7 @@ import type { OrderStatus } from "@mall/order";
 import { PaginationQuerySchema } from "@mall/types";
 import { errors } from "@mall/core";
 import type { AppDeps } from "../../deps.js";
+import { cancelOrderAndReleaseStock } from "../../lib/cancel-order.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { mapAdminOrder, mapOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
@@ -385,7 +386,8 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.post("/api/v1/admin/orders/:id/cancel", { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const before = await deps.services.order.retrieveOrder(id);
-    await deps.services.order.cancelOrder(id);
+    // 取消必须释放预留库存（ADR-075）：只改状态 = 这几件货永远卖不出去
+    await cancelOrderAndReleaseStock(deps, id);
     const after = await deps.services.order.retrieveOrder(id);
     await deps.audit.record(
       auditEntry(req, {

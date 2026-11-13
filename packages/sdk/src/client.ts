@@ -175,6 +175,8 @@ export function createStoreClient(opts: ClientOptions) {
     /** 提交评价（需登录；一单一商品一条）。 */
     createReview: (b: { order_id: string; product_id: string; rating: number; content?: string }) =>
       post("/api/v1/store/reviews", b),
+    /** 取消未付款订单（ADR-075）：只释放库存，不涉及钱。 */
+    cancelOrder: (id: string) => post(`/api/v1/store/orders/${id}/cancel`, {}),
     /** 确认收货（fulfilled / delivered → completed）。 */
     confirmOrderReceipt: (id: string) =>
       post(`/api/v1/store/orders/${id}/confirm-receipt`, {}),

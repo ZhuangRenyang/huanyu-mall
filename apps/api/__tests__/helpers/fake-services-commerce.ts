@@ -766,6 +766,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         variantIds.map((id) => ({ variantId: id, available: state.variantAvailable ?? 12 })),
       // 低库存规格数（ADR-074）：用例可调，默认 0（没有预警）
       countLowStockItems: async () => state.lowStockCount ?? 0,
+      releaseReservationIfReserved: async () => {},
       // 仓由后端决定：路由不再取仓，整单一次分配（ADR-013）
       allocateAndReserve: async (input: {
         orderId: string;
@@ -830,19 +831,22 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         return { items, count: items.length };
       },
       listReservationIdsByOrder: async () => ["rsv_1"],
-      listReservationsByOrder: async (orderId: string) => [
-        {
-          id: "rsv_1",
+      /**
+       * 某订单的预留（ADR-075）：默认一条在占用的 rsv_1；
+       * 用例可用 state.orderReservations 配「在占用 / 已释放」。
+       */
+      listReservationsByOrder: async (orderId: string) =>
+        (state.orderReservations ?? [{ id: "rsv_1", status: "reserved" }]).map((r) => ({
+          id: r.id,
           inventory_item_id: "invitem_1",
           variant_id: "var_1",
           stock_location_id: "loc_1",
           line_item_id: `${orderId}:var_1:loc_1`,
           order_id: orderId,
           quantity: 1,
-          status: "reserved",
+          status: r.status,
           workflow_run_id: null,
-        },
-      ],
+        })),
       createInventoryTransfer: async (input: Record<string, unknown>) => {
         const t = {
           id: `xfer_${++transferCounter}`,
@@ -1091,7 +1095,14 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         amountMinor: state.orderCreated ? BigInt(String(order.total_minor ?? 0)) : 0n,
         currencyCode: "CNY",
       }),
-      cancelOrder: async () => {},
+      /** 改状态（测试专用）：验「已付款不能直接取消」需要把单推到 paid。 */
+      updateStatus: async (_id: string, status: string) => {
+        order.status = status;
+      },
+      /** 取消订单（ADR-075）：真的改状态，取消要能验出来（幂等由服务层守）。 */
+      cancelOrder: async () => {
+        order.status = "canceled";
+      },
       /*
        * 退款申请单用内存数组：够跑「申请 → 列表 → 同意/拒绝」这条链。
        * 真实守卫（订单可退、金额全额、重复申请）在模块单测里守，这里只保证接口形状对。

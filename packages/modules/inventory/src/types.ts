@@ -227,6 +227,15 @@ export interface IInventoryModuleService {
   /** 按指定仓预留（后台/运维/测试用）；内部走原子条件 UPDATE。 */
   reserve(input: ReserveInput): Promise<ReservationDTO>;
   releaseReservation(reservationId: string): Promise<void>;
+  /**
+   * 幂等释放（ADR-075）：已释放 / 已提交 / 不存在都直接返回。
+   *
+   * 取消订单要释放这张单的全部预留，而工作流重试时前一批可能已经放过了 ——
+   * 用 releaseReservation 会在第一条已释放的预留上抛错，整次重试永远失败。
+   */
+  releaseReservationIfReserved(reservationId: string): Promise<void>;
+  /** 某订单的预留（取消订单时按单释放库存）。 */
+  listReservationsByOrder(orderId: string): Promise<ReservationDTO[]>;
   commitReservation(reservationId: string): Promise<void>;
   adjustLevel(input: {
     inventoryItemId: string;

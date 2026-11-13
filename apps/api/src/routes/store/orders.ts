@@ -5,6 +5,7 @@ import { PaginationQuerySchema } from "@mall/types";
 import type { AppDeps } from "../../deps.js";
 import { mapOrder } from "../mappers.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
+import { cancelOrderAndReleaseStock } from "../../lib/cancel-order.js";
 
 const refundRequestBody = z.object({
   /** 顾客只说明原因；金额一律由服务端按订单实付取（铁律 13，客户端不传金额）。 */
@@ -108,6 +109,36 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         limit: q.limit,
         hasMore: q.offset + res.items.length < res.count,
       });
+    },
+  );
+
+  /**
+   * 取消未付款订单（淘宝「取消订单」，ADR-075）。
+   *
+   * 只有买家自己能取消，且只限**未付款**：付过款的单必须先走退款审核 ——
+   * 取消订单只释放库存、不涉及资金，这条线不能用来绕开退款流程。
+   */
+  app.post(
+    "/api/v1/store/orders/:id/cancel",
+    { preHandler: auth.customerAuth },
+    async (req, reply) => {
+      if (!req.auth || req.auth.scope !== "customer" || !req.auth.customerId) {
+        throw errors.unauthenticated("请先登录");
+      }
+      const { id } = req.params as { id: string };
+      const order = await deps.services.order.retrieveOrder(id);
+      assertOrderAccess(order, req.auth);
+      if (order.status !== "pending" && order.status !== "awaiting_payment") {
+        throw errors.validation(
+          order.status === "canceled"
+            ? "订单已经取消过了"
+            : "只有未付款的订单可以直接取消，已付款请申请售后",
+        );
+      }
+
+      await cancelOrderAndReleaseStock(deps, id);
+      const after = await deps.services.order.retrieveOrder(id);
+      reply.ok(mapOrder(after));
     },
   );
 

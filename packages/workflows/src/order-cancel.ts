@@ -9,7 +9,8 @@ interface OrderCancelPort {
   cancelOrder(orderId: string): Promise<void>;
 }
 interface InventoryCancelPort {
-  releaseReservation(id: string): Promise<void>;
+  /** 幂等释放（ADR-075）：已释放的跳过，重试不会在第一条上抛错。 */
+  releaseReservationIfReserved(id: string): Promise<void>;
 }
 
 const cancelOrderStep = defineStep({
@@ -29,7 +30,7 @@ const releaseReservationsStep = defineStep({
   compensationClass: "R",
   async invoke(input: { reservationIds: string[] }, ctx) {
     const inv = ctx.resolve<InventoryCancelPort>("inventory");
-    for (const id of input.reservationIds) await inv.releaseReservation(id);
+    for (const id of input.reservationIds) await inv.releaseReservationIfReserved(id);
     return new StepResponse({ released: input.reservationIds.length });
   },
 });

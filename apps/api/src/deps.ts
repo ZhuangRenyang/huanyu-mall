@@ -235,6 +235,7 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
       return { reservationIds: r.reservationIds };
     },
     releaseReservation: (id: string) => services.inventory.releaseReservation(id),
+    releaseReservationIfReserved: (id: string) => services.inventory.releaseReservationIfReserved(id),
   };
   const paymentPort = {
     createPaymentCollection: async (input: unknown) => {

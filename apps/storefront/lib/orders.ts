@@ -263,6 +263,20 @@ export async function confirmReceipt(orderId: string): Promise<void> {
   await getStoreClient().confirmOrderReceipt(orderId);
 }
 
+/**
+ * 取消未付款订单（淘宝「取消订单」，ADR-075）。
+ *
+ * 只有未付款能取消：付过款的必须走售后审核，取消只释放库存、不动钱。
+ * 服务端会再校验一次状态与归属，这里的按钮只是入口。
+ */
+export async function cancelUnpaidOrder(orderId: string): Promise<void> {
+  if (getApiMode() !== 'live') {
+    writeStatusOverride(orderId, 'canceled');
+    return;
+  }
+  await getStoreClient().cancelOrder(orderId);
+}
+
 export function findOrder(id: string): OrderView | null {
   if (!id) return null;
   return listOrders().find((o) => o.id === id) ?? null;

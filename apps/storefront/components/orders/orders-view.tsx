@@ -7,6 +7,7 @@ import { Badge, Button, EmptyState, Skeleton, formatMoney } from '@mall/ui';
 import { TextField } from '@/components/form-field';
 import {
   ORDER_STATUS_META,
+  cancelUnpaidOrder,
   findOrder,
   findOrderByIdentity,
   formatDateTime,
@@ -73,6 +74,8 @@ export function OrdersView({
   const [detail, setDetail] = useState<OrderView | null>(null);
   /** 订单详情被改动（如确认收货）后自增，触发重新拉取。 */
   const [detailVersion, setDetailVersion] = useState(0);
+  /** 列表上的操作（取消订单）改动了数据后自增，触发重新拉取。 */
+  const [listVersion, setListVersion] = useState(0);
   const [queryId, setQueryId] = useState('');
   const [identity, setIdentity] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -122,7 +125,7 @@ export function OrdersView({
     return () => {
       cancelled = true;
     };
-  }, [live, filter, page]);
+  }, [live, filter, page, listVersion]);
 
   // 详情：按单号查（游客单号 + 后端订单号都能查到）
   useEffect(() => {
@@ -277,7 +280,12 @@ export function OrdersView({
           <>
             <ul className="space-y-3">
               {orders.map((o) => (
-                <OrderRow key={o.id} order={o} base={base} />
+                <OrderRow
+                  key={o.id}
+                  order={o}
+                  base={base}
+                  onChanged={() => setListVersion((v) => v + 1)}
+                />
               ))}
             </ul>
             {(page > 1 || hasMore) && (
@@ -308,10 +316,37 @@ export function OrdersView({
   );
 }
 
-function OrderRow({ order, base }: { order: OrderView; base: string }) {
+function OrderRow({
+  order,
+  base,
+  onChanged,
+}: {
+  order: OrderView;
+  base: string;
+  onChanged: () => void;
+}) {
   const meta = ORDER_STATUS_META[order.status];
   const totalQty = order.items.reduce((n, i) => n + i.quantity, 0);
   const canRefund = order.status === 'to_ship' || order.status === 'to_receive' || order.status === 'completed';
+  /** 未付款才能自助取消（ADR-075）；已付款走售后。 */
+  const canCancel = order.status === 'awaiting_payment';
+  const [canceling, setCanceling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const cancel = async () => {
+    // 取消是不可逆的（释放库存后重新下单是另一单），先确认
+    if (!window.confirm('取消后库存会被释放，订单不可恢复。确定取消这笔订单？')) return;
+    setCanceling(true);
+    setCancelError(null);
+    try {
+      await cancelUnpaidOrder(order.id);
+      onChanged();
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : '取消失败，请稍后重试');
+    } finally {
+      setCanceling(false);
+    }
+  };
   return (
     <li className="rounded-lg border border-border bg-card p-4">
       <a
@@ -346,14 +381,31 @@ function OrderRow({ order, base }: { order: OrderView; base: string }) {
         之前退款藏在详情页最下面，顾客想退还要先翻完物流和金额 —— 找不到就是没有。
         只在可退状态出现，避免「已取消/已退款」的订单还挂着售后入口。
       */}
-      {canRefund && (
-        <div className="mt-3 flex justify-end border-t border-border pt-3">
-          <a
-            href={`${base}/orders?order=${order.id}&refund=1`}
-            className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors duration-150 hover:bg-muted"
-          >
-            申请售后
-          </a>
+      {(canRefund || canCancel) && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
+          {cancelError && (
+            <span className="mr-auto text-xs text-destructive" role="alert">
+              {cancelError}
+            </span>
+          )}
+          {canCancel && (
+            <button
+              type="button"
+              onClick={() => void cancel()}
+              disabled={canceling}
+              className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted disabled:opacity-60"
+            >
+              {canceling ? '取消中…' : '取消订单'}
+            </button>
+          )}
+          {canRefund && (
+            <a
+              href={`${base}/orders?order=${order.id}&refund=1`}
+              className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors duration-150 hover:bg-muted"
+            >
+              申请售后
+            </a>
+          )}
         </div>
       )}
     </li>
