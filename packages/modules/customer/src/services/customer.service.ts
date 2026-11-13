@@ -4,6 +4,7 @@ import type {
   AddAddressInput,
   AddressDTO,
   CreateCustomerInput,
+  FavoriteDTO,
   CustomerDTO,
   CustomerRepository,
   ICustomerModuleService,
@@ -75,6 +76,33 @@ export class CustomerService implements ICustomerModuleService {
     if (!address) throw addressNotFound(addressId);
     if (address.customer_id !== customerId) throw addressNotOwned(addressId);
     return this.repo.setDefaultShipping(customerId, addressId);
+  }
+
+  // —— 收藏（ADR-048）——
+
+  async addFavorite(customerId: string, productId: string): Promise<void> {
+    // 收藏前先确认顾客存在：否则会留下指向不存在顾客的行
+    await this.retrieveCustomer(customerId);
+    await this.repo.insertFavorite({
+      id: prefixedUlid("fav"),
+      customerId,
+      productId,
+    });
+  }
+
+  async removeFavorite(customerId: string, productId: string): Promise<void> {
+    await this.repo.deleteFavorite(customerId, productId);
+  }
+
+  async listFavorites(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: FavoriteDTO[]; count: number }> {
+    return this.repo.listFavorites(customerId, q);
+  }
+
+  async listFavoriteProductIds(customerId: string): Promise<string[]> {
+    return this.repo.listFavoriteProductIds(customerId);
   }
 
   async deleteAddress(customerId: string, addressId: string): Promise<void> {

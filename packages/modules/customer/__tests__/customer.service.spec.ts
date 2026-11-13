@@ -93,6 +93,42 @@ class InMemoryCustomerRepository implements CustomerRepository {
     this.addresses.set(addressId, next);
     return next;
   }
+
+  // —— 收藏（ADR-048）——
+  readonly favorites: Array<{ customerId: string; productId: string; createdAt: Date }> = [];
+
+  async insertFavorite(input: { id: string; customerId: string; productId: string }): Promise<void> {
+    // 与 SQL 的 onConflictDoNothing 同语义：重复收藏不新增行
+    if (this.favorites.some((f) => f.customerId === input.customerId && f.productId === input.productId)) {
+      return;
+    }
+    this.favorites.push({
+      customerId: input.customerId,
+      productId: input.productId,
+      createdAt: new Date(),
+    });
+  }
+
+  async deleteFavorite(customerId: string, productId: string): Promise<void> {
+    const idx = this.favorites.findIndex(
+      (f) => f.customerId === customerId && f.productId === productId,
+    );
+    if (idx >= 0) this.favorites.splice(idx, 1);
+  }
+
+  async listFavorites(customerId: string, q: { limit: number; offset: number }) {
+    const mine = this.favorites.filter((f) => f.customerId === customerId);
+    return {
+      items: mine
+        .slice(q.offset, q.offset + q.limit)
+        .map((f) => ({ product_id: f.productId, created_at: f.createdAt })),
+      count: mine.length,
+    };
+  }
+
+  async listFavoriteProductIds(customerId: string): Promise<string[]> {
+    return this.favorites.filter((f) => f.customerId === customerId).map((f) => f.productId);
+  }
 }
 
 function setup() {
@@ -213,5 +249,46 @@ describe("CustomerService（M10，手机号软标识 + 地址簿）", () => {
     const other = await service.createCustomer({ email: "o@b.com" });
 
     await expect(service.setDefaultAddress(other.id, addr.id)).rejects.toBeInstanceOf(DomainError);
+  });
+});
+
+describe("收藏（ADR-048）", () => {
+  it("重复收藏只有一条，列表与 ids 一致", async () => {
+    const { service } = setup();
+    const c = await service.createCustomer({ email: "fav@example.com" });
+
+    await service.addFavorite(c.id, "prod_1");
+    await service.addFavorite(c.id, "prod_1");
+
+    const list = await service.listFavorites(c.id, { limit: 10, offset: 0 });
+    expect(list.count).toBe(1);
+    expect(list.items[0]!.product_id).toBe("prod_1");
+    expect(await service.listFavoriteProductIds(c.id)).toEqual(["prod_1"]);
+  });
+
+  it("取消收藏是幂等的（没收藏过也不报错）", async () => {
+    const { service } = setup();
+    const c = await service.createCustomer({ email: "fav2@example.com" });
+
+    await service.removeFavorite(c.id, "prod_never");
+    await service.addFavorite(c.id, "prod_1");
+    await service.removeFavorite(c.id, "prod_1");
+
+    expect(await service.listFavoriteProductIds(c.id)).toEqual([]);
+  });
+
+  it("收藏不存在的顾客 → 报错（不留指向空顾客的行）", async () => {
+    const { service } = setup();
+    await expect(service.addFavorite("cus_missing", "prod_1")).rejects.toBeInstanceOf(DomainError);
+  });
+
+  it("收藏列表按顾客隔离", async () => {
+    const { service } = setup();
+    const a = await service.createCustomer({ email: "a@example.com" });
+    const b = await service.createCustomer({ email: "b@example.com" });
+    await service.addFavorite(a.id, "prod_1");
+
+    expect(await service.listFavoriteProductIds(b.id)).toEqual([]);
+    expect(await service.listFavoriteProductIds(a.id)).toEqual(["prod_1"]);
   });
 });

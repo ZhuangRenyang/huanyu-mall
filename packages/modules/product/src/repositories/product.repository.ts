@@ -39,6 +39,8 @@ export class DrizzleProductRepository implements ProductRepository {
     if (q.status) conditions.push(eq(schema.product.status, q.status));
     if (q.handle) conditions.push(eq(schema.product.handle, q.handle));
     if (q.q) conditions.push(sql`${schema.product.title} ILIKE ${`%${q.q}%`}`);
+    // ids 为空数组时要返回空（而不是被当成「不过滤」返回全店商品）
+    if (q.ids) conditions.push(inArray(schema.product.id, q.ids.length > 0 ? q.ids : [""]));
     if (q.categoryId) {
       conditions.push(sql`EXISTS (
         SELECT 1 FROM product_category_link pcl

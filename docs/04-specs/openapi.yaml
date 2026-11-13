@@ -1579,6 +1579,75 @@ paths:
                   code: { type: integer, example: 0 }
                   data: { $ref: '#/components/schemas/AdminReview' }
 
+  /store/customer/favorites:
+    get:
+      tags: [store]
+      summary: 我的收藏（商品卡片，分页）
+      description: 只返回上架中的商品；下架商品的收藏记录保留，重新上架后会再出现（ADR-048）。
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProductSummary' }
+                      count: { type: integer, example: 3 }
+                      hasMore: { type: boolean, example: false }
+        '401': { description: 未登录(10001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /store/customer/favorites/ids:
+    get:
+      tags: [store]
+      summary: 收藏的商品 id（详情页判断是否已收藏）
+      security: [{ customerJWT: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 0 }
+                  data:
+                    type: object
+                    properties:
+                      product_ids:
+                        type: array
+                        items: { type: string }
+                        example: ["prod_01H"]
+
+  /store/customer/favorites/{productId}:
+    post:
+      tags: [store]
+      summary: 收藏（幂等，重复收藏返回 204）
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { name: productId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: 已收藏（或本来就收藏过） }
+        '404': { description: 商品不存在或未上架(30001), content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    delete:
+      tags: [store]
+      summary: 取消收藏（幂等）
+      security: [{ customerJWT: [] }]
+      parameters:
+        - { name: productId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: 已取消（或本来就没收藏） }
+
   /store/auth/settings:
     get:
       tags: [store-auth]

@@ -38,6 +38,61 @@ const productListQuery = PaginationQuerySchema.extend({
   sort: z.string().optional(),
 });
 
+
+/**
+ * 商品摘要映射（列表 / 收藏共用）。
+ *
+ * 一次批量计价 + 一次批量库存 + 一次批量取图，禁 N+1。
+ * 抽出来是因为收藏列表要和商品列表给出完全一样的卡片数据 ——
+ * 复制一份迟早出现「列表有优惠价、收藏里是原价」这种两套口径。
+ */
+export async function mapStoreProductSummaries(
+  deps: AppDeps,
+  channel: { currency_code: string },
+  channelId: string,
+  products: Awaited<ReturnType<AppDeps["services"]["product"]["listProductsWithVariants"]>>["items"],
+) {
+  const variantIds = products.flatMap((p) => p.variants.map((v) => v.id));
+  const [prices, availability] = await Promise.all([
+    variantIds.length > 0
+      ? deps.services.pricing.calculatePrices({
+          variantIds,
+          context: { currencyCode: channel.currency_code, channelId },
+        })
+      : Promise.resolve([]),
+    // 库存也批量取：列表要标「已售罄」，缺了它顾客只能点进详情才发现卖完了（ADR-041）
+    variantIds.length > 0 ? deps.services.inventory.getAvailability({ variantIds }) : Promise.resolve([]),
+  ]);
+  const priceByVariant = new Map(prices.map((p) => [p.variantId, p.amountMinor]));
+  const availByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
+  // 主图：批量取 URL。原来这里写死 null，导致店面列表永远没有图。
+  const thumbIds = products
+    .map((p) => p.thumbnail_file_id)
+    .filter((id): id is string => Boolean(id));
+  const thumbUrls = thumbIds.length > 0 ? await deps.services.file.getPublicUrls(thumbIds) : {};
+
+  return products.map((p) => {
+    const amounts = p.variants
+      .map((v) => priceByVariant.get(v.id))
+      .filter((a): a is bigint => a !== undefined);
+    const min = amounts.length > 0 ? amounts.reduce((a, b) => (a < b ? a : b)) : undefined;
+    return {
+      id: p.id,
+      title: p.title,
+      handle: p.handle,
+      subtitle: p.subtitle,
+      status: p.status,
+      thumbnail_url: p.thumbnail_file_id ? (thumbUrls[p.thumbnail_file_id] ?? null) : null,
+      price:
+        min !== undefined
+          ? { amount_minor: Number(min), currency_code: channel.currency_code }
+          : undefined,
+      // 商品级可用量 = 各变体可用量之和（0 = 售罄，店面前端据此标「已售罄」）
+      available_quantity: p.variants.reduce((sum, v) => sum + (availByVariant.get(v.id) ?? 0), 0),
+    };
+  });
+}
+
 /** GET /store/products + /store/products/{handle} + /store/categories（openapi 686/720/741）。 */
 export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
   app.get(
@@ -56,50 +111,8 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
         sort: q.sort,
       });
 
-      // 批量计价（一次 pricing.calculatePrices，禁 N+1），商品价取变体最低价
-      const variantIds = res.items.flatMap((p) => p.variants.map((v) => v.id));
-      // 库存也批量取：列表要标「已售罄」，缺了它顾客只能点进详情才发现卖完了（ADR-041）
-      const [prices, availability] = await Promise.all([
-        variantIds.length > 0
-          ? deps.services.pricing.calculatePrices({
-              variantIds,
-              context: { currencyCode: channel.currency_code, channelId },
-            })
-          : Promise.resolve([]),
-        variantIds.length > 0
-          ? deps.services.inventory.getAvailability({ variantIds })
-          : Promise.resolve([]),
-      ]);
-      const priceByVariant = new Map(prices.map((p) => [p.variantId, p.amountMinor]));
-      const availByVariant = new Map(availability.map((a) => [a.variantId, a.available]));
-      // 主图：批量取 URL。原来这里写死 null，导致店面列表永远没有图。
-      const thumbIds = res.items
-        .map((p) => p.thumbnail_file_id)
-        .filter((id): id is string => Boolean(id));
-      const thumbUrls = thumbIds.length > 0 ? await deps.services.file.getPublicUrls(thumbIds) : {};
-      const items = res.items.map((p) => {
-        const amounts = p.variants
-          .map((v) => priceByVariant.get(v.id))
-          .filter((a): a is bigint => a !== undefined);
-        const min = amounts.length > 0 ? amounts.reduce((a, b) => (a < b ? a : b)) : undefined;
-        return {
-          id: p.id,
-          title: p.title,
-          handle: p.handle,
-          subtitle: p.subtitle,
-          status: p.status,
-          thumbnail_url: p.thumbnail_file_id ? (thumbUrls[p.thumbnail_file_id] ?? null) : null,
-          price:
-            min !== undefined
-              ? { amount_minor: Number(min), currency_code: channel.currency_code }
-              : undefined,
-          // 商品级可用量 = 各变体可用量之和（0 = 售罄，门店前端据此标「已售罄」）
-          available_quantity: p.variants.reduce(
-            (sum, v) => sum + (availByVariant.get(v.id) ?? 0),
-            0,
-          ),
-        };
-      });
+      // 价格 / 库存 / 主图一次批量取完（与收藏列表同一套映射）
+      const items = await mapStoreProductSummaries(deps, channel, channelId, res.items);
 
       // 价格排序（价格来自批量计价结果，内存排即可，无需二次查询）
       if (q.sort === "price.asc") {

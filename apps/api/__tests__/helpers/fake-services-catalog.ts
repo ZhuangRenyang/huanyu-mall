@@ -51,10 +51,15 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
       listProducts: async (q: {
         status?: string;
         q?: string;
+        handle?: string;
+        ids?: string[];
         limit?: number;
         offset?: number;
       } = {}) => {
         let all = products.filter((p) => !q.status || p.status === q.status);
+        // ids 过滤与真实 repo 同口径：空数组 = 空结果（不是「不过滤」）
+        if (q.ids) all = all.filter((p) => q.ids!.includes(p.id));
+        if (q.handle) all = all.filter((p) => p.handle === q.handle);
         if (q.q) {
           const needle = q.q.toLowerCase();
           all = all.filter(
@@ -88,10 +93,12 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
         }
         return before - products.length;
       },
-      listProductsWithVariants: async () => ({
-        items: [{ ...product, variants: [variant] }],
-        count: 1,
-      }),
+      listProductsWithVariants: async (q: { ids?: string[]; status?: string } = {}) => {
+        // 收藏列表按 ids 取卡片：不认 ids 的话测试里会拿到全店商品
+        if (q.ids && !q.ids.includes(product.id)) return { items: [], count: 0 };
+        if (q.status && q.status !== product.status) return { items: [], count: 0 };
+        return { items: [{ ...product, variants: [variant] }], count: 1 };
+      },
       retrieveProduct: async () => ({
         ...product,
         variants: [variant],

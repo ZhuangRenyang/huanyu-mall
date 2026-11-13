@@ -437,6 +437,9 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     },
   };
 
+  /** 收藏记录（ADR-048）：内存版，够驱动收藏路由的契约测试。 */
+  const favorites: Array<{ customerId: string; productId: string; createdAt: Date }> = [];
+
   return {
     promotion,
     customer: {
@@ -504,6 +507,29 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         is_default_billing: false,
       }),
       deleteAddress: async () => {},
+      // —— 收藏（ADR-048）——
+      addFavorite: async (customerId: string, productId: string) => {
+        if (!favorites.some((f) => f.customerId === customerId && f.productId === productId)) {
+          favorites.push({ customerId, productId, createdAt: new Date() });
+        }
+      },
+      removeFavorite: async (customerId: string, productId: string) => {
+        const idx = favorites.findIndex(
+          (f) => f.customerId === customerId && f.productId === productId,
+        );
+        if (idx >= 0) favorites.splice(idx, 1);
+      },
+      listFavorites: async (customerId: string, q: { limit: number; offset: number }) => {
+        const mine = favorites.filter((f) => f.customerId === customerId);
+        return {
+          items: mine
+            .slice(q.offset, q.offset + q.limit)
+            .map((f) => ({ product_id: f.productId, created_at: f.createdAt })),
+          count: mine.length,
+        };
+      },
+      listFavoriteProductIds: async (customerId: string) =>
+        favorites.filter((f) => f.customerId === customerId).map((f) => f.productId),
       setDefaultAddress: async (customerId: string, addressId: string) => ({
         id: addressId,
         customer_id: customerId,

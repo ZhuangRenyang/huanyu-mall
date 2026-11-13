@@ -5,6 +5,7 @@ import { ShieldCheck, ShoppingBag, Truck } from 'lucide-react';
 import { Badge, Button, Price, VariantPicker } from '@mall/ui';
 import type { VariantOptionGroup } from '@mall/ui';
 import { useCart } from '@/lib/cart-store';
+import { ProductFavoriteButton } from './product-favorite-button';
 import type { CatalogProduct } from '@/lib/mock-products';
 
 /** 从变体推导规格选项组（单/多选项组合均适用）。 */
@@ -35,7 +36,14 @@ function stockMapOf(product: CatalogProduct): Record<string, number> {
   return map;
 }
 
-export function ProductBuyBox({ product }: { product: CatalogProduct }) {
+export function ProductBuyBox({
+  product,
+  accountHref = '/account',
+}: {
+  product: CatalogProduct;
+  /** 未登录点收藏时跳转的账户页（带语言与渠道前缀）。 */
+  accountHref?: string;
+}) {
   const { addItem } = useCart();
   const groups = optionGroups(product);
   const stockMap = stockMapOf(product);
@@ -114,10 +122,14 @@ export function ProductBuyBox({ product }: { product: CatalogProduct }) {
       )}
       {hint && <p className="text-sm text-destructive">请先选择规格</p>}
 
-      <Button size="lg" className="w-full" onClick={handleAdd} disabled={soldOut}>
-        <ShoppingBag className="size-5" strokeWidth={2} aria-hidden="true" />
-        {soldOut ? '已售罄' : '加入购物车'}
-      </Button>
+      <div className="grid gap-2 sm:grid-cols-[2fr_1fr]">
+        <Button size="lg" className="w-full" onClick={handleAdd} disabled={soldOut}>
+          <ShoppingBag className="size-5" strokeWidth={2} aria-hidden="true" />
+          {soldOut ? '已售罄' : '加入购物车'}
+        </Button>
+        {/* 收藏：淘宝在价格区右侧，这里放在加购旁边，不打断购买动线 */}
+        <ProductFavoriteButton productId={product.id} accountHref={accountHref} />
+      </div>
 
       <div className="space-y-2 border-t border-border pt-4 text-sm text-muted-foreground">
         <p className="flex items-center gap-2">

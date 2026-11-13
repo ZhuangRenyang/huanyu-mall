@@ -50,3 +50,20 @@ export const customerGroup = pgTable("customer_group", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
+
+/** 商品收藏（ADR-048）：取消即删行，不做软删。 */
+export const customerFavorite = pgTable(
+  "customer_favorite",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customer.id),
+    productId: text("product_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_customer_favorite").on(t.customerId, t.productId),
+    index("idx_customer_favorite_customer").on(t.customerId, t.createdAt),
+  ],
+);

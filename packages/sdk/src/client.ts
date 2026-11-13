@@ -172,6 +172,16 @@ export function createStoreClient(opts: ClientOptions) {
     /** 提交评价（需登录；一单一商品一条）。 */
     createReview: (b: { order_id: string; product_id: string; rating: number; content?: string }) =>
       post("/api/v1/store/reviews", b),
+    /** 我的收藏（商品卡片，分页）。 */
+    listMyFavorites: (q?: Query) => get("/api/v1/store/customer/favorites", q),
+    /** 收藏的商品 id（详情页判断是否已收藏）。 */
+    listMyFavoriteIds: () => get("/api/v1/store/customer/favorites/ids"),
+    /** 收藏（幂等）。 */
+    addFavorite: (productId: string) =>
+      post(`/api/v1/store/customer/favorites/${productId}`, {}),
+    /** 取消收藏（幂等）。 */
+    removeFavorite: (productId: string) =>
+      del(`/api/v1/store/customer/favorites/${productId}`),
     setGiftCardCodes: (cartId: string, b: SetGiftCardCodesRequest) =>
       put(`/api/v1/store/carts/${cartId}/gift-card-codes`, b),
     listPaymentProviders: (cartId: string) =>

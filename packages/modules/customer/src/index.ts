@@ -17,6 +17,7 @@ export default Module("customer", {
     "migrations/0001_init.sql",
     "migrations/0002_phone_signup.sql",
     "migrations/0003_cn_address.sql",
+    "migrations/0004_favorites.sql",
   ],
   linkable,
 });

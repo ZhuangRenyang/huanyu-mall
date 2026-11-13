@@ -3,6 +3,7 @@ import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
   AddAddressInput,
+  FavoriteDTO,
   AddressDTO,
   CreateCustomerInput,
   CustomerDTO,
@@ -178,6 +179,57 @@ export class DrizzleCustomerRepository implements CustomerRepository {
         .returning();
       return toAddressDTO(rows[0]!);
     });
+  }
+
+  // —— 收藏（ADR-048）——
+
+  async insertFavorite(input: { id: string; customerId: string; productId: string }): Promise<void> {
+    // onConflictDoNothing：重复收藏是幂等的（连点两下不该报错）
+    await this.db
+      .insert(schema.customerFavorite)
+      .values({ id: input.id, customerId: input.customerId, productId: input.productId })
+      .onConflictDoNothing();
+  }
+
+  async deleteFavorite(customerId: string, productId: string): Promise<void> {
+    await this.db
+      .delete(schema.customerFavorite)
+      .where(
+        and(
+          eq(schema.customerFavorite.customerId, customerId),
+          eq(schema.customerFavorite.productId, productId),
+        ),
+      );
+  }
+
+  async listFavorites(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: FavoriteDTO[]; count: number }> {
+    const rows = await this.db
+      .select()
+      .from(schema.customerFavorite)
+      .where(eq(schema.customerFavorite.customerId, customerId))
+      .orderBy(desc(schema.customerFavorite.createdAt))
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.customerFavorite)
+      .where(eq(schema.customerFavorite.customerId, customerId));
+    return {
+      items: rows.map((r) => ({ product_id: r.productId, created_at: r.createdAt })),
+      count: Number(countRows[0]?.count ?? 0),
+    };
+  }
+
+  async listFavoriteProductIds(customerId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ productId: schema.customerFavorite.productId })
+      .from(schema.customerFavorite)
+      .where(eq(schema.customerFavorite.customerId, customerId))
+      .orderBy(desc(schema.customerFavorite.createdAt));
+    return rows.map((r) => r.productId);
   }
 
   async softDeleteAddress(addressId: string): Promise<void> {

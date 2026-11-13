@@ -81,6 +81,20 @@ export interface CustomerRepository {
   /** 把某条地址设为唯一默认收货地址（先清后设，同一事务）。 */
   setDefaultShipping(customerId: string, addressId: string): Promise<AddressDTO>;
   softDeleteAddress(addressId: string): Promise<void>;
+  // —— 收藏（ADR-048）——
+  insertFavorite(input: { id: string; customerId: string; productId: string }): Promise<void>;
+  deleteFavorite(customerId: string, productId: string): Promise<void>;
+  listFavorites(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: FavoriteDTO[]; count: number }>;
+  listFavoriteProductIds(customerId: string): Promise<string[]>;
+}
+
+/** 收藏（ADR-048）：只存「谁收藏了哪个商品」，商品资料由 product 模块提供。 */
+export interface FavoriteDTO {
+  product_id: string;
+  created_at: Date;
 }
 
 export interface ICustomerModuleService {
@@ -94,5 +108,15 @@ export interface ICustomerModuleService {
   /** 设为默认收货地址（淘宝地址簿里的「设为默认」是一个动作，不是改一个字段）。 */
   setDefaultAddress(customerId: string, addressId: string): Promise<AddressDTO>;
   deleteAddress(customerId: string, addressId: string): Promise<void>;
+  /** 收藏（幂等：已收藏再收藏不报错）。 */
+  addFavorite(customerId: string, productId: string): Promise<void>;
+  removeFavorite(customerId: string, productId: string): Promise<void>;
+  /** 收藏列表（分页，时间倒序）。 */
+  listFavorites(
+    customerId: string,
+    q: { limit: number; offset: number },
+  ): Promise<{ items: FavoriteDTO[]; count: number }>;
+  /** 全部收藏的商品 id（详情页判断「已收藏」用，不分页）。 */
+  listFavoriteProductIds(customerId: string): Promise<string[]>;
   deleteCustomer(id: string): Promise<void>;
 }

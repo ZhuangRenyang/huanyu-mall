@@ -69,7 +69,7 @@ export function ProductDetailView({
           <ProductGallery images={product.images} priority />
         </div>
         <div className="lg:pt-2">
-          <ProductBuyBox product={product} />
+          <ProductBuyBox product={product} accountHref={`${base}/account`} />
           {/* 券条紧跟购买区：淘宝也是在价格下方直接挂「领取」 */}
           <VoucherStrip
             vouchers={vouchers}

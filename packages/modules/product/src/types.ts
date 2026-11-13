@@ -161,6 +161,8 @@ export interface ProductQuery {
   q?: string;
   /** 分类过滤（product_category_link）。 */
   categoryId?: string;
+  /** 按 id 批量取（收藏列表按顾客收藏的商品 id 拉卡片数据）。 */
+  ids?: string[];
   /** 排序：created_at.desc | title.asc | title.desc。价格排序在路由层按批量计价结果排。 */
   sort?: string;
 }
