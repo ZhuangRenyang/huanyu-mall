@@ -1,5 +1,5 @@
 import type { AdminOrder, AdminOrderLine, AdminOrderLog } from './admin-data';
-import { adminClient, getAdminApiMode } from './admin-client';
+import { adminClient, apiBase, getAdminApiMode, loadTokens, saveTokens } from './admin-client';
 import {
   listOrders as mockListOrders,
   listShippedLocations,
@@ -290,6 +290,75 @@ export async function shipOrder(
     ...(opts?.stockLocationId ? { stock_location_id: opts.stockLocationId } : {}),
   })) as { id: string };
   await client.createShipment(fulfillment.id, { carrier_name: carrier, tracking_number: trackingNumber });
+}
+
+/**
+ * 导出订单 CSV（ADR-057）。
+ *
+ * 为什么不用 `<a href>` 直接下：接口要 `Authorization: Bearer`，
+ * 浏览器直接打开链接不会带 token，只会拿到 401。所以走 fetch → Blob → 触发下载。
+ *
+ * 401 时**重登一次再试**：后台长时间不动 tab，access 过期是常态，
+ * 让人重新登录才能导一个表格，是最没必要的打断。
+ */
+export async function exportOrdersCsv(params: OrderListParams = {}): Promise<Blob> {
+  if (getAdminApiMode() !== 'live') {
+    // 演示数据是假单，导出去当真实对账材料反而有害（与「演示模式无法提交退款」同一条口径）
+    throw new Error('演示模式没有真实订单可导出，请在正式环境使用');
+  }
+  const query = new URLSearchParams();
+  if (params.statuses && params.statuses.length > 0) query.set('status', params.statuses.join(','));
+  if (params.q) query.set('q', params.q);
+  if (params.from) query.set('from', params.from);
+  if (params.to) query.set('to', params.to);
+
+  const request = async (): Promise<Response> => {
+    const t = loadTokens();
+    return fetch(`${apiBase()}/api/v1/admin/orders/export?${query.toString()}`, {
+      headers: t?.access ? { authorization: `Bearer ${t.access}` } : {},
+    });
+  };
+
+  let res = await request();
+  if (res.status === 401) {
+    const t = loadTokens();
+    if (t?.refresh) {
+      const refreshed = await fetch(`${apiBase()}/api/v1/admin/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: t.refresh }),
+      });
+      if (refreshed.ok) {
+        const body = (await refreshed.json()) as {
+          data?: { access_token: string; refresh_token: string };
+        };
+        if (body.data) {
+          saveTokens({ access: body.data.access_token, refresh: body.data.refresh_token });
+          res = await request();
+        }
+      }
+    }
+  }
+
+  if (!res.ok) {
+    // 服务端把原因写在 JSON 里（例如「一次最多导出 5000 单」），原样转给界面
+    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+    throw new Error(body?.message ?? `导出失败（HTTP ${res.status}）`);
+  }
+  return res.blob();
+}
+
+/** 触发浏览器下载（用完即释放 objectURL，避免内存泄漏）。 */
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // 立刻 revoke 在部分浏览器上会让下载中断，交给下一轮事件循环
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** 发货计划：某个仓要发的订单行与数量（后端按预留算好，前端不再分行）。 */

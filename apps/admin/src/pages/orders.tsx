@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ClipboardList, ChevronRight, Search, Truck } from 'lucide-react';
+import { ClipboardList, ChevronRight, Download, Search, Truck } from 'lucide-react';
 import {
   Badge,
   Button,
@@ -17,7 +17,7 @@ import {
 } from '@mall/ui';
 import { OrderDetail } from '@/components/order-detail';
 import { BatchShipDialog } from '@/components/batch-ship-dialog';
-import { listOrders, type OrderListResult } from '@/lib/admin-api';
+import { downloadBlob, exportOrdersCsv, listOrders, type OrderListResult } from '@/lib/admin-api';
 import { FUL_META, PAY_META } from '@/lib/admin-meta';
 import type { AdminOrder } from '@/lib/admin-data';
 
@@ -89,6 +89,7 @@ export function OrdersPage() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>(
     FILTERS.some((f) => f.value === initialFilter) ? initialFilter : 'all',
   );
@@ -102,6 +103,8 @@ export function OrdersPage() {
   /** 批量发货选中的订单 id（只含可发货的单）。 */
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
   const [batchOpen, setBatchOpen] = useState(false);
+  /** 导出中：按钮置灰，避免连点导出几份不同时刻的数据 */
+  const [exporting, setExporting] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // 搜索防抖 300ms：每敲一个字都打一次接口既浪费也会让结果闪
@@ -149,6 +152,36 @@ export function OrdersPage() {
   };
 
   /** 页签角标：该页签包含的状态数之和。 */
+  /**
+   * 导出当前筛选结果（ADR-057）。
+   *
+   * 导出用**和列表同一套条件**：商家看到什么就导出什么。
+   * 时间戳写进文件名，两份导出的表格放一起能分清先后。
+   */
+  const exportCsv = async () => {
+    setExporting(true);
+    setError(null);
+    try {
+      const statuses = FILTERS.find((f) => f.value === filter)?.statuses;
+      const blob = await exportOrdersCsv({
+        ...(statuses ? { statuses } : {}),
+        ...(debounced ? { q: debounced } : {}),
+        ...rangeToDates(range, customFrom, customTo),
+      });
+      const stamp = new Date()
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .slice(0, 13)
+        .replace('T', '-');
+      downloadBlob(blob, `orders-${stamp}.csv`);
+      setFlash(`已导出 ${result.total} 单`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const countFor = (f: (typeof FILTERS)[number]) =>
     f.statuses
       ? f.statuses.reduce((sum, st) => sum + (result.counts[st] ?? 0), 0)
@@ -179,6 +212,17 @@ export function OrdersPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold text-foreground">订单</h1>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={exporting || loading}
+            onClick={() => void exportCsv()}
+          >
+            <Download className="mr-1 size-3.5" strokeWidth={2} aria-hidden="true" />
+            {exporting ? '导出中…' : '导出 CSV'}
+          </Button>
+        </div>
         <label className="relative block w-full max-w-xs">
           <span className="sr-only">搜索订单</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" strokeWidth={2} aria-hidden="true" />
@@ -193,6 +237,12 @@ export function OrdersPage() {
       </div>
 
       {/* 批量操作条：只在勾了单之后出现，不占常驻空间 */}
+      {flash && (
+        <p className="text-xs text-success" role="status">
+          {flash}
+        </p>
+      )}
+
       {pickedOrders.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2">
           <span className="text-sm text-foreground">已选 {pickedOrders.length} 单</span>

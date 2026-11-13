@@ -228,6 +228,15 @@ export interface FulfillmentRepository {
   findFulfillment(id: string): Promise<FulfillmentDTO | null>;
   /** 按订单列出发货单（后台展示「已发哪些仓」，ADR-013 §3）。 */
   listByOrder(orderId: string): Promise<FulfillmentDTO[]>;
+  /**
+   * 批量取「每个订单的第一条运单」（ADR-057 订单导出用）。
+   *
+   * 导出上千单时逐单查就是上千次查询；这里一条 join 全取回来。
+   * 拆包分批发时只给第一条：导出是给对账看的，一个订单一个主要单号即可。
+   */
+  listFirstTrackingByOrderIds(
+    orderIds: string[],
+  ): Promise<Array<{ orderId: string; carrier: string; number: string }>>;
   insertFulfillmentItems(fulfillmentId: string, items: FulfillmentItemInput[]): Promise<void>;
   updateFulfillmentShipped(
     id: string,
@@ -283,6 +292,10 @@ export interface IFulfillmentModuleService {
 
   /** 按订单列出发货单（后台展示「已发哪些仓」）。 */
   listByOrder(orderId: string): Promise<FulfillmentDTO[]>;
+  /** 批量取每个订单的第一条运单（导出用，一次查询）。 */
+  listFirstTrackingByOrderIds(
+    orderIds: string[],
+  ): Promise<Array<{ orderId: string; carrier: string; number: string }>>;
   /** 查单个发货单（发货前反查所属订单，判断是否在退款审核中）。 */
   findFulfillment(id: string): Promise<FulfillmentDTO | null>;
   calculateShippingPrice(

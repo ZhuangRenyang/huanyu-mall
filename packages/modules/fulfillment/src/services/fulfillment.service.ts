@@ -382,6 +382,12 @@ export class FulfillmentService implements IFulfillmentModuleService {
     return this.deps.repo.listByOrder(orderId);
   }
 
+  async listFirstTrackingByOrderIds(
+    orderIds: string[],
+  ): Promise<Array<{ orderId: string; carrier: string; number: string }>> {
+    return this.deps.repo.listFirstTrackingByOrderIds(orderIds);
+  }
+
   async addShipment(
     fulfillmentId: string,
     input: { carrierName: string; trackingNumber: string; shippedAt: Date },

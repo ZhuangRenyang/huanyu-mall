@@ -31,6 +31,8 @@ export interface FakeServicesState {
   lastWorkflowInput?: Record<string, unknown>;
   /** 覆盖假订单的顾客留言（默认 null），测「店面/后台都能看到同一段留言」时用。 */
   orderCustomerNote?: string | null;
+  /** 覆盖后台订单列表的命中总数（导出上限等「总数才重要」的用例）。 */
+  ordersTotalOverride?: number;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
   categories: Array<{
     id: string;

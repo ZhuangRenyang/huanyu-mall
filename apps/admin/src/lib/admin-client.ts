@@ -72,6 +72,14 @@ export class SessionExpiredError extends Error {
 /** 浏览器端同源：经 nginx 反代到 /api/v1。 */
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
+/**
+ * 原生 fetch 也要用的接口基地址（CSV 下载之类拿不到 SDK 客户端的场景）。
+ * 与 adminClient 共用同一个常量，避免两处各写一个默认值。
+ */
+export function apiBase(): string {
+  return API_BASE;
+}
+
 export function adminClient() {
   const t = loadTokens();
   return createAdminClient({

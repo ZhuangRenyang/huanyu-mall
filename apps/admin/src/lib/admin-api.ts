@@ -38,6 +38,8 @@ export {
   getFulfillmentPlan,
   setOrderNote,
   listOrderLogs,
+  exportOrdersCsv,
+  downloadBlob,
 } from './admin-orders';
 export type {
   OrderReservationView,

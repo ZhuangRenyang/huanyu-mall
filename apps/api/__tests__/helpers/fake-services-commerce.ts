@@ -972,6 +972,12 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         // 店面：只返回该顾客的订单
         if (q.customerId) {
           if (q.customerId !== "cust_1") return { items: [], count: 0 };
+        } else if (state.ordersTotalOverride !== undefined) {
+          // 只用于「导出超上限被拒」这类用例：行数不重要，总数才重要
+          return {
+            items: [{ ...order, customer_note: state.orderCustomerNote ?? order.customer_note, items: [{ ...order.items[0] }] }],
+            count: state.ordersTotalOverride,
+          };
         } else if (!state.orderCreated) {
           // 后台：没下过单就是空列表
           return { items: [], count: 0 };
@@ -989,7 +995,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         const placedAt = new Date(String(order.placed_at));
         if (q.createdFrom && placedAt < q.createdFrom) return { items: [], count: 0 };
         if (q.createdTo && placedAt > q.createdTo) return { items: [], count: 0 };
-        const item = { ...order, customer_id: "cust_1", items: [{ ...order.items[0] }] };
+        const item = {
+          ...order,
+          customer_id: "cust_1",
+          // 与 retrieveOrder 同一口径：测试可覆盖顾客留言（导出要验转义/注入）
+          customer_note: state.orderCustomerNote ?? order.customer_note,
+          items: [{ ...order.items[0] }],
+        };
         return { items: [item], count: 1 };
       },
       setMerchantNote: async (_id: string, note: string | null) => {
@@ -1213,6 +1225,9 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           items: [],
           tracking_links: null,
         }),
+        // 导出用：一次取回多单的第一条运单（真实实现是一条 join）
+        listFirstTrackingByOrderIds: async (orderIds: string[]) =>
+          orderIds.map((id) => ({ orderId: id, carrier: "顺丰", number: "SF1" })),
         listByOrder: async () => [
           {
             id: "fulf_1",

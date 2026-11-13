@@ -7,6 +7,7 @@ import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { mapAdminOrder, mapOrder } from "../mappers.js";
 import { auditEntry } from "../audit-context.js";
+import { moneyCell, timeCell, toCsv } from "../../lib/csv.js";
 
 /**
  * 商家发起退款只需要理由：金额一律取订单实付。
@@ -51,6 +52,75 @@ function dayRange(from?: string, to?: string): { createdFrom?: Date; createdTo?:
     ...(end ? { createdTo: end } : {}),
   };
 }
+/**
+ * 订单导出（ADR-057）：与列表同一套筛选，只多一个数量上限。
+ *
+ * 上限不是性能借口，是「导出的东西必须能被人看完」：
+ * 一次 5 万行的表格没人核对，反而掩盖问题。要更多就按日期分几批。
+ */
+const ORDERS_EXPORT_LIMIT = 5000;
+
+const adminOrderExportQuery = z.object({
+  status: z.string().max(120).optional(),
+  q: z.string().min(1).max(80).optional(),
+  from: dateOnly.optional(),
+  to: dateOnly.optional(),
+});
+
+/** 订单状态的中文标签（导出给人看，不导出 paid/fulfilled 这种内部值）。 */
+const ORDER_STATUS_LABEL: Record<string, string> = {
+  pending: "待确认",
+  awaiting_payment: "待付款",
+  paid: "已付款/待发货",
+  partially_fulfilled: "部分发货",
+  fulfilled: "已发货",
+  delivered: "已签收",
+  completed: "已完成",
+  canceled: "已取消",
+  refund_pending: "退款中",
+  refunded: "已退款",
+};
+
+const PAYMENT_STATUS_LABEL: Record<string, string> = {
+  unpaid: "未付款",
+  authorized: "已授权",
+  captured: "已收款",
+  refunded: "已退款",
+};
+
+/** 导出表头：按对账顺序排（钱与收货信息在前，物流在后）。 */
+const ORDER_EXPORT_HEADER = [
+  "订单号",
+  "下单时间",
+  "订单状态",
+  "支付状态",
+  "顾客邮箱",
+  "收件人",
+  "电话",
+  "国家/地区",
+  "省/州",
+  "城市",
+  "详细地址",
+  "邮编",
+  "商品",
+  "件数",
+  "商品小计",
+  "运费",
+  "税费",
+  "优惠",
+  "实付",
+  "币种",
+  "物流公司",
+  "运单号",
+  "顾客留言",
+];
+
+/** 收货地址字段（结账写入的结构）→ 字符串，缺的给空串而不是 undefined。 */
+function addrField(addr: Record<string, unknown>, key: string): string {
+  const v = addr[key];
+  return v === null || v === undefined ? "" : String(v);
+}
+
 const addShipmentBody = z.object({
   carrier_name: z.string(),
   tracking_number: z.string(),
@@ -102,6 +172,100 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         limit: q.limit,
         hasMore: q.offset + res.items.length < res.count,
       });
+    },
+  );
+
+  /**
+   * 导出 CSV（ADR-057）。
+   *
+   * 走的是与列表完全相同的筛选（状态 / 关键字 / 日期），商家看到什么就导出什么 ——
+   * 另起一套查询条件，导出结果迟早和界面对不上。
+   */
+  app.get(
+    "/api/v1/admin/orders/export",
+    { preHandler: guard, schema: { querystring: adminOrderExportQuery } },
+    async (req, reply) => {
+      const q = req.query as { status?: string; q?: string; from?: string; to?: string };
+      const statuses = q.status
+        ? (q.status.split(",").map((s) => s.trim()).filter(Boolean) as OrderStatus[])
+        : undefined;
+      const filter = {
+        ...(statuses ? { statuses } : {}),
+        ...(q.q ? { q: q.q } : {}),
+        ...dayRange(q.from, q.to),
+      };
+
+      // 先探总数：超过上限直接拒绝，而不是悄悄截断（截断的表格最容易被当成全量对账）
+      const probe = await deps.services.order.listOrderSummaries({ ...filter, limit: 1, offset: 0 });
+      if (probe.count > ORDERS_EXPORT_LIMIT) {
+        throw errors.validation(
+          `一次最多导出 ${ORDERS_EXPORT_LIMIT} 单（当前 ${probe.count} 单），请缩小时间范围或按状态分批`,
+        );
+      }
+
+      const res =
+        probe.count === 0
+          ? { items: [] }
+          : await deps.services.order.listOrderSummaries({
+              ...filter,
+              limit: probe.count,
+              offset: 0,
+            });
+
+      // 运单一次性取回（一条 join），不给每单各查一次
+      const tracking = await deps.services.fulfillment.listFirstTrackingByOrderIds(
+        res.items.map((o) => o.id),
+      );
+      const trackingByOrder = new Map(tracking.map((t) => [t.orderId, t]));
+
+      const rows: unknown[][] = [ORDER_EXPORT_HEADER];
+      for (const o of res.items) {
+        const addr = o.shipping_address ?? {};
+        const t = trackingByOrder.get(o.id);
+        rows.push([
+          o.id,
+          timeCell(o.placed_at),
+          ORDER_STATUS_LABEL[o.status] ?? o.status,
+          PAYMENT_STATUS_LABEL[o.payment_status] ?? o.payment_status,
+          o.email,
+          addrField(addr, "name"),
+          addrField(addr, "phone"),
+          addrField(addr, "country"),
+          addrField(addr, "province"),
+          addrField(addr, "city"),
+          addrField(addr, "address_1"),
+          addrField(addr, "postal_code"),
+          // 商品合并成一格：一行一单才对得上账，一行一商品会让「实付」重复出现
+          o.items.map((li) => `${li.title} ×${li.quantity}`).join("；"),
+          o.items.reduce((n, li) => n + li.quantity, 0),
+          moneyCell(o.subtotal_minor, o.currency_code),
+          moneyCell(o.shipping_minor, o.currency_code),
+          moneyCell(o.tax_minor, o.currency_code),
+          moneyCell(o.discount_minor, o.currency_code),
+          moneyCell(o.total_minor, o.currency_code),
+          o.currency_code,
+          t?.carrier ?? "",
+          t?.number ?? "",
+          o.customer_note ?? "",
+        ]);
+      }
+
+      const stamp = timeCell(new Date().toISOString()).replace(/[-: ]/g, "").slice(0, 12);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "order.export",
+          entityType: "order",
+          entityId: `export_${stamp}`,
+          after: { count: res.items.length, filter },
+        }),
+      );
+
+      reply
+        .header("content-type", "text/csv; charset=utf-8")
+        // 文件名用 ASCII：中文文件名在部分浏览器/代理上会变成乱码
+        .header("content-disposition", `attachment; filename="orders-${stamp}.csv"`)
+        .header("cache-control", "no-store")
+        .send(toCsv(rows));
     },
   );
 

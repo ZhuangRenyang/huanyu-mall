@@ -472,6 +472,36 @@ export class DrizzleFulfillmentRepository implements FulfillmentRepository {
     return rows.map((r) => ({ ...toFulfillmentDTO(r), items: itemsBy.get(r.id) ?? [] }));
   }
 
+  async listFirstTrackingByOrderIds(
+    orderIds: string[],
+  ): Promise<Array<{ orderId: string; carrier: string; number: string }>> {
+    if (orderIds.length === 0) return [];
+    const rows = await this.db
+      .select({
+        orderId: schema.fulfillment.orderId,
+        carrier: schema.shipment.carrierName,
+        number: schema.shipment.trackingNumber,
+        shippedAt: schema.shipment.shippedAt,
+      })
+      .from(schema.shipment)
+      .innerJoin(schema.fulfillment, eq(schema.shipment.fulfillmentId, schema.fulfillment.id))
+      .where(
+        and(
+          inArray(schema.fulfillment.orderId, orderIds),
+          isNull(schema.fulfillment.deletedAt),
+        ),
+      )
+      .orderBy(schema.shipment.shippedAt);
+    // 一个订单可能有多张发货单（跨仓拆单）：只留最早那条作对账主单号
+    const first = new Map<string, { orderId: string; carrier: string; number: string }>();
+    for (const r of rows) {
+      if (!first.has(r.orderId)) {
+        first.set(r.orderId, { orderId: r.orderId, carrier: r.carrier, number: r.number });
+      }
+    }
+    return [...first.values()];
+  }
+
   async insertFulfillmentItems(fulfillmentId: string, items: FulfillmentItemInput[]): Promise<void> {
     if (items.length === 0) return;
     await this.db.insert(schema.fulfillmentItem).values(
