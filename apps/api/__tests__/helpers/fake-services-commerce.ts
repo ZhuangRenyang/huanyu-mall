@@ -1496,6 +1496,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         order_confirmation_enabled: true,
         shipment_enabled: true,
         stock_alert_enabled: true,
+        refund_enabled: true,
         storefront_url: "",
       };
       const rows: Array<Record<string, unknown>> = [];
@@ -1547,6 +1548,38 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
             attempts: 0,
             error: null,
             order_id: `${payload.orderId}:${fulfillmentId}`,
+            created_at: new Date().toISOString(),
+            sent_at: null,
+          });
+        },
+        /** 退款进度（ADR-072）：与真实服务同一套开关与去重口径。 */
+        enqueueRefundUpdate: async (payload: {
+          refundRequestId: string;
+          orderId: string;
+          email: string;
+          status: string;
+          note?: string | null;
+        }) => {
+          if (!settings.enabled || settings.refund_enabled === false) return;
+          const key = `refund:${payload.refundRequestId}:${payload.status}`;
+          if (rows.some((r) => r.dedupe_key === key)) return;
+          rows.push({
+            id: `ntf_${++seq}`,
+            template: "refund_update",
+            to_email: payload.email,
+            // 与真实模板同形：标题带订单号，测试断言能验「哪一单的哪一步」
+            subject: `${
+              payload.status === "rejected"
+                ? "退款申请未通过"
+                : payload.status === "return_agreed"
+                  ? "退货申请已同意"
+                  : "退款已原路退回"
+            }：订单 ${payload.orderId}`,
+            status: "pending",
+            attempts: 0,
+            error: null,
+            order_id: payload.orderId,
+            dedupe_key: key,
             created_at: new Date().toISOString(),
             sent_at: null,
           });

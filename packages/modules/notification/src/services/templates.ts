@@ -1,6 +1,7 @@
 import { formatMinor } from "./money.js";
 import type {
   OrderConfirmationPayload,
+  RefundUpdatePayload,
   ShipmentNotificationPayload,
   StockAlertPayload,
 } from "../types.js";
@@ -244,6 +245,66 @@ export function renderStockAlert(
     `「${payload.productTitle}」${variant}已经补货，现货有限，先到先得。`,
     "",
     opts.storefrontUrl ? `去店铺看看：${opts.storefrontUrl}` : "",
+    `此邮件由系统自动发送，请勿直接回复。${opts.fromName}`,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * 退款进度（ADR-072）。
+ *
+ * 三档结果各写各的话：同意退货要带**单据上快照的地址**（商家后来改地址也不影响这封信），
+ * 已退款要说清「原路退回、到账时间看渠道」—— 顾客最容易在这里以为钱没退。
+ */
+export function renderRefundUpdate(
+  payload: RefundUpdatePayload,
+  opts: { fromName: string; storefrontUrl: string },
+): RenderedEmail {
+  const amount = formatMinor(payload.amountMinor, payload.currencyCode);
+  const isReturnAgreed = payload.status === "return_agreed";
+  const isRejected = payload.status === "rejected";
+
+  const title = isRejected ? "退款申请未通过" : isReturnAgreed ? "退货申请已同意" : "退款已原路退回";
+  const subject = `${title}：订单 ${payload.orderNumber}`;
+  const intro = isRejected
+    ? `订单 ${payload.orderNumber} 的退款申请经商家审核后未通过。`
+    : isReturnAgreed
+      ? `订单 ${payload.orderNumber} 的退货申请已同意，请按下面的地址寄回商品。收到货后会原路退款。`
+      : `订单 ${payload.orderNumber} 的退款（${amount}）已原路退回，到账时间以支付渠道为准。`;
+
+  const rows: Array<[string, string]> = [
+    ["订单号", payload.orderNumber],
+    [isRejected ? "申请金额" : "退款金额", amount],
+  ];
+  if (isReturnAgreed && payload.returnAddress) rows.push(["退货地址", payload.returnAddress]);
+  if (payload.note) rows.push([isRejected ? "未通过原因" : "商家留言", payload.note]);
+  rows.push(["处理时间", payload.reviewedAt]);
+
+  const html = shell({
+    title,
+    intro,
+    rows: [
+      kvRows(rows),
+      isReturnAgreed
+        ? '<p style="margin:12px 0;font-size:13px;line-height:20px;color:#666666">寄回后请在「我的订单」里填写退货物流单号，商家确认收货后即会退款。</p>'
+        : "",
+      opts.storefrontUrl
+        ? `<p style="margin:16px 0"><a href="${escapeHtml(opts.storefrontUrl)}" style="background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">查看订单</a></p>`
+        : "",
+    ].join(""),
+    footer: footerLine(opts),
+  });
+
+  const text = [
+    title,
+    intro,
+    "",
+    ...rows.map(([k, v]) => `${k}：${v}`),
+    isReturnAgreed ? "寄回后请在「我的订单」里填写退货物流单号，商家确认收货后即会退款。" : "",
+    opts.storefrontUrl ? `查看订单：${opts.storefrontUrl}` : "",
     `此邮件由系统自动发送，请勿直接回复。${opts.fromName}`,
   ]
     .filter((line) => line !== "")

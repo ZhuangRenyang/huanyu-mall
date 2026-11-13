@@ -4,7 +4,9 @@ export type NotificationTemplate =
   | "order_confirmation"
   | "shipment_notification"
   /** 到货提醒（ADR-059）。 */
-  | "stock_alert";
+  | "stock_alert"
+  /** 退款进度（ADR-072）。 */
+  | "refund_update";
 export type NotificationStatus = "pending" | "sending" | "sent" | "failed";
 
 export interface NotificationSettingsDTO {
@@ -21,6 +23,8 @@ export interface NotificationSettingsDTO {
   shipment_enabled: boolean;
   /** 到货提醒邮件开关（ADR-059）。 */
   stock_alert_enabled: boolean;
+  /** 退款进度邮件开关（ADR-072）。 */
+  refund_enabled: boolean;
   storefront_url: string;
 }
 
@@ -37,6 +41,7 @@ export interface UpdateNotificationSettingsInput {
   order_confirmation_enabled?: boolean;
   shipment_enabled?: boolean;
   stock_alert_enabled?: boolean;
+  refund_enabled?: boolean;
   storefront_url?: string;
 }
 
@@ -102,6 +107,34 @@ export interface StockAlertPayload {
   variantTitle: string | null;
   /** 该次登记的创建时间（重新登记会刷新，用于去重键区分两次登记）。 */
   createdAt: string;
+}
+
+/**
+ * 退款进度邮件（ADR-072）。
+ *
+ * 顾客提了售后，商家点同意或拒绝之后必须有回音；否则他只能自己回店铺看，
+ * 看到的还是「待处理」，会以为商家没理他。
+ */
+export interface RefundUpdatePayload {
+  refundRequestId: string;
+  orderId: string;
+  orderNumber: string;
+  email: string;
+  /** 申请金额（minor）：拒绝时也带上，顾客好核对是哪一单。 */
+  amountMinor: number;
+  currencyCode: string;
+  /**
+   * 结果档位：
+   * - `return_agreed` 同意退货（钱还没退，等寄回）；
+   * - `refunded` 已退款（仅退款同意 / 收到退货后打款）；
+   * - `rejected` 未通过。
+   */
+  status: "return_agreed" | "refunded" | "rejected";
+  /** 商家留言；拒绝时是拒绝理由。 */
+  note: string | null;
+  /** 退货地址（仅 return_agreed，取单据上的快照）。 */
+  returnAddress: string | null;
+  reviewedAt: string;
 }
 
 export interface EmailMessage {
@@ -175,6 +208,13 @@ export interface INotificationModuleService {
    * 重新登记会刷新创建时间，于是下一次补货能再收到一封 —— 而不是被第一次的去重键永久挡掉。
    */
   enqueueStockAlert(payload: StockAlertPayload): Promise<void>;
+  /**
+   * 退款进度邮件入队（ADR-072）。
+   *
+   * 三档结果各发一封：同意退货（附快照的退货地址）、已退款、已拒绝（附理由）。
+   * 去重键含结果档位 —— 同一张单先「同意退货」再「已退款」，是两封不同的信。
+   */
+  enqueueRefundUpdate(payload: RefundUpdatePayload): Promise<void>;
   /** 管理后台「测试发送」：失败抛可读业务错误。 */
   sendTest(to: string): Promise<void>;
   /**

@@ -1,6 +1,11 @@
 import { prefixedUlid } from "@mall/core";
 import { notificationConfigInvalid, notificationNotFound } from "../errors.js";
-import { renderOrderConfirmation, renderShipmentNotification, renderStockAlert } from "./templates.js";
+import {
+  renderOrderConfirmation,
+  renderRefundUpdate,
+  renderShipmentNotification,
+  renderStockAlert,
+} from "./templates.js";
 import { decryptSecret, encryptSecret } from "./secrets.js";
 import { sendViaSmtp, type SmtpConfig } from "./smtp-transport.js";
 import type {
@@ -13,6 +18,7 @@ import type {
   NotificationSettingsRecord,
   NotificationStatus,
   OrderConfirmationPayload,
+  RefundUpdatePayload,
   ShipmentNotificationPayload,
   StockAlertPayload,
   UpdateNotificationSettingsInput,
@@ -57,6 +63,7 @@ export class NotificationService implements INotificationModuleService {
     if (input.stock_alert_enabled !== undefined) {
       patch.stock_alert_enabled = input.stock_alert_enabled;
     }
+    if (input.refund_enabled !== undefined) patch.refund_enabled = input.refund_enabled;
     if (input.storefront_url !== undefined) patch.storefront_url = input.storefront_url;
     if (input.smtp_password !== undefined) {
       patch.smtp_password_enc =
@@ -144,6 +151,34 @@ export class NotificationService implements INotificationModuleService {
     });
   }
 
+  /**
+   * 退款进度（ADR-072）：商家点了同意/拒绝之后由路由调用。
+   *
+   * 去重键带结果档位：同一张单先「同意退货」再「已退款」是两封不同的信；
+   * 同档位重复点（接口已拦，但事件重放也可能发生）只发一封。
+   */
+  async enqueueRefundUpdate(payload: RefundUpdatePayload): Promise<void> {
+    const settings = await this.repo.getSettings();
+    if (!settings?.enabled || !settings.refund_enabled) return;
+    const rendered = renderRefundUpdate(payload, {
+      fromName: settings.from_name || settings.from_email,
+      storefrontUrl: settings.storefront_url,
+    });
+    await this.repo.insertIfAbsent({
+      id: prefixedUlid("ntf"),
+      template: "refund_update",
+      to_email: payload.email,
+      subject: rendered.subject,
+      body_html: rendered.html,
+      body_text: rendered.text,
+      status: "pending",
+      attempts: 0,
+      error: null,
+      order_id: payload.orderId,
+      dedupe_key: `refund:${payload.refundRequestId}:${payload.status}`,
+    });
+  }
+
   // —— 管理动作 ——
 
   async sendTest(to: string): Promise<void> {
@@ -227,6 +262,7 @@ const DEFAULT_SETTINGS: NotificationSettingsRecord = {
   order_confirmation_enabled: true,
   shipment_enabled: true,
   stock_alert_enabled: true,
+  refund_enabled: true,
   storefront_url: "",
 };
 
@@ -243,6 +279,7 @@ function settingsDTO(r: NotificationSettingsRecord): NotificationSettingsDTO {
     order_confirmation_enabled: r.order_confirmation_enabled,
     shipment_enabled: r.shipment_enabled,
     stock_alert_enabled: r.stock_alert_enabled,
+    refund_enabled: r.refund_enabled,
     storefront_url: r.storefront_url,
   };
 }

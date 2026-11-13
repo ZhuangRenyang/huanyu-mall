@@ -3,7 +3,7 @@ import { DomainError } from "@mall/core";
 import { NotificationService } from "../src/services/notification.service.js";
 import { NotificationDispatcher } from "../src/services/dispatcher.js";
 import { formatMinor } from "../src/services/money.js";
-import { escapeHtml, renderOrderConfirmation } from "../src/services/templates.js";
+import { escapeHtml, renderOrderConfirmation, renderRefundUpdate } from "../src/services/templates.js";
 import type {
   NotificationRepository,
   NotificationRow,
@@ -38,6 +38,8 @@ class InMemoryRepo implements NotificationRepository {
       smtp_password_enc: null,
       order_confirmation_enabled: true,
       shipment_enabled: true,
+      stock_alert_enabled: true,
+      refund_enabled: true,
       storefront_url: "",
     };
     this.settings = {
@@ -53,6 +55,8 @@ class InMemoryRepo implements NotificationRepository {
         ? { order_confirmation_enabled: patch.order_confirmation_enabled! }
         : {}),
       ...("shipment_enabled" in patch ? { shipment_enabled: patch.shipment_enabled! } : {}),
+      ...("stock_alert_enabled" in patch ? { stock_alert_enabled: patch.stock_alert_enabled! } : {}),
+      ...("refund_enabled" in patch ? { refund_enabled: patch.refund_enabled! } : {}),
       ...("storefront_url" in patch ? { storefront_url: patch.storefront_url! } : {}),
       ...(patch.smtp_password_enc !== undefined
         ? {
@@ -369,5 +373,58 @@ describe("模板：转义与金额", () => {
     expect(mail.text).toContain("¥206.00");
     expect(mail.text).toContain("无线静音鼠标 × 2");
     expect(mail.html).toContain("600px");
+  });
+});
+
+describe("退款进度通知（ADR-072）", () => {
+  const refund = {
+    refundRequestId: "rr_1",
+    orderId: "ord_1",
+    orderNumber: "ord_1",
+    email: "buyer@example.com",
+    amountMinor: 19800,
+    currencyCode: "CNY",
+    status: "return_agreed" as const,
+    note: "请用顺丰寄回",
+    returnAddress: "广东省深圳市南山区科技园路 1 号 张三 13800000000",
+    reviewedAt: "2026-11-13 21:00",
+  };
+
+  it("退款开关关着 → 不落库（与其它交易邮件同一组开关）", async () => {
+    const { repo, service } = await setup({ refund_enabled: false });
+    await service.enqueueRefundUpdate(refund);
+    expect(repo.rows.size).toBe(0);
+  });
+
+  it("「同意退货」与「已退款」是两封：去重键带档位", async () => {
+    const { repo, service } = await setup();
+    await service.enqueueRefundUpdate(refund);
+    await service.enqueueRefundUpdate(refund); // 重复派发只留一封
+    await service.enqueueRefundUpdate({ ...refund, status: "refunded", note: null });
+    expect(repo.rows.size).toBe(2);
+    const keys = [...repo.rows.values()].map((r) => r.dedupe_key).sort();
+    expect(keys).toEqual(["refund:rr_1:refunded", "refund:rr_1:return_agreed"]);
+  });
+
+  it("退货地址进正文（取单据快照），且被转义", async () => {
+    const mail = renderRefundUpdate(
+      { ...refund, returnAddress: 'A 栋 <b>"前台"</b>' },
+      { fromName: "测试商城", storefrontUrl: "https://shop.example.com" },
+    );
+    expect(mail.subject).toBe("退货申请已同意：订单 ord_1");
+    expect(mail.html).toContain("退货地址");
+    expect(mail.html).not.toContain("<b>");
+    expect(mail.html).toContain("&lt;b&gt;");
+    expect(mail.text).toContain("寄回后请在「我的订单」里填写退货物流单号");
+  });
+
+  it("拒绝邮件带拒绝理由，不写「退款金额已退」", async () => {
+    const mail = renderRefundUpdate(
+      { ...refund, status: "rejected", note: "商品已使用", returnAddress: null },
+      { fromName: "测试商城", storefrontUrl: "" },
+    );
+    expect(mail.subject).toBe("退款申请未通过：订单 ord_1");
+    expect(mail.text).toContain("未通过原因：商品已使用");
+    expect(mail.text).not.toContain("已原路退回");
   });
 });

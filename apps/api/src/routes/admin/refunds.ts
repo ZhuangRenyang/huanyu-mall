@@ -33,6 +33,42 @@ const rejectBody = z.object({
   note: z.string().min(1).max(500),
 });
 
+/**
+ * 退款进度通知（ADR-072）。
+ *
+ * 审核结果必须让顾客知道：他不看后台，只看邮箱和「我的订单」。
+ * 这里**不吞异常**——失败要进日志，但也不能让接口 500：
+ * 同意退款时钱已经打出去了，把成功报成失败会让商家重复点一次。
+ */
+async function notifyRefundUpdate(
+  deps: AppDeps,
+  req: { log: { warn: (obj: unknown, msg?: string) => void } },
+  input: {
+    request: { id: string; order_id: string; amount_minor: bigint; currency_code: string };
+    status: "return_agreed" | "refunded" | "rejected";
+    note: string | null;
+    returnAddress?: string | null;
+  },
+): Promise<void> {
+  try {
+    const order = await deps.services.order.retrieveOrder(input.request.order_id);
+    await deps.services.notification.enqueueRefundUpdate({
+      refundRequestId: input.request.id,
+      orderId: order.id,
+      orderNumber: order.id,
+      email: order.email,
+      amountMinor: Number(input.request.amount_minor),
+      currencyCode: input.request.currency_code,
+      status: input.status,
+      note: input.note,
+      returnAddress: input.returnAddress ?? null,
+      reviewedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    req.log.warn({ err, refundRequestId: input.request.id }, "退款进度邮件入队失败");
+  }
+}
+
 export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
   const auth = makeAuthHelpers(deps);
   const guard = [auth.adminAuth, auth.requirePermission("orders")];
@@ -128,6 +164,13 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
             after: agreed,
           }),
         );
+        await notifyRefundUpdate(deps, req, {
+          request,
+          status: "return_agreed",
+          note: body.note ?? null,
+          // 用单据上的快照，不是重新读主题设置（ADR-061）
+          returnAddress: agreed.return_address,
+        });
         reply.ok(agreed);
         return;
       }
@@ -145,6 +188,11 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
 
       const refundId = (result as { refundId: string }).refundId;
       const after = await deps.services.order.approveRefundRequest(id, refundId, body.note ?? null);
+      await notifyRefundUpdate(deps, req, {
+        request,
+        status: "refunded",
+        note: body.note ?? null,
+      });
       await deps.audit.record(
         auditEntry(req, {
           action: "refund.approve",
@@ -210,6 +258,11 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
         refundId,
         body.note ?? null,
       );
+      await notifyRefundUpdate(deps, req, {
+        request,
+        status: "refunded",
+        note: body.note ?? null,
+      });
       await deps.audit.record(
         auditEntry(req, {
           action: "refund.receive_return",
@@ -232,6 +285,13 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
       const body = req.body as z.infer<typeof rejectBody>;
       const before = await deps.services.order.findRefundRequest(id);
       const after = await deps.services.order.rejectRefundRequest(id, body.note);
+      if (before) {
+        await notifyRefundUpdate(deps, req, {
+          request: before,
+          status: "rejected",
+          note: body.note,
+        });
+      }
       await deps.audit.record(
         auditEntry(req, {
           action: "refund.reject",

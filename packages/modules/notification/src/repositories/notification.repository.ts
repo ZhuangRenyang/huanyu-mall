@@ -42,6 +42,7 @@ export class DrizzleNotificationRepository implements NotificationRepository {
       shipmentEnabled: patch.shipment_enabled ?? current?.shipment_enabled ?? true,
       // 与上面同一口径：不在 patch 里出现 = 保持原样（漏这一行，开关会静默被忽略）
       stockAlertEnabled: patch.stock_alert_enabled ?? current?.stock_alert_enabled ?? true,
+      refundEnabled: patch.refund_enabled ?? current?.refund_enabled ?? true,
       storefrontUrl: patch.storefront_url ?? current?.storefront_url ?? "",
       updatedAt: new Date(),
     };
@@ -193,6 +194,7 @@ function toSettingsDTO(
     order_confirmation_enabled: r.orderConfirmationEnabled,
     shipment_enabled: r.shipmentEnabled,
     stock_alert_enabled: r.stockAlertEnabled,
+    refund_enabled: r.refundEnabled,
     storefront_url: r.storefrontUrl,
   };
 }

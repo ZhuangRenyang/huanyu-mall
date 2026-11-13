@@ -13,7 +13,9 @@ export type NotificationTemplate =
   | 'order_confirmation'
   | 'shipment_notification'
   /** 到货提醒（ADR-059）。 */
-  | 'stock_alert';
+  | 'stock_alert'
+  /** 退款进度（ADR-072）。 */
+  | 'refund_update';
 export type NotificationStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
 export interface NotificationSettingsView {
@@ -29,6 +31,8 @@ export interface NotificationSettingsView {
   shipmentEnabled: boolean;
   /** 到货提醒邮件开关（ADR-059），默认开。 */
   stockAlertEnabled: boolean;
+  /** 退款进度邮件开关（ADR-072），默认开。 */
+  refundEnabled: boolean;
   storefrontUrl: string;
 }
 
@@ -58,6 +62,7 @@ export interface NotificationSettingsPatch {
   orderConfirmationEnabled?: boolean;
   shipmentEnabled?: boolean;
   stockAlertEnabled?: boolean;
+  refundEnabled?: boolean;
   storefrontUrl?: string;
 }
 
@@ -65,6 +70,7 @@ export const NOTIFICATION_TEMPLATE_LABEL: Record<NotificationTemplate, string> =
   order_confirmation: '下单确认',
   shipment_notification: '发货通知',
   stock_alert: '到货提醒',
+  refund_update: '退款进度',
 };
 
 const SETTINGS_KEY = 'admin:notification-settings';
@@ -82,6 +88,7 @@ const DEFAULT_SETTINGS: NotificationSettingsView = {
   orderConfirmationEnabled: true,
   shipmentEnabled: true,
   stockAlertEnabled: true,
+  refundEnabled: true,
   storefrontUrl: '',
 };
 
@@ -162,6 +169,7 @@ function settingsToApi(patch: NotificationSettingsPatch): Record<string, unknown
   }
   if (patch.shipmentEnabled !== undefined) body.shipment_enabled = patch.shipmentEnabled;
   if (patch.stockAlertEnabled !== undefined) body.stock_alert_enabled = patch.stockAlertEnabled;
+  if (patch.refundEnabled !== undefined) body.refund_enabled = patch.refundEnabled;
   if (patch.storefrontUrl !== undefined) body.storefront_url = patch.storefrontUrl;
   return body;
 }
@@ -179,6 +187,7 @@ function settingsFromApi(raw: Record<string, unknown>): NotificationSettingsView
     orderConfirmationEnabled: raw.order_confirmation_enabled !== false,
     shipmentEnabled: raw.shipment_enabled !== false,
     stockAlertEnabled: raw.stock_alert_enabled !== false,
+    refundEnabled: raw.refund_enabled !== false,
     storefrontUrl: String(raw.storefront_url ?? ''),
   };
 }

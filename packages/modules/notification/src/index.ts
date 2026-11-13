@@ -20,5 +20,5 @@ export default Module("notification", {
     new NotificationService(
       new DrizzleNotificationRepository(createDbFor(ctx.resolve<Pool>("pool"), schema)),
     ),
-  migrations: ["migrations/0001_init.sql", "migrations/0002_stock_alert.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_stock_alert.sql", "migrations/0003_refund_update.sql"],
 });

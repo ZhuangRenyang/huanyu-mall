@@ -239,6 +239,14 @@ export function NotificationSettings() {
             />
             到货提醒邮件（顾客在售罄商品登记后，补货时发一封）
           </label>
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Switch
+              checked={settings.refundEnabled}
+              onCheckedChange={(next) => patch({ refundEnabled: next })}
+              aria-label="退款进度邮件"
+            />
+            退款进度邮件（商家同意退货 / 退款到账 / 拒绝时各发一封）
+          </label>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
