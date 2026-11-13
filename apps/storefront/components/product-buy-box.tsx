@@ -5,6 +5,7 @@ import { ShieldCheck, ShoppingBag, Truck } from 'lucide-react';
 import { Badge, Button, Price, VariantPicker } from '@mall/ui';
 import type { VariantOptionGroup } from '@mall/ui';
 import { useCart } from '@/lib/cart-store';
+import { StockAlertForm } from './stock-alert-form';
 import { ProductFavoriteButton } from './product-favorite-button';
 import type { CatalogProduct } from '@/lib/mock-products';
 
@@ -130,6 +131,17 @@ export function ProductBuyBox({
         {/* 收藏：淘宝在价格区右侧，这里放在加购旁边，不打断购买动线 */}
         <ProductFavoriteButton productId={product.id} accountHref={accountHref} />
       </div>
+
+      {/*
+        售罄时给一条出路（ADR-059）：按钮禁用后什么都不给，顾客只能关页面。
+        全规格售罄且没选规格时，用第一个变体登记 —— 反正每个都没货。
+      */}
+      {soldOut && (variant ?? product.variants[0]) && (
+        <StockAlertForm
+          productId={product.id}
+          variantId={(variant ?? product.variants[0])!.id}
+        />
+      )}
 
       <div className="space-y-2 border-t border-border pt-4 text-sm text-muted-foreground">
         <p className="flex items-center gap-2">

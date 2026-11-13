@@ -148,6 +148,22 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
     },
   );
 
+  /*
+   * 库存发事件（补货 → 到货提醒，ADR-059）。
+   * 与上面同一套总线：模块只认「发出去」，谁消费由 subscriber 决定。
+   */
+  container.register(
+    "inventory-events",
+    () => async (event: { name: string; data: Record<string, unknown> }) => {
+      await eventBus.publish({
+        id: prefixedUlid("evt"),
+        name: event.name,
+        data: event.data,
+        occurredAt: new Date().toISOString(),
+      });
+    },
+  );
+
   // 履约发事件（发货 → 订单状态推进）；与 payment-events 同一套总线。
   container.register(
     "fulfillment-events",

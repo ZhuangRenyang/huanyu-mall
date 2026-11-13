@@ -9,7 +9,11 @@
  */
 import { adminClient, getAdminApiMode } from './admin-client';
 
-export type NotificationTemplate = 'order_confirmation' | 'shipment_notification';
+export type NotificationTemplate =
+  | 'order_confirmation'
+  | 'shipment_notification'
+  /** 到货提醒（ADR-059）。 */
+  | 'stock_alert';
 export type NotificationStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
 export interface NotificationSettingsView {
@@ -23,6 +27,8 @@ export interface NotificationSettingsView {
   smtpPasswordSet: boolean;
   orderConfirmationEnabled: boolean;
   shipmentEnabled: boolean;
+  /** 到货提醒邮件开关（ADR-059），默认开。 */
+  stockAlertEnabled: boolean;
   storefrontUrl: string;
 }
 
@@ -51,12 +57,14 @@ export interface NotificationSettingsPatch {
   smtpPassword?: string;
   orderConfirmationEnabled?: boolean;
   shipmentEnabled?: boolean;
+  stockAlertEnabled?: boolean;
   storefrontUrl?: string;
 }
 
 export const NOTIFICATION_TEMPLATE_LABEL: Record<NotificationTemplate, string> = {
   order_confirmation: '下单确认',
   shipment_notification: '发货通知',
+  stock_alert: '到货提醒',
 };
 
 const SETTINGS_KEY = 'admin:notification-settings';
@@ -73,6 +81,7 @@ const DEFAULT_SETTINGS: NotificationSettingsView = {
   smtpPasswordSet: false,
   orderConfirmationEnabled: true,
   shipmentEnabled: true,
+  stockAlertEnabled: true,
   storefrontUrl: '',
 };
 
@@ -152,6 +161,7 @@ function settingsToApi(patch: NotificationSettingsPatch): Record<string, unknown
     body.order_confirmation_enabled = patch.orderConfirmationEnabled;
   }
   if (patch.shipmentEnabled !== undefined) body.shipment_enabled = patch.shipmentEnabled;
+  if (patch.stockAlertEnabled !== undefined) body.stock_alert_enabled = patch.stockAlertEnabled;
   if (patch.storefrontUrl !== undefined) body.storefront_url = patch.storefrontUrl;
   return body;
 }
@@ -168,6 +178,7 @@ function settingsFromApi(raw: Record<string, unknown>): NotificationSettingsView
     smtpPasswordSet: Boolean(raw.smtp_password_set),
     orderConfirmationEnabled: raw.order_confirmation_enabled !== false,
     shipmentEnabled: raw.shipment_enabled !== false,
+    stockAlertEnabled: raw.stock_alert_enabled !== false,
     storefrontUrl: String(raw.storefront_url ?? ''),
   };
 }

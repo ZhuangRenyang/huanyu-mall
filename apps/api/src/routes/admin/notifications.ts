@@ -16,6 +16,8 @@ const settingsBody = z.object({
   smtp_password: z.string().max(500).optional(),
   order_confirmation_enabled: z.boolean().optional(),
   shipment_enabled: z.boolean().optional(),
+  /** 到货提醒邮件开关（ADR-059）。不放进 schema 就会被 zod 静默丢掉。 */
+  stock_alert_enabled: z.boolean().optional(),
   storefront_url: z.string().max(500).optional(),
 });
 

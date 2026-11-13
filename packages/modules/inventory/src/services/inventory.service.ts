@@ -38,7 +38,42 @@ import type {
  * 绝不先读 available 再写绝对值（并发下会丢更新 → 超卖）。
  */
 export class InventoryService implements IInventoryModuleService {
-  constructor(private readonly repo: InventoryRepository) {}
+  /**
+   * `emit` 可选：组合根接事件总线；测试里不传就不发事件。
+   * 只用于「补货 → 到货提醒」这一条链路，不承担其他业务。
+   */
+  constructor(
+    private readonly repo: InventoryRepository,
+    private readonly emit?: (event: { name: string; data: Record<string, unknown> }) => Promise<void>,
+  ) {}
+
+  /**
+   * 补货事件（ADR-059）。
+   *
+   * 只有**增量**才发：调减库存不该惊动等着到货的人。
+   * 事件带变体 id 与当前可用量，订阅者据此判断「真的补上了」再发通知。
+   *
+   * 放在库存调整之后发（不是事务内）：库存已经落库成功，通知失败不该把补货回滚 ——
+   * 货已经进了仓库，邮件没发出去是通知的问题，不是库存的问题。
+   */
+  private async emitRestocked(inventoryItemId: string): Promise<void> {
+    if (!this.emit) return;
+    try {
+      const [variantIds, levels] = await Promise.all([
+        this.repo.variantIdsByItemId(inventoryItemId),
+        this.repo.findLevelsByItemIds([inventoryItemId]),
+      ]);
+      if (variantIds.length === 0) return;
+      const available = levels.reduce((n, l) => n + l.available_quantity, 0);
+      if (available <= 0) return;
+      await this.emit({
+        name: "inventory.restocked",
+        data: { variantIds, availableQuantity: available },
+      });
+    } catch {
+      // 事件发不出去不影响补货结果；下一轮调库存会重新带上
+    }
+  }
 
   async listInventoryItems(q: { limit: number; offset: number }): Promise<{
     items: import("../types.js").InventoryItemDTO[];
@@ -260,6 +295,7 @@ export class InventoryService implements IInventoryModuleService {
     if (!(await this.repo.adjustLevelQuantity(level.id, input.delta))) {
       throw adjustmentBelowReserved(level.id, input.delta, level.reserved_quantity);
     }
+    if (input.delta > 0) await this.emitRestocked(input.inventoryItemId);
     return (await this.repo.findLevel(input.inventoryItemId, input.locationId))!;
   }
 
@@ -273,6 +309,7 @@ export class InventoryService implements IInventoryModuleService {
     if (!(await this.repo.adjustLevelQuantity(level.id, input.delta))) {
       throw adjustmentBelowReserved(level.id, input.delta, level.reserved_quantity);
     }
+    if (input.delta > 0) await this.emitRestocked(level.inventory_item_id);
     return (await this.repo.findLevelById(levelId))!;
   }
 

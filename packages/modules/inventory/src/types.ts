@@ -86,6 +86,8 @@ export interface InventoryRepository {
   listItems(q: { limit: number; offset: number }): Promise<{ items: InventoryItemDTO[]; count: number }>;
   findInventoryItem(id: string): Promise<InventoryItemDTO | null>;
   findLevelsByItemIds(itemIds: string[]): Promise<InventoryLevelDTO[]>;
+  /** 库存项 → 变体 id（补货事件要按变体通知到货提醒）。 */
+  variantIdsByItemId(inventoryItemId: string): Promise<string[]>;
   /** 按仓列「仓 × SKU」库存行（sku 来自 inventory_item）；locationId 为空则全仓。 */
   listLevels(q: {
     locationId?: string;

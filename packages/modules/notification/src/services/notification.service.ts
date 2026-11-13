@@ -1,6 +1,6 @@
 import { prefixedUlid } from "@mall/core";
 import { notificationConfigInvalid, notificationNotFound } from "../errors.js";
-import { renderOrderConfirmation, renderShipmentNotification } from "./templates.js";
+import { renderOrderConfirmation, renderShipmentNotification, renderStockAlert } from "./templates.js";
 import { decryptSecret, encryptSecret } from "./secrets.js";
 import { sendViaSmtp, type SmtpConfig } from "./smtp-transport.js";
 import type {
@@ -14,6 +14,7 @@ import type {
   NotificationStatus,
   OrderConfirmationPayload,
   ShipmentNotificationPayload,
+  StockAlertPayload,
   UpdateNotificationSettingsInput,
 } from "../types.js";
 
@@ -53,12 +54,44 @@ export class NotificationService implements INotificationModuleService {
       patch.order_confirmation_enabled = input.order_confirmation_enabled;
     }
     if (input.shipment_enabled !== undefined) patch.shipment_enabled = input.shipment_enabled;
+    if (input.stock_alert_enabled !== undefined) {
+      patch.stock_alert_enabled = input.stock_alert_enabled;
+    }
     if (input.storefront_url !== undefined) patch.storefront_url = input.storefront_url;
     if (input.smtp_password !== undefined) {
       patch.smtp_password_enc =
         input.smtp_password === "" ? null : encryptSecret(input.smtp_password);
     }
     return settingsDTO(await this.repo.upsertSettings(patch));
+  }
+
+  /**
+   * 到货提醒（ADR-059）：补货时由订阅者调用。
+   *
+   * 去重键带 `createdAt`：顾客通知过一次后可以重新登记（重新登记会刷新创建时间），
+   * 下一次补货能再收到一封；而同一次登记被重复派发时键相同，insertIfAbsent 会挡住。
+   */
+  async enqueueStockAlert(payload: StockAlertPayload): Promise<void> {
+    const settings = await this.repo.getSettings();
+    if (!settings?.enabled || !settings.stock_alert_enabled) return;
+    const rendered = renderStockAlert(payload, {
+      fromName: settings.from_name || settings.from_email,
+      storefrontUrl: settings.storefront_url,
+    });
+    await this.repo.insertIfAbsent({
+      id: prefixedUlid("ntf"),
+      template: "stock_alert",
+      to_email: payload.email,
+      subject: rendered.subject,
+      body_html: rendered.html,
+      body_text: rendered.text,
+      status: "pending",
+      attempts: 0,
+      error: null,
+      // 到货提醒不属于某笔订单（顾客还没下单），order_id 留空
+      order_id: null,
+      dedupe_key: `stock:${payload.alertId}:${payload.createdAt}`,
+    });
   }
 
   // —— 入队（事件订阅者只调这里，毫秒级）——
@@ -193,6 +226,7 @@ const DEFAULT_SETTINGS: NotificationSettingsRecord = {
   smtp_password_enc: null,
   order_confirmation_enabled: true,
   shipment_enabled: true,
+  stock_alert_enabled: true,
   storefront_url: "",
 };
 
@@ -208,6 +242,7 @@ function settingsDTO(r: NotificationSettingsRecord): NotificationSettingsDTO {
     smtp_password_set: r.smtp_password_enc != null && r.smtp_password_enc.length > 0,
     order_confirmation_enabled: r.order_confirmation_enabled,
     shipment_enabled: r.shipment_enabled,
+    stock_alert_enabled: r.stock_alert_enabled,
     storefront_url: r.storefront_url,
   };
 }

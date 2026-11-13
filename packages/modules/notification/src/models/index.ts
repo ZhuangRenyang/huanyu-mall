@@ -13,6 +13,8 @@ export const notificationSettings = pgTable("notification_settings", {
   smtpPasswordEnc: text("smtp_password_enc"),
   orderConfirmationEnabled: boolean("order_confirmation_enabled").notNull().default(true),
   shipmentEnabled: boolean("shipment_enabled").notNull().default(true),
+  /** 到货提醒邮件开关（ADR-059）。 */
+  stockAlertEnabled: boolean("stock_alert_enabled").notNull().default(true),
   storefrontUrl: text("storefront_url").notNull().default(""),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

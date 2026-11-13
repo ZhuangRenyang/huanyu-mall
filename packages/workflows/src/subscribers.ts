@@ -54,6 +54,46 @@ export interface FulfillmentListPort {
   >;
 }
 
+/**
+ * 到货提醒端口（ADR-059）。
+ *
+ * 补货事件只带变体 id；谁登记了、商品叫什么，都由 product 模块答。
+ * workflow 侧不碰 SQL，也不新增模块依赖边。
+ */
+export interface StockAlertPort {
+  listPendingStockAlerts(variantIds: string[]): Promise<
+    Array<{
+      id: string;
+      product_id: string;
+      variant_id: string;
+      email: string;
+      created_at: Date;
+    }>
+  >;
+  markStockAlertsNotified(ids: string[]): Promise<number>;
+}
+
+/** 商品信息（邮件里要有商品名与规格名，光有 id 顾客看不懂）。 */
+export interface StockAlertProductPort {
+  retrieveProduct(id: string): Promise<{
+    id: string;
+    title: string;
+    variants: Array<{ id: string; title: string }>;
+  }>;
+}
+
+/** 到货提醒入队端口。 */
+export interface StockAlertNotifyPort {
+  enqueueStockAlert(payload: {
+    alertId: string;
+    email: string;
+    productId: string;
+    productTitle: string;
+    variantTitle: string | null;
+    createdAt: string;
+  }): Promise<void>;
+}
+
 /** 通知端口：事件里只负责「入队」，SMTP 发送由派发器异步做（ADR-016）。 */
 export interface NotificationPort {
   enqueueOrderConfirmation(payload: OrderConfirmationPayload): Promise<void>;
@@ -102,6 +142,62 @@ function toConfirmationPayload(
  * - payment.captured：调 Order.transition(paid)，把支付与订单真正连起来（交易闭环关键一环）
  * subscriber 必须幂等：at-least-once 投递下重复执行无害（transition 有状态机守卫，重复 paid 会被拒绝）。
  */
+/**
+ * 补货 → 到货提醒（ADR-059）。
+ *
+ * 三条纪律：
+ * 1. 只在**可用量 > 0** 时通知：调减库存也会触发调整，那种时候不能惊动顾客；
+ * 2. 先入队、再标记已通知：反序会让邮件丢在「已标记但没发」的空档里；
+ * 3. 单个变体/单个顾客失败不影响其他人 —— 一封坏邮箱不该让整批人收不到。
+ */
+async function handleRestocked(event: DomainEvent, resolve: SubscriberResolve): Promise<void> {
+  const { variantIds, availableQuantity } = event.data as {
+    variantIds?: string[];
+    availableQuantity?: number;
+  };
+  if (!variantIds || variantIds.length === 0) return;
+  if (typeof availableQuantity === "number" && availableQuantity <= 0) return;
+
+  const alerts = resolve("product") as StockAlertPort;
+  const productSvc = resolve("product") as unknown as StockAlertProductPort;
+  const notify = resolve("notification") as StockAlertNotifyPort;
+
+  const pending = await alerts.listPendingStockAlerts(variantIds);
+  if (pending.length === 0) return;
+
+  // 商品信息按商品缓存：同一商品可能有多人登记
+  const cache = new Map<string, { title: string; variantTitles: Map<string, string> }>();
+  const notified: string[] = [];
+
+  for (const alert of pending) {
+    try {
+      let info = cache.get(alert.product_id);
+      if (!info) {
+        const product = await productSvc.retrieveProduct(alert.product_id).catch(() => null);
+        if (!product) continue; // 商品已删/下架：不再通知，也不标记（留着人工排查）
+        info = {
+          title: product.title,
+          variantTitles: new Map(product.variants.map((v) => [v.id, v.title])),
+        };
+        cache.set(alert.product_id, info);
+      }
+      await notify.enqueueStockAlert({
+        alertId: alert.id,
+        email: alert.email,
+        productId: alert.product_id,
+        productTitle: info.title,
+        variantTitle: info.variantTitles.get(alert.variant_id) ?? null,
+        createdAt: new Date(alert.created_at).toISOString(),
+      });
+      notified.push(alert.id);
+    } catch {
+      // 单条失败：不标记，下次补货或重试还能带上
+    }
+  }
+
+  if (notified.length > 0) await alerts.markStockAlertsNotified(notified);
+}
+
 export function registerSubscribers(
   registry: SubscriberRegistry,
   resolve: SubscriberResolve,
@@ -199,6 +295,20 @@ export function registerSubscribers(
       }
     } catch {
       // 订阅者是同步跑在请求路径上的：任何通知异常都不允许往上抛
+    }
+  });
+
+  /*
+   * 补货 → 到货提醒（ADR-059）。
+   *
+   * 同样不允许往上抛：补货是商家在后台点「调整库存」，
+   * 一封邮件发不出去不能把库存调整回滚掉。
+   */
+  registry.register("inventory.restocked", async (event: DomainEvent) => {
+    try {
+      await handleRestocked(event, resolve);
+    } catch {
+      // 通知链路的任何异常都在这里结束
     }
   });
 }

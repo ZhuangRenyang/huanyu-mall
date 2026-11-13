@@ -275,6 +275,12 @@ export function createStoreClient(opts: ClientOptions) {
     /** 我的评价（自己写过的，含被隐藏的）。 */
     listMyReviews: (q?: Query) => get("/api/v1/store/customer/reviews", q),
     /**
+     * 登记到货提醒（ADR-059）：售罄商品补货后发邮件。
+     * 登录顾客可省略 email（用账号邮箱）；游客必填。
+     */
+    subscribeStockAlert: (b: { product_id: string; variant_id: string; email?: string }) =>
+      post("/api/v1/store/stock-alerts", b),
+    /**
      * 顾客自助改密（ADR-055）。改完该身份的全部会话失效，前端要引导重新登录。
      * 身份取 token，不接受 body 传 identity_id。
      */

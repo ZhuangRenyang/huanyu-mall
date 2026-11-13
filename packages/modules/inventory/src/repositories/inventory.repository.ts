@@ -31,6 +31,13 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     return map;
   }
 
+  async variantIdsByItemId(inventoryItemId: string): Promise<string[]> {
+    const res = await this.db.execute(
+      sql`SELECT variant_id FROM inventory_item_variant WHERE inventory_item_id = ${inventoryItemId} AND deleted_at IS NULL`,
+    );
+    return (res.rows as Array<Record<string, unknown>>).map((r) => String(r.variant_id));
+  }
+
   async findLevelsByItemIds(itemIds: string[]): Promise<InventoryLevelDTO[]> {
     if (itemIds.length === 0) return [];
     const rows = await this.db

@@ -1,5 +1,9 @@
 import { formatMinor } from "./money.js";
-import type { OrderConfirmationPayload, ShipmentNotificationPayload } from "../types.js";
+import type {
+  OrderConfirmationPayload,
+  ShipmentNotificationPayload,
+  StockAlertPayload,
+} from "../types.js";
 
 /**
  * 邮件模板（ADR-016）。
@@ -203,6 +207,43 @@ export function renderShipmentNotification(
     ...payload.items.map((it) => `- ${it.title} × ${it.quantity}`),
     "",
     opts.storefrontUrl ? `查看订单：${opts.storefrontUrl}` : "",
+    `此邮件由系统自动发送，请勿直接回复。${opts.fromName}`,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * 到货提醒（ADR-059）。
+ *
+ * 只写「回来了、去哪买」，不写价格：补货后价格可能调过，
+ * 邮件里印一个旧价，顾客点进去看到不一致，比不发还伤。
+ */
+export function renderStockAlert(
+  payload: StockAlertPayload,
+  opts: { fromName: string; storefrontUrl: string },
+): RenderedEmail {
+  const variant = payload.variantTitle ? `（${payload.variantTitle}）` : "";
+  const subject = `你等的「${payload.productTitle}」到货了`;
+  const html = shell({
+    title: "到货了",
+    intro: `你登记提醒的「${payload.productTitle}」${variant}已经补货，现货有限，先到先得。`,
+    rows: [
+      kvRows([["商品", `${payload.productTitle}${variant}`]]),
+      opts.storefrontUrl
+        ? `<p style="margin:16px 0"><a href="${escapeHtml(opts.storefrontUrl)}" style="background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">去店铺看看</a></p>`
+        : "",
+    ].join(""),
+    footer: footerLine(opts),
+  });
+
+  const text = [
+    `你等的「${payload.productTitle}」到货了`,
+    `「${payload.productTitle}」${variant}已经补货，现货有限，先到先得。`,
+    "",
+    opts.storefrontUrl ? `去店铺看看：${opts.storefrontUrl}` : "",
     `此邮件由系统自动发送，请勿直接回复。${opts.fromName}`,
   ]
     .filter((line) => line !== "")

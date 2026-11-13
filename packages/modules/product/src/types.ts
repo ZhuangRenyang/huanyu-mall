@@ -252,6 +252,42 @@ export interface ProductRepository {
   }): Promise<AttributeValueDTO>;
 }
 
+/**
+ * 到货提醒（ADR-059）。
+ *
+ * 顾客在售罄商品上登记，补货时发一封邮件。
+ * 允许游客：售罄页大部分访客没账号，要求先注册等于把提醒关掉。
+ */
+export interface StockAlertDTO {
+  id: string;
+  product_id: string;
+  variant_id: string;
+  email: string;
+  /** 登录顾客 id；游客为 null。 */
+  customer_id: string | null;
+  /** 已发通知的时间；null = 待通知。 */
+  notified_at: Date | null;
+  created_at: Date;
+}
+
+export interface SubscribeStockAlertInput {
+  productId: string;
+  variantId: string;
+  email: string;
+  customerId?: string | null;
+}
+
+export interface StockAlertRepository {
+  /** 登记提醒；同一 (变体, 邮箱) 已存在时返回已有记录（不报错、不重复）。 */
+  upsert(input: SubscribeStockAlertInput & { id: string }): Promise<StockAlertDTO>;
+  /** 补货时要通知的那批：指定变体、尚未通知。 */
+  listPendingByVariantIds(variantIds: string[]): Promise<StockAlertDTO[]>;
+  /** 标记已通知（发送失败的不标记，下一轮补货或重试还会带上）。 */
+  markNotified(ids: string[], at: Date): Promise<number>;
+  /** 各变体的待通知人数（后台看需求热度）。 */
+  countPendingByVariantIds(variantIds: string[]): Promise<Record<string, number>>;
+}
+
 export interface IProductModuleService {
   listProducts(q: ProductQuery): Promise<{ items: ProductDTO[]; count: number }>;
   /** 列表 + 批量变体（供批量计价，禁 N+1）。 */
@@ -265,6 +301,14 @@ export interface IProductModuleService {
   countByStatus(): Promise<Record<string, number>>;
   /** 批量改状态 / 批量删除，返回实际影响条数。 */
   bulkUpdateStatus(ids: string[], status: ProductStatus): Promise<number>;
+  /** 登记到货提醒（幂等：同一变体 + 邮箱只有一条）。 */
+  subscribeStockAlert(input: SubscribeStockAlertInput): Promise<StockAlertDTO>;
+  /** 补货时要通知的那批（工作流派发用）。 */
+  listPendingStockAlerts(variantIds: string[]): Promise<StockAlertDTO[]>;
+  /** 标记已通知；返回影响条数。 */
+  markStockAlertsNotified(ids: string[]): Promise<number>;
+  /** 各变体的待通知人数（后台库存页显示「N 人等到货」）。 */
+  countPendingStockAlerts(variantIds: string[]): Promise<Record<string, number>>;
   bulkDelete(ids: string[]): Promise<number>;
   deleteProduct(id: string): Promise<void>;
   createVariant(productId: string, input: CreateVariantInput): Promise<VariantDTO>;

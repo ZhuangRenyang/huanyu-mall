@@ -1,6 +1,10 @@
 /** M-notification 契约（ADR-016）。邮件是交易类通知，不是营销工具。 */
 
-export type NotificationTemplate = "order_confirmation" | "shipment_notification";
+export type NotificationTemplate =
+  | "order_confirmation"
+  | "shipment_notification"
+  /** 到货提醒（ADR-059）。 */
+  | "stock_alert";
 export type NotificationStatus = "pending" | "sending" | "sent" | "failed";
 
 export interface NotificationSettingsDTO {
@@ -15,6 +19,8 @@ export interface NotificationSettingsDTO {
   smtp_password_set: boolean;
   order_confirmation_enabled: boolean;
   shipment_enabled: boolean;
+  /** 到货提醒邮件开关（ADR-059）。 */
+  stock_alert_enabled: boolean;
   storefront_url: string;
 }
 
@@ -30,6 +36,7 @@ export interface UpdateNotificationSettingsInput {
   smtp_password?: string;
   order_confirmation_enabled?: boolean;
   shipment_enabled?: boolean;
+  stock_alert_enabled?: boolean;
   storefront_url?: string;
 }
 
@@ -76,6 +83,25 @@ export interface ShipmentNotificationPayload {
   trackingNumber: string;
   items: Array<{ title: string; quantity: number }>;
   shippedAt: string;
+}
+
+/**
+ * 到货提醒邮件的数据（ADR-059）。
+ *
+ * 只带「哪个商品、哪个规格」，不带价格也不带深链：
+ * - 价格在补货后可能调过，写死旧价顾客点进去会发现不一致；
+ * - 商品页要 locale/channel 才拼得对，硬拼一个错的链接比不给更糟，
+ *   所以按钮指向店铺首页（与既有订单邮件同一做法）。
+ */
+export interface StockAlertPayload {
+  /** 提醒单 id（去重用）。 */
+  alertId: string;
+  email: string;
+  productId: string;
+  productTitle: string;
+  variantTitle: string | null;
+  /** 该次登记的创建时间（重新登记会刷新，用于去重键区分两次登记）。 */
+  createdAt: string;
 }
 
 export interface EmailMessage {
@@ -142,6 +168,13 @@ export interface INotificationModuleService {
     fulfillmentId: string,
     payload: ShipmentNotificationPayload,
   ): Promise<void>;
+  /**
+   * 到货提醒邮件入队（ADR-059）。
+   *
+   * 去重键含「该次登记的创建时间」：补货通知发出后顾客可以重新登记，
+   * 重新登记会刷新创建时间，于是下一次补货能再收到一封 —— 而不是被第一次的去重键永久挡掉。
+   */
+  enqueueStockAlert(payload: StockAlertPayload): Promise<void>;
   /** 管理后台「测试发送」：失败抛可读业务错误。 */
   sendTest(to: string): Promise<void>;
   /**

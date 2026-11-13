@@ -1426,6 +1426,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         smtp_password_set: false,
         order_confirmation_enabled: true,
         shipment_enabled: true,
+        stock_alert_enabled: true,
         storefront_url: "",
       };
       const rows: Array<Record<string, unknown>> = [];

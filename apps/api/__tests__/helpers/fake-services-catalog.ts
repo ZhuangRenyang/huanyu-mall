@@ -41,12 +41,55 @@ export function makeFakeCatalogServices(state: FakeServicesState) {
     status: "published",
   };
 
+  /** 到货提醒（ADR-059）：内存数组，够验登记与幂等。 */
+  const stockAlerts: Array<{
+    id: string;
+    product_id: string;
+    variant_id: string;
+    email: string;
+    customer_id: string | null;
+    notified_at: Date | null;
+    created_at: Date;
+  }> = [];
+
   return {
     regionChannel: {
       listChannels: async () => [channel],
       getChannel: async () => channel,
     },
     product: {
+      /*
+       * 到货提醒（ADR-059）：内存版，够跑「登记 → 幂等 → 回显」契约。
+       * 「补货后发邮件」那条链路由 workflows 的订阅者测试守，不在这一层。
+       */
+      subscribeStockAlert: async (input: {
+        productId: string;
+        variantId: string;
+        email: string;
+        customerId?: string | null;
+      }) => {
+        if (input.productId !== "prod_1") {
+          throw new DomainError({ code: 30001, message: `商品不存在：${input.productId}` });
+        }
+        if (input.variantId !== "var_1") {
+          throw new DomainError({ code: 30001, message: `变体不存在：${input.variantId}` });
+        }
+        const existing = stockAlerts.find(
+          (a) => a.variant_id === input.variantId && a.email === input.email,
+        );
+        if (existing) return existing;
+        const alert = {
+          id: `salt_${stockAlerts.length + 1}`,
+          product_id: input.productId,
+          variant_id: input.variantId,
+          email: input.email,
+          customer_id: input.customerId ?? null,
+          notified_at: null,
+          created_at: new Date(),
+        };
+        stockAlerts.push(alert);
+        return alert;
+      },
       // 支持状态/关键词过滤与批量改状态：批量操作测试要看到真实影响
       listProducts: async (q: {
         status?: string;

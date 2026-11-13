@@ -19,6 +19,9 @@ import type {
   ProductListItemDTO,
   ProductQuery,
   ProductRepository,
+  StockAlertDTO,
+  StockAlertRepository,
+  SubscribeStockAlertInput,
   ProductStatus,
   SellableVariantDTO,
   SellableVariantQuery,
@@ -37,7 +40,14 @@ function slugify(name: string): string {
 
 /** M01 对外门面（架构 §2.1 契约）。 */
 export class ProductService implements IProductModuleService {
-  constructor(private readonly repo: ProductRepository) {}
+  /**
+   * `alerts` 可选：只在用到到货提醒时传。
+   * 既有单测都是 `new ProductService(repo)`，不给第二个参数就不会破。
+   */
+  constructor(
+    private readonly repo: ProductRepository,
+    private readonly alerts?: StockAlertRepository,
+  ) {}
 
   async listProducts(q: ProductQuery = {}): Promise<{ items: ProductDTO[]; count: number }> {
     return this.repo.list(q);
@@ -203,6 +213,38 @@ export class ProductService implements IProductModuleService {
       if (!existing) return candidate;
     }
     throw categoryHandleTaken(root);
+  }
+
+  async subscribeStockAlert(input: SubscribeStockAlertInput): Promise<StockAlertDTO> {
+    if (!this.alerts) throw new Error("stock alerts repository not wired");
+    // 邮箱统一小写去空白：大小写不同的同一邮箱不该在提醒表里存两条
+    const email = input.email.trim().toLowerCase();
+    const product = await this.repo.findById(input.productId);
+    if (!product) throw productNotFound(input.productId);
+    // findById 不带变体（列表用才带），单查一次更直观
+    const variants = await this.repo.listVariantsByProductIds([input.productId]);
+    const variant = variants.find((v) => v.id === input.variantId);
+    if (!variant) throw variantNotFound(input.variantId);
+    return this.alerts.upsert({
+      ...input,
+      email,
+      id: prefixedUlid("salt"),
+    });
+  }
+
+  async listPendingStockAlerts(variantIds: string[]): Promise<StockAlertDTO[]> {
+    if (!this.alerts) return [];
+    return this.alerts.listPendingByVariantIds(variantIds);
+  }
+
+  async markStockAlertsNotified(ids: string[]): Promise<number> {
+    if (!this.alerts) return 0;
+    return this.alerts.markNotified(ids, new Date());
+  }
+
+  async countPendingStockAlerts(variantIds: string[]): Promise<Record<string, number>> {
+    if (!this.alerts) return {};
+    return this.alerts.countPendingByVariantIds(variantIds);
   }
 
   async countByStatus(): Promise<Record<string, number>> {

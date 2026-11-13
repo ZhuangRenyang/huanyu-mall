@@ -269,3 +269,93 @@ describe("事件 → 通知入队（ADR-016：只落库，不发信）", () => {
     expect(transitions.map((t) => t.to)).toEqual(["awaiting_payment", "paid"]);
   });
 });
+
+describe("inventory.restocked → 到货提醒（ADR-059）", () => {
+  /** 一套最小端口：product 既是提醒仓储又是商品信息，notification 记入队。 */
+  function harness(opts: { pending: Array<{ id: string; product_id: string; variant_id: string; email: string; created_at: Date }>; available: number }) {
+    const registry = new SubscriberRegistry();
+    const enqueued: Array<{ alertId: string; email: string; variantTitle: string | null }> = [];
+    const marked: string[][] = [];
+    const resolve = (name: string) => {
+      if (name === "product") {
+        return {
+          listPendingStockAlerts: async () => opts.pending,
+          markStockAlertsNotified: async (ids: string[]) => {
+            marked.push(ids);
+            return ids.length;
+          },
+          retrieveProduct: async (id: string) => ({
+            id,
+            title: "无线静音鼠标",
+            variants: [{ id: "var_1", title: "黑色" }],
+          }),
+        };
+      }
+      if (name === "notification") {
+        return {
+          enqueueStockAlert: async (p: { alertId: string; email: string; variantTitle: string | null }) => {
+            enqueued.push({ alertId: p.alertId, email: p.email, variantTitle: p.variantTitle });
+          },
+        };
+      }
+      return undefined;
+    };
+    registerSubscribers(registry, resolve);
+    return { handler: registry.get("inventory.restocked")[0]!, enqueued, marked };
+  }
+
+  it("补货且有人登记 → 逐人入队，全部入队后才标记已通知", async () => {
+    const { handler, enqueued, marked } = harness({
+      available: 5,
+      pending: [
+        { id: "salt_1", product_id: "prod_1", variant_id: "var_1", email: "a@b.com", created_at: new Date("2026-11-01T00:00:00Z") },
+        { id: "salt_2", product_id: "prod_1", variant_id: "var_1", email: "c@d.com", created_at: new Date("2026-11-02T00:00:00Z") },
+      ],
+    });
+
+    await handler({
+      id: "evt_1",
+      name: "inventory.restocked",
+      data: { variantIds: ["var_1"], availableQuantity: 5 },
+      occurredAt: "2026-11-13T00:00:00Z",
+    });
+
+    expect(enqueued).toEqual([
+      { alertId: "salt_1", email: "a@b.com", variantTitle: "黑色" },
+      { alertId: "salt_2", email: "c@d.com", variantTitle: "黑色" },
+    ]);
+    // 先入队再标记：标记早于入队，邮件会丢在空档里
+    expect(marked).toEqual([["salt_1", "salt_2"]]);
+  });
+
+  it("可用量仍为 0（只调减）→ 不发通知、不标记", async () => {
+    const { handler, enqueued, marked } = harness({
+      available: 0,
+      pending: [
+        { id: "salt_1", product_id: "prod_1", variant_id: "var_1", email: "a@b.com", created_at: new Date() },
+      ],
+    });
+
+    await handler({
+      id: "evt_2",
+      name: "inventory.restocked",
+      data: { variantIds: ["var_1"], availableQuantity: 0 },
+      occurredAt: "2026-11-13T00:00:00Z",
+    });
+
+    expect(enqueued).toHaveLength(0);
+    expect(marked).toHaveLength(0);
+  });
+
+  it("没人登记 → 什么也不做（不报错、不标记）", async () => {
+    const { handler, enqueued, marked } = harness({ available: 3, pending: [] });
+    await handler({
+      id: "evt_3",
+      name: "inventory.restocked",
+      data: { variantIds: ["var_1"], availableQuantity: 3 },
+      occurredAt: "2026-11-13T00:00:00Z",
+    });
+    expect(enqueued).toHaveLength(0);
+    expect(marked).toHaveLength(0);
+  });
+});

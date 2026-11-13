@@ -231,6 +231,14 @@ export function NotificationSettings() {
             />
             发货通知邮件（每次发货发一封，带运单号）
           </label>
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Switch
+              checked={settings.stockAlertEnabled}
+              onCheckedChange={(next) => patch({ stockAlertEnabled: next })}
+              aria-label="到货提醒邮件"
+            />
+            到货提醒邮件（顾客在售罄商品登记后，补货时发一封）
+          </label>
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
