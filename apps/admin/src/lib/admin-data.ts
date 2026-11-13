@@ -74,6 +74,11 @@ export interface AdminOrder {
   /** 商家内部备注（仅后台可见）。 */
   merchantNote?: string | null;
   /**
+   * 顾客下单留言（淘宝「给卖家留言」）。
+   * 与 merchantNote 的可见范围相反：这条**顾客自己也能看到**，不能当内部备注用。
+   */
+  customerNote?: string | null;
+  /**
    * 后端原始订单状态（paid / refund_pending / refunded …）。
    * paymentStatus 只看钱、fulfillmentStatus 只看货，退款审核中两者都看不出来。
    */
@@ -229,6 +234,7 @@ export const SEED_ORDERS: AdminOrder[] = [
     totalMinor: 89900,
     items: [{ title: '主动降噪头戴耳机', variantTitle: '曜石黑', quantity: 1, unitPriceMinor: 89900 }],
     shippingAddress: '广东省深圳市南山区 科技园科苑路 15 号',
+    customerNote: '工作日白天送，别放快递柜',
   },
   {
     id: 'ord_2402',

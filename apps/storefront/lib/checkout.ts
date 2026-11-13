@@ -31,6 +31,11 @@ export interface CheckoutForm {
   line1: string;
   shippingOptionId: string;
   paymentProviderId: string;
+  /**
+   * 给卖家留言（淘宝下单页的同一块，ADR-050）。
+   * 顾客自己与商家都能看到；与后台的「商家备注」不是一回事，别混。
+   */
+  note: string;
 }
 
 export type CheckoutErrors = Partial<Record<keyof CheckoutForm, string>>;
@@ -73,6 +78,7 @@ export const emptyForm: CheckoutForm = {
   // 默认选中 mock 支付方式（mock 模式保持「直接能下一步」的老体验）；
   // live 模式会在支付方式列表回来后按后端实际启用的渠道校正。
   paymentProviderId: 'pp_wechat',
+  note: '',
 };
 
 /** 配送方式（mock 常量与 live 接口统一形状，组件只认这一个）。 */
@@ -180,6 +186,8 @@ export interface OrderRecord {
   paymentMethod?: string;
   /** 已评价商品 id（来自订单详情接口）。 */
   reviewedProductIds?: string[];
+  /** 顾客留言（下单时写的「给卖家留言」，ADR-050）。 */
+  customerNote?: string;
 }
 
 const ORDER_PREFIX = 'order:';
@@ -219,6 +227,7 @@ export function createOrder(input: {
     contactName: input.form.firstName,
     shippingRegion: input.form.region,
     shippingLine1: input.form.line1,
+    ...(input.form.note.trim() ? { customerNote: input.form.note.trim() } : {}),
   };
   try {
     sessionStorage.setItem(ORDER_PREFIX + order.id, JSON.stringify(order));
@@ -369,13 +378,15 @@ export async function completeLiveOrder(
   cartId: string,
   idempotencyKey: string,
   shippingAddress?: ShippingAddressInput,
+  /** 给卖家留言（ADR-050）：空白就不下发，别把一串空格存进订单。 */
+  customerNote?: string,
 ): Promise<Order> {
+  const note = customerNote?.trim();
   return (
-    (await getStoreClient().completeCart(
-      cartId,
-      idempotencyKey,
-      shippingAddress ? { shipping_address: shippingAddress } : undefined,
-    )) as Order
+    (await getStoreClient().completeCart(cartId, idempotencyKey, {
+      ...(shippingAddress ? { shipping_address: shippingAddress } : {}),
+      ...(note ? { customer_note: note } : {}),
+    })) as Order
   );
 }
 
@@ -439,9 +450,16 @@ export async function submitLiveCheckout(input: {
   idempotencyKey: string;
   /** 收货地址：订单要存下来，税率也按其中的国家解析（ADR-018）。 */
   shippingAddress?: ShippingAddressInput;
+  /** 给卖家留言（ADR-050）。 */
+  customerNote?: string;
 }): Promise<{ order: Order; session: LivePaymentSession }> {
   // 运费由后端按收货国家自动选并算进购物车（ADR-019），前端不再设置运费方案
-  const order = await completeLiveOrder(input.cartId, input.idempotencyKey, input.shippingAddress);
+  const order = await completeLiveOrder(
+    input.cartId,
+    input.idempotencyKey,
+    input.shippingAddress,
+    input.customerNote,
+  );
   const session = await createLivePaymentSession({
     cartId: input.cartId,
     providerId: input.providerId,
@@ -553,6 +571,8 @@ export function toOrderRecord(order: Order): OrderRecord {
     // 支付渠道用后端给的 label，不写死渠道：写死「微信支付」会让 PayPal 订单也显示微信
     paymentMethod: order.payment_provider?.label,
     reviewedProductIds: order.reviewed_product_ids ?? [],
+    // 顾客留言：顾客要能在订单详情回看自己写的那句话
+    ...(order.customer_note ? { customerNote: order.customer_note } : {}),
     ...(address
       ? {
           contactName: [address.first_name, address.last_name].filter(Boolean).join(' '),

@@ -50,6 +50,8 @@ interface ApiOrder {
   }>;
   shipping_method?: { carrier_name?: string | null; name?: string | null } | null;
   merchant_note?: string | null;
+  /** 顾客留言（顾客与商家都能看到，ADR-050）。 */
+  customer_note?: string | null;
 }
 
 function addressText(addr?: Record<string, unknown>): string {
@@ -98,6 +100,7 @@ function mapOrder(o: ApiOrder): AdminOrder {
     shippingAddress: addressText(o.shipping_address),
     carrier: o.shipping_method?.carrier_name ?? undefined,
     merchantNote: o.merchant_note ?? null,
+    customerNote: o.customer_note ?? null,
     orderStatus: o.status,
   };
 }

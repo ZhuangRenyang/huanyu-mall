@@ -191,7 +191,13 @@ export function makeDeps(): AppDeps & {
   const services = makeFakeServices(state);
   // 退款工作流要回 refundId（真实实现由 payment 生成）
   const workflow = {
-    run: async () => ({ result: { orderId: "ord_1", refundId: "rfd_1" }, executionId: "wf_1" }),
+    run: async (_wf?: unknown, input?: unknown) => {
+      // 记下入参：路由有没有把「顾客留言」等字段传到 workflow，只能从这里断言
+      if (input && typeof input === "object") {
+        state.lastWorkflowInput = input as Record<string, unknown>;
+      }
+      return { result: { orderId: "ord_1", refundId: "rfd_1" }, executionId: "wf_1" };
+    },
   };
 
   return {

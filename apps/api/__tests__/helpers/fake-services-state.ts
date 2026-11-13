@@ -20,6 +20,15 @@ export interface FakeServicesState {
   orderReviewable?: boolean;
   /** 覆盖假订单状态（默认用夹具里的 pending），测确认收货等流转时用。 */
   orderStatus?: string;
+  /**
+   * 最近一次 workflow.run 收到的输入。
+   *
+   * 假 workflow 直接返回 ord_1、不真建单，所以「路由有没有把顾客留言传下去」
+   * 只能从入参上断言 —— 断言「返回值里有留言」等于什么都没测。
+   */
+  lastWorkflowInput?: Record<string, unknown>;
+  /** 覆盖假订单的顾客留言（默认 null），测「店面/后台都能看到同一段留言」时用。 */
+  orderCustomerNote?: string | null;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */
   categories: Array<{
     id: string;

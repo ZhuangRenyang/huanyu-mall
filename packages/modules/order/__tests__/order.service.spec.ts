@@ -44,6 +44,8 @@ class InMemoryOrderRepository implements OrderRepository {
     shippingAddress: Record<string, unknown>;
     billingAddress?: Record<string, unknown> | null;
     paymentCollectionId?: string | null;
+    /** 顾客留言（ADR-050）：服务层已归一化，仓储只负责落库。 */
+    customerNote?: string | null;
   }): Promise<OrderDTO> {
     const dto: OrderDTO = {
       id: input.id,
@@ -63,9 +65,20 @@ class InMemoryOrderRepository implements OrderRepository {
       shipping_address: input.shippingAddress,
       payment_collection_id: input.paymentCollectionId ?? null,
       placed_at: new Date().toISOString(),
+      merchant_note: null,
+      customer_note: input.customerNote ?? null,
     };
     this.orders.set(dto.id, dto);
     return dto;
+  }
+
+  /** 商家备注：只有这一个字段被改，顾客留言保持原样（ADR-050 的可见范围是两回事）。 */
+  async setMerchantNote(id: string, note: string | null): Promise<OrderDTO | null> {
+    const found = this.orders.get(id);
+    if (!found) return null;
+    const next = { ...found, merchant_note: note };
+    this.orders.set(id, next);
+    return next;
   }
 
   async insertLineItems(
@@ -509,5 +522,37 @@ describe("状态机：顾客确认收货（ADR-049）", () => {
     // 其余方向仍不允许：不能从 paid 一步完成、也不能回退
     expect(canTransition("paid", "completed")).toBe(false);
     expect(canTransition("completed", "fulfilled")).toBe(false);
+  });
+});
+
+describe("顾客留言：给卖家留言（ADR-050）", () => {
+  it("空白留言存 null，不存空串（前端只需判一种空）", async () => {
+    const { service } = setup();
+    for (const blank of ["", "   ", "\n\t", null, undefined]) {
+      const order = await service.createOrder(makeInput({ customerNote: blank }));
+      expect(order.customer_note).toBeNull();
+    }
+  });
+
+  it("超长留言截断到 200 字而不是报错（顾客已点过下单，不值得为备注挡回去）", async () => {
+    const { service } = setup();
+    const order = await service.createOrder(makeInput({ customerNote: "易".repeat(500) }));
+    expect(order.customer_note).toHaveLength(200);
+    expect(order.customer_note).toBe("易".repeat(200));
+  });
+
+  it("正常留言原样落库并去掉首尾空白", async () => {
+    const { service } = setup();
+    const order = await service.createOrder(makeInput({ customerNote: "  请发顺丰，工作日白天送  " }));
+    expect(order.customer_note).toBe("请发顺丰，工作日白天送");
+  });
+
+  it("与商家备注互不覆盖：一个进门店契约，一个只在后台", async () => {
+    const { service } = setup();
+    const order = await service.createOrder(makeInput({ customerNote: "送货前打电话" }));
+    await service.setMerchantNote(order.id, "老客户，可送赠品");
+    const after = await service.retrieveOrder(order.id);
+    expect(after.customer_note).toBe("送货前打电话");
+    expect(after.merchant_note).toBe("老客户，可送赠品");
   });
 });

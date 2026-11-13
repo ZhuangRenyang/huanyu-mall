@@ -425,6 +425,9 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     shipping_address: {},
     payment_collection_id: null,
     placed_at: new Date().toISOString(),
+    // 两种备注可见范围相反（ADR-050）：顾客留言进门店契约，商家备注只进后台
+    merchant_note: null,
+    customer_note: null,
     items: [orderItem],
     // 订单记下了所选运费方式：详情页要显示它（ADR-034）
     shipping_method: {
@@ -907,7 +910,12 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         // ord_other 属于别的顾客：用来验「知道单号也看不到别人的订单」
         const base = id === "ord_other" ? { ...order, id: "ord_other", customer_id: "cust_2" } : { ...order };
         // state.orderStatus 让测试把订单摆到指定状态（确认收货只对 fulfilled/delivered 开放）
-        return { ...base, status: state.orderStatus ?? base.status };
+        return {
+          ...base,
+          status: state.orderStatus ?? base.status,
+          // 顾客留言：默认 null，测试可置值验「店面与后台看到同一段」
+          customer_note: state.orderCustomerNote ?? base.customer_note,
+        };
       },
       transition: async (_id: string, to: string) => {
         // 与真实状态机同语义：改状态并留痕（此处只改内存，够驱动路由契约）

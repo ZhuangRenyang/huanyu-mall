@@ -26,6 +26,14 @@ const completeBody = z
       })
       .passthrough()
       .optional(),
+    /*
+     * 顾客留言（淘宝「给卖家留言」，ADR-050）。
+     *
+     * 这里**宽进**（1000）而服务层**严存**（截断到 200）：顾客已经点了一次下单，
+     * 为一个备注把他 400 回去，他得重填地址、重选券，代价远大于截掉几行字。
+     * 1000 只是防滥用的粗护栏，别让请求体无上限。
+     */
+    customer_note: z.string().max(1000).nullish(),
   })
   // nullish 而不是 optional：无 body 时 Fastify 传的是 null，
   // 只写 optional 会让老客户端（不带 body 直接 complete）全部 400。
@@ -135,6 +143,8 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
         code: d.code,
         amountMinor: d.amount_minor,
       })),
+      // 顾客留言：可见范围是「顾客自己 + 商家」，与商家内部备注（仅后台）相反。
+      customerNote: body?.customer_note ?? null,
       items: cart.items.map((li) => ({
         variantId: li.variant_id,
         productId: li.product_id,

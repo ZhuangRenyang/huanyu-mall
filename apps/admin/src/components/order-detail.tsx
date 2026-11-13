@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, CreditCard, MapPin, Printer, RotateCcw, Truck } from 'lucide-react';
+import { Check, CreditCard, MapPin, MessageSquareText, Printer, RotateCcw, Truck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -300,6 +300,24 @@ export function OrderDetail({ order, onUpdated }: { order: AdminOrder; onUpdated
           </div>
         </dl>
       </section>
+
+      {/*
+        顾客留言（淘宝卖家订单详情里的「买家留言」）。
+        放在商家备注之上、且用彩色底突出：这是顾客提的要求，漏看会直接做错货。
+        顾客自己也能看到这段文字，所以不能当内部备注用。
+      */}
+      {order.customerNote && (
+        <section
+          aria-label="顾客留言"
+          className="rounded-lg border border-primary bg-primary-subtle p-3"
+        >
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold text-primary-subtle-foreground">
+            <MessageSquareText className="size-4" strokeWidth={2} aria-hidden="true" />
+            顾客留言
+          </h3>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{order.customerNote}</p>
+        </section>
+      )}
 
       {/* 商家备注：淘宝订单详情里的固定一块，仅后台可见 */}
       <section aria-label="商家备注" className="space-y-2">

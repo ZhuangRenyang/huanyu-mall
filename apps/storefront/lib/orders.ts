@@ -55,6 +55,8 @@ export interface OrderView {
   tracking?: { carrier: string; number: string };
   /** 已提交过评价的商品 id（「评价」按钮变「已评价」）。 */
   reviewedProductIds?: string[];
+  /** 下单时写的「给卖家留言」（ADR-050）。 */
+  customerNote?: string;
   timeline: TimelineItem[];
 }
 
@@ -105,6 +107,7 @@ function recordToView(rec: OrderRecord): OrderView {
     shippingRegion: rec.shippingRegion ?? '—',
     shippingLine1: rec.shippingLine1 ?? '—',
     reviewedProductIds: rec.reviewedProductIds ?? [],
+    ...(rec.customerNote ? { customerNote: rec.customerNote } : {}),
     timeline: buildTimeline(status, rec.createdAt),
   };
 }
@@ -120,6 +123,8 @@ function seedOrder(opts: {
   region: string;
   line1: string;
   tracking?: { carrier: string; number: string };
+  /** 给卖家留言（示例数据里带一条，方便看到这块长什么样）。 */
+  customerNote?: string;
 }): OrderView {
   const createdAt = Date.now() - opts.daysAgo * 24 * HOUR;
   const subtotalMinor = opts.items.reduce((s, i) => s + i.unitPriceMinor * i.quantity, 0);
@@ -141,6 +146,7 @@ function seedOrder(opts: {
     shippingRegion: opts.region,
     shippingLine1: opts.line1,
     tracking: opts.tracking,
+    ...(opts.customerNote ? { customerNote: opts.customerNote } : {}),
     timeline: buildTimeline(opts.status, createdAt),
   };
 }
@@ -158,6 +164,7 @@ function seedOrders(): OrderView[] {
       region: '广东省深圳市南山区',
       line1: '科技园科苑路 15 号',
       tracking: { carrier: '顺丰国际', number: 'SF1234567890' },
+      customerNote: '工作日白天送，别放快递柜',
     }),
     seedOrder({
       id: 'ord_sample_2m9q',

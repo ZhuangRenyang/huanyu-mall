@@ -22,6 +22,11 @@ export interface CartCompleteInput {
   discountMinor?: bigint;
   /** 税是否已含在价格里（ADR-018）：true 时订单合计不再加税。 */
   pricesIncludeTax?: boolean;
+  /**
+   * 顾客留言（淘宝下单页的「给卖家留言」）。
+   * 归一化（空白转 null、超长截断）在 order 服务层做，workflow 只负责透传。
+   */
+  customerNote?: string | null;
   /** 命中的促销折扣明细（供 order 固化 order_discount 留痕）。 */
   discounts?: Array<{
     type: "catalogue" | "order" | "voucher" | "gift_card";

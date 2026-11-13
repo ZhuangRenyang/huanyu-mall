@@ -208,8 +208,11 @@ export function createStoreClient(opts: ClientOptions) {
     completeCart: (
       cartId: string,
       idempotencyKey?: string,
-      /** 收货地址：订单要存下来，税率也按其中的国家解析（ADR-018）。 */
-      body?: { shipping_address?: ShippingAddressInput },
+      /**
+       * 收货地址：订单要存下来，税率也按其中的国家解析（ADR-018）。
+       * customer_note：给卖家留言（ADR-050），顾客与商家都能看到。
+       */
+      body?: { shipping_address?: ShippingAddressInput; customer_note?: string },
     ) =>
       request("POST", `/api/v1/store/carts/${cartId}/complete`, base, body ?? {}, undefined, {
         ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}),

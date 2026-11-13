@@ -147,6 +147,14 @@ export function PackingSlipPage() {
           </div>
         </section>
 
+        {/* 顾客留言印在发货单上：拣货打包的人看得到「易碎、别放快递柜」这类要求 */}
+        {order.customerNote && (
+          <section className="mt-6 rounded border border-border px-3 py-2">
+            <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">顾客留言</h2>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{order.customerNote}</p>
+          </section>
+        )}
+
         {order.merchantNote && (
           <section className="mt-6 rounded border border-border px-3 py-2">
             <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">商家备注</h2>

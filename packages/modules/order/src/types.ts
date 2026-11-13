@@ -37,7 +37,15 @@ export interface OrderDTO {
   placed_at: string | null;
   /** 商家内部备注（仅后台可见，不下发店面）。 */
   merchant_note: string | null;
+  /**
+   * 顾客留言（淘宝下单页的「给卖家留言」）：
+   * 顾客自己与商家都能看到，所以要下发店面；与 merchant_note 的可见范围相反。
+   */
+  customer_note: string | null;
 }
+
+/** 顾客留言上限（字符数）。淘宝同量级；服务端按此截断，前端也用同一常量做计数。 */
+export const CUSTOMER_NOTE_MAX_LENGTH = 200;
 
 export interface OrderLineItemDTO {
   id: string;
@@ -129,6 +137,11 @@ export interface CreateOrderInput {
   /** 折扣留痕明细（服务端算好传入，禁客户端传价）。 */
   discounts?: CreateOrderDiscountInput[];
   paymentCollectionId?: string | null;
+  /**
+   * 顾客留言（「给卖家留言」）。空白视为没写；超过 CUSTOMER_NOTE_MAX_LENGTH 由服务层截断，
+   * 不抛错——顾客已经点了一次「下单」，为一个备注把他挡回去不值得。
+   */
+  customerNote?: string | null;
 }
 
 export type RefundRequestStatus = "pending" | "approved" | "rejected" | "canceled";
@@ -234,6 +247,8 @@ export interface OrderRepository {
     shippingAddress: Record<string, unknown>;
     billingAddress?: Record<string, unknown> | null;
     paymentCollectionId?: string | null;
+    /** 顾客留言（已归一化：空串已转 null、超长已截断）。 */
+    customerNote?: string | null;
   }): Promise<OrderDTO>;
   insertLineItems(
     orderId: string,

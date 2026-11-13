@@ -9,6 +9,7 @@ import {
   refundReviewNoteRequired,
 } from "../errors.js";
 import { assertTransition, canTransition, isRefundable } from "./state-machine.js";
+import { CUSTOMER_NOTE_MAX_LENGTH } from "../types.js";
 import type {
   Actor,
   CreateOrderInput,
@@ -24,6 +25,21 @@ import type {
   RefundRequestQuery,
   RefundRequestSource,
 } from "../types.js";
+
+/**
+ * 顾客留言归一化：空白 → null（不存空串，否则前端要判两种「空」），超长截断。
+ *
+ * 为什么不抛错：顾客已经点了一次「下单」，为一个备注拦下来，
+ * 他要重填地址、重选优惠券，代价远大于截掉几行字。前端另有计数提示。
+ */
+export function normalizeCustomerNote(note: string | null | undefined): string | null {
+  if (!note) return null;
+  const trimmed = note.trim();
+  if (!trimmed) return null;
+  return trimmed.length > CUSTOMER_NOTE_MAX_LENGTH
+    ? trimmed.slice(0, CUSTOMER_NOTE_MAX_LENGTH)
+    : trimmed;
+}
 
 /** M05 对外门面（架构 §2.1）。createOrder 冻结行快照，之后 retrieve 不回查目录。 */
 export class OrderService implements IOrderModuleService {
@@ -66,6 +82,7 @@ export class OrderService implements IOrderModuleService {
       shippingAddress: input.shippingAddress,
       billingAddress: input.billingAddress ?? null,
       paymentCollectionId: input.paymentCollectionId ?? null,
+      customerNote: normalizeCustomerNote(input.customerNote),
     });
 
     const inserted = await this.repo.insertLineItems(

@@ -23,6 +23,8 @@ export const order = pgTable(
     paymentCollectionId: text("payment_collection_id"),
     /** 商家内部备注（仅后台可见）。 */
     merchantNote: text("merchant_note"),
+    /** 顾客下单留言（顾客与商家均可见，淘宝「给卖家留言」）。 */
+    customerNote: text("customer_note"),
     metadata: jsonb("metadata"),
     placedAt: timestamp("placed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

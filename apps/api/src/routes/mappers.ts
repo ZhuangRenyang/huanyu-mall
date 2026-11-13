@@ -46,6 +46,11 @@ export function mapOrder(
       currency_code: li.currency_code,
     })),
     placed_at: order.placed_at,
+    /*
+     * 顾客留言：**顾客自己要看得到**（淘宝订单详情里「给卖家留言」原样回显），
+     * 所以进门店契约。与 merchant_note（仅后台）的可见范围相反，别混。
+     */
+    customer_note: order.customer_note,
     // 顾客要看「我选的是什么配送方式」：不返回它，详情页只能显示空白
     shipping_method: order.shipping_method
       ? {

@@ -41,6 +41,8 @@ export class DrizzleOrderRepository implements OrderRepository {
     shippingAddress: Record<string, unknown>;
     billingAddress?: Record<string, unknown> | null;
     paymentCollectionId?: string | null;
+    /** 顾客留言（ADR-050）：服务层已归一化，这里只落库。 */
+    customerNote?: string | null;
   }): Promise<OrderDTO> {
     const rows = await this.db
       .insert(schema.order)
@@ -61,6 +63,7 @@ export class DrizzleOrderRepository implements OrderRepository {
         shippingAddress: input.shippingAddress,
         billingAddress: input.billingAddress ?? null,
         paymentCollectionId: input.paymentCollectionId ?? null,
+        customerNote: input.customerNote ?? null,
         placedAt: new Date(),
       })
       .returning();
@@ -474,6 +477,7 @@ function toOrderDTO(r: typeof schema.order.$inferSelect): OrderDTO {
     shipping_address: (r.shippingAddress as Record<string, unknown>) ?? {},
     payment_collection_id: r.paymentCollectionId ?? null,
     merchant_note: r.merchantNote ?? null,
+    customer_note: r.customerNote ?? null,
     placed_at: r.placedAt ? r.placedAt.toISOString() : null,
   };
 }

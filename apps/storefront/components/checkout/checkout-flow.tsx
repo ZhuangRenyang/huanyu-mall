@@ -51,6 +51,7 @@ import { AddressStep } from './address-step';
 import { SavedAddressPicker } from './saved-address-picker';
 import { PaymentStep } from './payment-step';
 import { PromoCodes } from './promo-codes';
+import { CustomerNote } from './customer-note';
 
 const DRAFT_KEY = 'checkout:draft';
 /** 手动改这些字段 = 不再是「选中的那条地址」，卡片要取消高亮。 */
@@ -398,6 +399,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
           `${window.location.origin}/${locale}/${channel}/checkout/result?order=${orderId}`,
         idempotencyKey: `checkout_${cartId}_${fingerprint}`,
         shippingAddress: toShippingAddress(form),
+        // 给卖家留言：与地址同一条请求带下去，别单独再发一次（少一次可失败的调用）
+        customerNote: form.note,
       });
       // 记下「这辆车按此内容出过单」：重试同一内容复用这辆车，内容变了才换车。
       markCartOrdered(fingerprint);
@@ -429,6 +432,7 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
     throw new Error(launch.message);
   }, [
     form.email,
+    form.note,
     form.shippingOptionId,
     form.paymentProviderId,
     items,
@@ -670,6 +674,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
               />
             </>
           )}
+          {/* 淘宝的「给卖家留言」就在商品与优惠之后、合计之前 */}
+          <CustomerNote value={form.note} onChange={(note) => setField('note', note)} />
           <OrderSummary
             items={items}
             subtotal={subtotal}

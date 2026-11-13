@@ -240,6 +240,11 @@ export interface Order {
   payment_provider?: { id: string; label: string } | null;
   /** 已提交过评价的商品 id（「我的订单」显示「已评价」）。 */
   reviewed_product_ids?: string[];
+  /**
+   * 顾客下单留言（淘宝「给卖家留言」）。
+   * 顾客自己与商家都能看到；后台的 merchant_note 只给商家看，别混（ADR-050）。
+   */
+  customer_note?: string | null;
   /** 发货单（含物流单号）：顾客端「物流信息」用它（ADR-033）。 */
   fulfillments?: Array<{
     id: string;

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Copy, CreditCard, MapPin, Truck } from 'lucide-react';
+import { Copy, CreditCard, MapPin, MessageSquareText, Truck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Badge, Button, formatMoney } from '@mall/ui';
 import { loadOrderRefunds, requestOrderRefund, type StoreRefundView } from '@/lib/refunds';
@@ -316,6 +316,12 @@ export function OrderDetail({
               {order.shippingRegion} {order.shippingLine1}
             </p>
           </InfoCard>
+          {/* 顾客自己写的留言：淘宝订单详情里原样回显，让他确认「我说的话商家看得到」 */}
+          {order.customerNote && (
+            <InfoCard icon={MessageSquareText} title="给卖家留言">
+              <p className="whitespace-pre-wrap text-sm text-foreground">{order.customerNote}</p>
+            </InfoCard>
+          )}
           <InfoCard icon={Truck} title="配送方式">
             <p className="text-sm text-foreground">{order.shippingOptionName}</p>
             {order.tracking && (
