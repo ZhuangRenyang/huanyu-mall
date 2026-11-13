@@ -67,3 +67,19 @@ describe("商品销量（ADR-067）", () => {
     });
   });
 });
+
+describe("商品销量排序（ADR-068）", () => {
+  it("?sort=sold_count.desc 被接受，返回 200 且带 sold_count", async () => {
+    await withApp(async (app, deps) => {
+      deps.state.soldByVariant = { var_1: 42 };
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/store/products?sort=sold_count.desc",
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const items = res.json().data.items as Array<{ sold_count?: number }>;
+      expect(items.length).toBeGreaterThan(0);
+      expect(items[0]?.sold_count).toBe(42);
+    });
+  });
+});

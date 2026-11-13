@@ -27,6 +27,7 @@ interface ProductListingProps {
 
 const SORT_OPTIONS = [
   { value: 'created_at.desc', label: '最新上架' },
+  { value: 'sold_count.desc', label: '销量优先' },
   { value: 'price.asc', label: '价格从低到高' },
   { value: 'price.desc', label: '价格从高到低' },
 ] as const;
@@ -102,6 +103,8 @@ export function ProductListing({
     return [...list].sort((a, b) => {
       if (sort === 'price.asc') return (a.price?.amount_minor ?? 0) - (b.price?.amount_minor ?? 0);
       if (sort === 'price.desc') return (b.price?.amount_minor ?? 0) - (a.price?.amount_minor ?? 0);
+      // 销量从高到低（ADR-068）；无销量的排最后
+      if (sort === 'sold_count.desc') return (b.soldCount ?? 0) - (a.soldCount ?? 0);
       return b.createdAt.localeCompare(a.createdAt);
     });
   }, [products, debouncedQuery, selectedCategories, selectedAttrs, sort, attributeGroups, serverFiltered]);

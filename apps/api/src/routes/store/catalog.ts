@@ -119,11 +119,14 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
       // 价格 / 库存 / 主图一次批量取完（与收藏列表同一套映射）
       const items = await mapStoreProductSummaries(deps, channel, channelId, res.items);
 
-      // 价格排序（价格来自批量计价结果，内存排即可，无需二次查询）
+      // 价格 / 销量排序（值都来自批量取回的结果，内存排即可，无需二次查询）
       if (q.sort === "price.asc") {
         items.sort((a, b) => (a.price?.amount_minor ?? 0) - (b.price?.amount_minor ?? 0));
       } else if (q.sort === "price.desc") {
         items.sort((a, b) => (b.price?.amount_minor ?? 0) - (a.price?.amount_minor ?? 0));
+      } else if (q.sort === "sold_count.desc") {
+        // 按销量从高到低（ADR-068）：销量是社交证明，卖得好的排前面
+        items.sort((a, b) => (b.sold_count ?? 0) - (a.sold_count ?? 0));
       }
 
       reply.ok({
