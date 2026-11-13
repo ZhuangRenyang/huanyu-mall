@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Boxes } from 'lucide-react';
 import { Badge, EmptyState } from '@mall/ui';
 import { SelectField } from './field';
@@ -14,9 +15,17 @@ export function InventoryLevelsTab() {
   const [locations, setLocations] = useState<StockLocationView[]>([]);
   const [levels, setLevels] = useState<InventoryLevelView[]>([]);
   const [locationId, setLocationId] = useState('all');
-  /** 库存预警（ADR-039）：只看可用量 ≤ 阈值的行。阈值由商家定，不写死。 */
-  const [lowStockOnly, setLowStockOnly] = useState(false);
-  const [threshold, setThreshold] = useState('5');
+  /**
+   * 库存预警（ADR-039）：只看可用量 ≤ 阈值的行。阈值由商家定，不写死。
+   * 支持从工作台深链过来：`/inventory?low=1&threshold=5`（ADR-074），
+   * 落地时就是筛好的视图，不用商家再点一次。
+   */
+  const [searchParams] = useSearchParams();
+  const [lowStockOnly, setLowStockOnly] = useState(searchParams.get('low') === '1');
+  const [threshold, setThreshold] = useState(() => {
+    const fromUrl = Number(searchParams.get('threshold'));
+    return Number.isFinite(fromUrl) && fromUrl > 0 ? String(Math.floor(fromUrl)) : '5';
+  });
   const thresholdNum = Math.max(0, Math.floor(Number(threshold)) || 0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

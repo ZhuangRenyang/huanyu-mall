@@ -31,6 +31,15 @@ export interface InventoryLevelDTO {
   available_quantity: number;
 }
 
+/**
+ * 低库存预警默认阈值（ADR-074）。
+ *
+ * 卖手机和卖家具的「低库存」不是一个数（ADR-039 让库存页传自己的阈值），
+ * 但工作台卡片总得有个默认口径 —— 5 件，与库存页输入框默认值一致。
+ * 将来做成店铺设置时，只改这一个来源。
+ */
+export const LOW_STOCK_ALERT_THRESHOLD = 5;
+
 /** 后台「仓 × SKU」库存行（带 sku，供仓储/调拨页展示）。 */
 export interface InventoryLevelRowDTO extends InventoryLevelDTO {
   sku: string;
@@ -96,6 +105,8 @@ export interface InventoryRepository {
     limit: number;
     offset: number;
   }): Promise<{ items: InventoryLevelRowDTO[]; count: number }>;
+  /** 低库存规格数（ADR-074）：按 inventory_item 去重，多仓不重复计数。 */
+  countLowStockItems(threshold: number): Promise<number>;
   /** 列出可用仓库（按 priority 降序）。 */
   listLocations(): Promise<StockLocationDTO[]>;
   findLocation(id: string): Promise<StockLocationDTO | null>;
@@ -201,6 +212,13 @@ export interface IInventoryModuleService {
     limit: number;
     offset: number;
   }): Promise<{ items: InventoryLevelRowDTO[]; count: number }>;
+  /**
+   * 低库存规格数（工作台「库存预警」卡，ADR-074）。
+   *
+   * 按 inventory_item 去重：多仓时同一规格有几行库存，但商家要补的是**一个规格**，
+   * 数行数会虚高（2 个仓各 3 件 = 报 2 个预警，实际只有 1 个 SKU 要补）。
+   */
+  countLowStockItems(threshold: number): Promise<number>;
   /**
    * 整单原子分配 + 预留：按仓 priority 贪心，可跨仓拆单；同一 orderId 幂等。
    * 任一 SKU 合计不足 → 整单失败，不产生部分预留。

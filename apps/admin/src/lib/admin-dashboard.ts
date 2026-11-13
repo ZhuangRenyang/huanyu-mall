@@ -7,6 +7,10 @@
  */
 import { adminClient, getAdminApiMode } from './admin-client';
 import { listOrders as mockListOrders, listRefunds as mockListRefunds } from './admin-store';
+import { listInventoryLevels } from './admin-inventory';
+
+/** 默认预警阈值（与后端 LOW_STOCK_ALERT_THRESHOLD 同值；演示模式兜底用）。 */
+const LOW_STOCK_THRESHOLD = 5;
 
 export interface DashboardView {
   today: {
@@ -19,6 +23,10 @@ export interface DashboardView {
     toFulfill: number;
     /** 待处理退款单。 */
     refunds: number;
+    /** 低库存规格数（ADR-074）；含已售罄。 */
+    lowStock: number;
+    /** 预警阈值，由后端下发，前端不自己抄数。 */
+    lowStockThreshold: number;
   };
   recentOrders: Array<{
     id: string;
@@ -37,7 +45,12 @@ interface ApiDashboard {
     paid_amount_minor?: number;
     currency_code?: string;
   };
-  pending?: { to_fulfill?: number; refunds?: number };
+  pending?: {
+    to_fulfill?: number;
+    refunds?: number;
+    low_stock?: number;
+    low_stock_threshold?: number;
+  };
   recent_orders?: Array<{
     id: string;
     status: string;
@@ -74,6 +87,12 @@ export async function getDashboard(): Promise<DashboardView> {
           (o) => TO_FULFILL_PAYMENT.has(o.paymentStatus) && !SHIPPED.has(o.fulfillmentStatus),
         ).length,
         refunds: refunds.length,
+        // 演示模式按同一口径现算：可用量 ≤5 的规格（多仓去重）
+        lowStock: await (async () => {
+          const levels = await listInventoryLevels(undefined, LOW_STOCK_THRESHOLD);
+          return new Set(levels.map((l) => l.inventoryItemId)).size;
+        })(),
+        lowStockThreshold: LOW_STOCK_THRESHOLD,
       },
       recentOrders: orders.slice(0, 5).map((o) => ({
         id: o.id,
@@ -97,6 +116,8 @@ export async function getDashboard(): Promise<DashboardView> {
     pending: {
       toFulfill: res.pending?.to_fulfill ?? 0,
       refunds: res.pending?.refunds ?? 0,
+      lowStock: res.pending?.low_stock ?? 0,
+      lowStockThreshold: res.pending?.low_stock_threshold ?? LOW_STOCK_THRESHOLD,
     },
     recentOrders: (res.recent_orders ?? []).map((o) => ({
       id: o.id,

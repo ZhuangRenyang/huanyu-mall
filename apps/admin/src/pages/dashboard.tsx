@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertCircle, ArrowRight, PackageCheck, Receipt, ShoppingBag, Wallet } from 'lucide-react';
+import { AlertCircle, ArrowRight, Boxes, PackageCheck, Receipt, ShoppingBag, Wallet } from 'lucide-react';
 import { Badge, Skeleton, formatMoney } from '@mall/ui';
 import { getDashboard, type DashboardView } from '@/lib/admin-dashboard';
 
@@ -37,7 +37,7 @@ export function DashboardPage() {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-40" />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           {Array.from({ length: 4 }).map((_, i) => (
             <Skeleton key={i} className="h-28 w-full" />
           ))}
@@ -96,6 +96,23 @@ export function DashboardPage() {
           href="/refunds"
           actionLabel="去审核"
           tone={pending.refunds > 0 ? 'warn' : 'plain'}
+        />
+        {/*
+          库存预警（ADR-074）：淘宝卖家中心首屏也有这一格。
+          含已售罄 —— 对商家来说「没货」和「快没货」都是要补货，分开反而要点两次。
+        */}
+        <MetricCard
+          icon={Boxes}
+          label="库存预警"
+          value={String(pending.lowStock)}
+          hint={
+            pending.lowStock > 0
+              ? `可用量 ≤${pending.lowStockThreshold} 件（含售罄）`
+              : '没有要补的规格'
+          }
+          href="/inventory?low=1"
+          actionLabel="去补货"
+          tone={pending.lowStock > 0 ? 'warn' : 'plain'}
         />
       </div>
 

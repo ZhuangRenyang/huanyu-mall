@@ -764,6 +764,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     inventory: {
       getAvailability: async ({ variantIds }: { variantIds: string[] }) =>
         variantIds.map((id) => ({ variantId: id, available: state.variantAvailable ?? 12 })),
+      // 低库存规格数（ADR-074）：用例可调，默认 0（没有预警）
+      countLowStockItems: async () => state.lowStockCount ?? 0,
       // 仓由后端决定：路由不再取仓，整单一次分配（ADR-013）
       allocateAndReserve: async (input: {
         orderId: string;

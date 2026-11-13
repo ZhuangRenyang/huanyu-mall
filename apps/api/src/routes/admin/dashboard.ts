@@ -1,3 +1,4 @@
+import { LOW_STOCK_ALERT_THRESHOLD } from "@mall/inventory";
 import type { FastifyInstance } from "fastify";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
@@ -32,12 +33,14 @@ export function adminDashboardRoutes(app: FastifyInstance, deps: AppDeps): void 
 
   app.get("/api/v1/admin/dashboard", { preHandler: guard }, async (_req, reply) => {
     const since = startOfToday();
-    const [paid, statusCounts, refunds, recent] = await Promise.all([
+    const [paid, statusCounts, refunds, recent, lowStock] = await Promise.all([
       deps.services.order.summarizePaidSince(since),
       deps.services.order.countByStatus(),
       // 只要计数：limit=1 拿 counts，不把单据全查出来
       deps.services.order.listRefundRequests({ status: "pending", limit: 1, offset: 0 }),
       deps.services.order.listOrders({ limit: 5, offset: 0 }),
+      // 库存预警（ADR-074）：一眼看到有多少规格该补货
+      deps.services.inventory.countLowStockItems(LOW_STOCK_ALERT_THRESHOLD),
     ]);
 
     const toFulfill = TO_FULFILL_STATUSES.reduce((sum, s) => sum + (statusCounts[s] ?? 0), 0);
@@ -52,6 +55,9 @@ export function adminDashboardRoutes(app: FastifyInstance, deps: AppDeps): void 
       pending: {
         to_fulfill: toFulfill,
         refunds: refunds.counts?.pending ?? refunds.count ?? 0,
+        low_stock: lowStock,
+        // 阈值随响应下发：前端文案写「≤N 件」时不必自己抄一个 5
+        low_stock_threshold: LOW_STOCK_ALERT_THRESHOLD,
       },
       order_status_counts: statusCounts,
       recent_orders: recent.items.map((o) => ({

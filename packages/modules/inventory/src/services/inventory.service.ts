@@ -119,6 +119,10 @@ export class InventoryService implements IInventoryModuleService {
     return this.repo.listLevels(q);
   }
 
+  async countLowStockItems(threshold: number): Promise<number> {
+    return this.repo.countLowStockItems(threshold);
+  }
+
   async getAvailability(input: {
     variantIds: string[];
     locationIds?: string[];

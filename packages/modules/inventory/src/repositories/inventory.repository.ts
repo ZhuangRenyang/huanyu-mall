@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, countDistinct, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -137,6 +137,26 @@ export class DrizzleInventoryRepository implements InventoryRepository {
     const r = rows[0];
     if (!r) return null;
     return { id: r.id, sku: r.sku, title: r.title ?? null, requires_shipping: r.requiresShipping };
+  }
+
+  /** 低库存规格数（ADR-074）：按 inventory_item 去重，多仓不重复计数。 */
+  async countLowStockItems(threshold: number): Promise<number> {
+    const rows = await this.db
+      .select({ n: countDistinct(schema.inventoryLevel.inventoryItemId) })
+      .from(schema.inventoryLevel)
+      .innerJoin(
+        schema.inventoryItem,
+        eq(schema.inventoryLevel.inventoryItemId, schema.inventoryItem.id),
+      )
+      .where(
+        and(
+          isNull(schema.inventoryLevel.deletedAt),
+          isNull(schema.inventoryItem.deletedAt),
+          // 与库存页同一个判定：可用量 ≤ 阈值（已预留的货卖不了）
+          lte(schema.inventoryLevel.availableQuantity, threshold),
+        ),
+      );
+    return Number(rows[0]?.n ?? 0);
   }
 
   /** 按仓列「仓 × SKU」库存行（sku 冗余带出，后台库存/调拨页直接展示）。 */
