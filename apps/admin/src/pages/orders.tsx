@@ -42,6 +42,42 @@ const FILTERS: { value: Filter; label: string; statuses?: string[] }[] = [
 
 const PAGE_SIZE = 20;
 
+/** 时间筛选（淘宝「已卖出的宝贝」上方的时间条）。 */
+type RangeKey = 'all' | 'today' | '7d' | '30d' | 'custom';
+const RANGES: { value: RangeKey; label: string }[] = [
+  { value: 'all', label: '全部时间' },
+  { value: 'today', label: '今天' },
+  { value: '7d', label: '近 7 天' },
+  { value: '30d', label: '近 30 天' },
+  { value: 'custom', label: '自定义' },
+];
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+const toDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/**
+ * 快捷时间段 → 起止日期（含当天）。
+ *
+ * 按**本地日**算：商家在深圳，用 UTC 切日会凭空少掉 8 小时的单。
+ * 服务端同样按本地日解释（ADR-056）。
+ */
+function rangeToDates(key: RangeKey, customFrom: string, customTo: string): { from?: string; to?: string } {
+  const today = new Date();
+  if (key === 'today') return { from: toDay(today), to: toDay(today) };
+  if (key === '7d' || key === '30d') {
+    const start = new Date(today);
+    start.setDate(start.getDate() - (key === '7d' ? 6 : 29));
+    return { from: toDay(start), to: toDay(today) };
+  }
+  if (key === 'custom') {
+    return {
+      ...(customFrom ? { from: customFrom } : {}),
+      ...(customTo ? { to: customTo } : {}),
+    };
+  }
+  return {};
+}
+
 export function OrdersPage() {
   const [searchParams] = useSearchParams();
   const initialFilter = (searchParams.get('filter') as Filter | null) ?? 'all';
@@ -58,6 +94,10 @@ export function OrdersPage() {
   );
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
+  /** 下单时间筛选：快捷段 + 自定义起止日。 */
+  const [range, setRange] = useState<RangeKey>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [page, setPage] = useState(0);
   /** 批量发货选中的订单 id（只含可发货的单）。 */
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
@@ -73,12 +113,12 @@ export function OrdersPage() {
   // 换页签 / 换关键字都回到第一页，否则会停在一个不存在的页码上
   useEffect(() => {
     setPage(0);
-  }, [filter, debounced]);
+  }, [filter, debounced, range, customFrom, customTo]);
 
   // 换页签 / 换页 / 换关键字就清空勾选：留着会导致「对看不见的订单发货」
   useEffect(() => {
     setPickedIds(new Set());
-  }, [filter, debounced, page]);
+  }, [filter, debounced, page, range, customFrom, customTo]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,6 +127,7 @@ export function OrdersPage() {
       const res = await listOrders({
         ...(statuses ? { statuses } : {}),
         ...(debounced ? { q: debounced } : {}),
+        ...rangeToDates(range, customFrom, customTo),
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
       });
@@ -97,7 +138,7 @@ export function OrdersPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter, debounced, page]);
+  }, [filter, debounced, page, range, customFrom, customTo]);
 
   useEffect(() => {
     void load();
@@ -167,6 +208,49 @@ export function OrdersPage() {
           </span>
         </div>
       )}
+
+      {/* 时间条：按日期对账/批量发货时用，与状态页签正交 */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap gap-1" role="group" aria-label="下单时间筛选">
+          {RANGES.map((r) => (
+            <button
+              key={r.value}
+              type="button"
+              aria-pressed={range === r.value}
+              onClick={() => setRange(r.value)}
+              className={cn(
+                'h-7 rounded-md px-2.5 text-xs transition-colors duration-150',
+                range === r.value
+                  ? 'bg-muted font-medium text-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        {range === 'custom' && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <label htmlFor="orders-from" className="sr-only">起始日期</label>
+            <input
+              id="orders-from"
+              type="date"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="h-7 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-ring"
+            />
+            <span>至</span>
+            <label htmlFor="orders-to" className="sr-only">结束日期</label>
+            <input
+              id="orders-to"
+              type="date"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="h-7 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-ring"
+            />
+          </div>
+        )}
+      </div>
 
       <div className="flex flex-wrap gap-1" role="tablist" aria-label="订单筛选">
         {FILTERS.map((f) => (
@@ -316,8 +400,11 @@ export function OrdersPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
-          共 {result.total} 笔 · 待发货 {result.counts.paid ?? 0} 笔 · 退款中{' '}
-          {result.counts.refund_pending ?? 0} 笔
+          筛选结果 {result.total} 笔
+          {/* 角标是全店口径、不随时间筛选变：不写清楚会让商家以为待发货变少了 */}
+          <span className="ml-2 text-muted-foreground/80">
+            全店：待发货 {result.counts.paid ?? 0} 笔 · 退款中 {result.counts.refund_pending ?? 0} 笔
+          </span>
         </p>
         <div className="flex items-center gap-2">
           <Button

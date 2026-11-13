@@ -147,6 +147,9 @@ export interface OrderListParams {
   statuses?: string[];
   /** 订单号或顾客邮箱。 */
   q?: string;
+  /** 下单日期范围（YYYY-MM-DD，含边界）。按店铺本地日解释，见 ADR-056。 */
+  from?: string;
+  to?: string;
   limit?: number;
   offset?: number;
 }
@@ -189,6 +192,9 @@ export async function listOrders(params: OrderListParams = {}): Promise<OrderLis
           o.customerEmail.toLowerCase().includes(needle),
       );
     }
+    // 日期筛选：mock 的 createdAt 就是 'YYYY-MM-DD HH:mm'，直接比字符串前缀
+    if (params.from) all = all.filter((o) => o.createdAt.slice(0, 10) >= params.from!);
+    if (params.to) all = all.filter((o) => o.createdAt.slice(0, 10) <= params.to!);
     return {
       items: all.slice(offset, offset + limit),
       total: all.length,
@@ -200,6 +206,8 @@ export async function listOrders(params: OrderListParams = {}): Promise<OrderLis
   const query: Record<string, string | number> = { limit, offset };
   if (params.statuses && params.statuses.length > 0) query.status = params.statuses.join(',');
   if (params.q) query.q = params.q;
+  if (params.from) query.from = params.from;
+  if (params.to) query.to = params.to;
   const res = (await adminClient().listOrders(query)) as {
     items?: ApiOrder[];
     count?: number;

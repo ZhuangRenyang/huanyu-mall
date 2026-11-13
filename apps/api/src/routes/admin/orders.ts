@@ -19,11 +19,38 @@ const createFulfillmentBody = z.object({
   // 发货仓（ADR-013 §3）：订单预留跨多仓时必填，单仓时可省略。
   stock_location_id: z.string().min(1).optional(),
 });
-/** 列表筛选：状态页签（逗号分隔）+ 订单号/邮箱搜索，与淘宝订单列表一致。 */
+/**
+ * 日期参数：只收 YYYY-MM-DD（淘宝的时间筛选也是按天）。
+ *
+ * 不让前端传任意时间戳：那样「今天」到底按谁的时区算就说不清了 ——
+ * 商家在深圳开的店，用 UTC 切日会凭空少掉 8 小时的单。
+ * 日期一律按**店铺运行环境的本地日**解释：from 取当天 00:00，to 取当天 23:59:59.999。
+ */
+const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "日期格式应为 YYYY-MM-DD");
+
+/** 列表筛选：状态页签（逗号分隔）+ 订单号/邮箱搜索 + 下单日期范围。 */
 const adminOrderListQuery = PaginationQuerySchema.extend({
   status: z.string().max(120).optional(),
   q: z.string().min(1).max(80).optional(),
+  /** 起始日期（含当天 00:00）。 */
+  from: dateOnly.optional(),
+  /** 结束日期（含当天 23:59:59.999）。 */
+  to: dateOnly.optional(),
 });
+
+/** 'YYYY-MM-DD' → 当天起点/终点（本地时区）。非法日期返回 null，由调用方忽略。 */
+function dayRange(from?: string, to?: string): { createdFrom?: Date; createdTo?: Date } {
+  const parse = (s: string, endOfDay: boolean): Date | null => {
+    const d = new Date(`${s}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const start = from ? parse(from, false) : null;
+  const end = to ? parse(to, true) : null;
+  return {
+    ...(start ? { createdFrom: start } : {}),
+    ...(end ? { createdTo: end } : {}),
+  };
+}
 const addShipmentBody = z.object({
   carrier_name: z.string(),
   tracking_number: z.string(),
@@ -39,19 +66,31 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     "/api/v1/admin/orders",
     { preHandler: guard, schema: { querystring: adminOrderListQuery } },
     async (req, reply) => {
-      const q = req.query as { limit: number; offset: number; status?: string; q?: string };
+      const q = req.query as {
+        limit: number;
+        offset: number;
+        status?: string;
+        q?: string;
+        from?: string;
+        to?: string;
+      };
       // 页签是多状态（待发货 = paid + partially_fulfilled），所以用逗号分隔而不是单值
       const statuses = q.status
         ? (q.status.split(",").map((s) => s.trim()).filter(Boolean) as OrderStatus[])
         : undefined;
+      const range = dayRange(q.from, q.to);
       const [res, counts] = await Promise.all([
         deps.services.order.listOrderSummaries({
           limit: q.limit,
           offset: q.offset,
           ...(statuses ? { statuses } : {}),
           ...(q.q ? { q: q.q } : {}),
+          ...range,
         }),
-        // 页签角标：各状态计数一次 GROUP BY，前端按页签分组求和
+        /*
+         * 页签角标**不随日期过滤**：它是「全店还有多少单要处理」，
+         * 随筛选变会让商家以为待发货真的少了。前端有说明文案。
+         */
         deps.services.order.countByStatus(),
       ]);
       reply.ok({

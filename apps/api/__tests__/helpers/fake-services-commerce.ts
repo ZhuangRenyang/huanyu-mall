@@ -964,6 +964,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         customerId?: string;
         statuses?: string[];
         q?: string;
+        createdFrom?: Date;
+        createdTo?: Date;
         limit?: number;
         offset?: number;
       }) => {
@@ -983,6 +985,10 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           const hay = `${order.id} ${order.email}`.toLowerCase();
           if (!hay.includes(needle)) return { items: [], count: 0 };
         }
+        // 日期范围（ADR-056）：假订单的下单时间就是 placed_at
+        const placedAt = new Date(String(order.placed_at));
+        if (q.createdFrom && placedAt < q.createdFrom) return { items: [], count: 0 };
+        if (q.createdTo && placedAt > q.createdTo) return { items: [], count: 0 };
         const item = { ...order, customer_id: "cust_1", items: [{ ...order.items[0] }] };
         return { items: [item], count: 1 };
       },

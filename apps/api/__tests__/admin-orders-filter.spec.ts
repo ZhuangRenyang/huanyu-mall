@@ -89,4 +89,47 @@ describe("后台订单列表筛选", () => {
       expect(res.statusCode, res.body).toBe(200);
     });
   });
+
+  it("按下单日期筛选：范围覆盖今天 → 有单；未来/过去 → 空（ADR-056）", async () => {
+    await withApp(async (app) => {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const today = new Date();
+      const day = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+      const future = `${today.getFullYear() + 1}-01-01`;
+      const past = `${today.getFullYear() - 1}-01-01`;
+
+      const hit = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/orders?from=${day}&to=${day}`,
+        headers: admin,
+      });
+      expect(hit.statusCode, hit.body).toBe(200);
+      expect(hit.json().data.items).toHaveLength(1);
+
+      const fromFuture = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/orders?from=${future}`,
+        headers: admin,
+      });
+      expect(fromFuture.json().data.items).toHaveLength(0);
+
+      const toPast = await app.inject({
+        method: 'GET',
+        url: `/api/v1/admin/orders?to=${past}`,
+        headers: admin,
+      });
+      expect(toPast.json().data.items).toHaveLength(0);
+    });
+  });
+
+  it("日期格式不对 → 400（不让任意时间戳进来，时区口径会乱）", async () => {
+    await withApp(async (app) => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/api/v1/admin/orders?from=2026/11/01',
+        headers: admin,
+      });
+      expect(res.statusCode).toBe(400);
+    });
+  });
 });

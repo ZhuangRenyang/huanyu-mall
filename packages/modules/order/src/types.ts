@@ -232,6 +232,13 @@ export interface OrderQuery {
   cartId?: string;
   /** 只看某个顾客的订单（店面「我的订单」）。 */
   customerId?: string;
+  /**
+   * 下单时间范围（含边界，ADR-056）：后台按日期对账/批量发货用。
+   * 用 createdAt（订单落库时间）而不是 placed_at：两者通常相同，
+   * 但 createdAt 一定有值，历史数据里 placed_at 可能为空。
+   */
+  createdFrom?: Date;
+  createdTo?: Date;
 }
 
 export interface OrderRepository {

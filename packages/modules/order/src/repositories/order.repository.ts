@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
@@ -433,6 +433,9 @@ export class DrizzleOrderRepository implements OrderRepository {
             ilike(schema.order.email, `%${q.q}%`),
           )
         : null,
+      // 下单时间范围（ADR-056）：商家按日期对账，边界都含
+      q.createdFrom ? gte(schema.order.createdAt, q.createdFrom) : null,
+      q.createdTo ? lte(schema.order.createdAt, q.createdTo) : null,
     ].filter((c): c is SQL => c !== null);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const rows = await this.db
