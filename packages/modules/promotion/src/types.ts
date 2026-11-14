@@ -126,6 +126,38 @@ export interface PublicVoucherDTO extends VoucherDTO {
   scopes?: Array<{ scope_type: "product" | "category"; scope_id: string }>;
 }
 
+/**
+ * 积分规则常量（ADR-093）。
+ *
+ * 积分是「点」，整数；与金额的换算用下面三个常量，先固定、后续做成店铺设置：
+ * - 发放：实付每 100 minor（1 元）发 1 点；
+ * - 抵扣：1 点抵 1 minor（100 点 = 1 元）；
+ * - 上限：积分抵扣不超过订单应付的 50%（bps）。
+ */
+export const POINT_EARN_DIVISOR_MINOR = 100n;
+export const POINT_DISCOUNT_MINOR_PER_POINT = 1n;
+export const POINT_MAX_DISCOUNT_RATIO_BPS = 5000n;
+
+/** 积分流水类型（ADR-093）。 */
+export type PointLedgerKind = "earn" | "spend" | "refund" | "adjust";
+
+export interface PointBalanceDTO {
+  customer_id: string;
+  /** 当前积分（点数，整数）。 */
+  balance: bigint;
+}
+
+export interface PointLedgerDTO {
+  id: string;
+  customer_id: string;
+  kind: PointLedgerKind;
+  /** 正=增加，负=减少。 */
+  delta: bigint;
+  balance_after: bigint;
+  order_id: string | null;
+  created_at: string;
+}
+
 export interface GiftCardDTO {
   id: string;
   code: string;
@@ -260,7 +292,7 @@ export interface ComputeDiscountsResult {
 
 // —— Repository（drizzle 实现 + InMemory 测试桩）——
 /** 营销功能级开关（页面级总开关）：关闭后该功能整体不参与计算。 */
-export type MarketingFeature = "promotion" | "voucher" | "gift_card";
+export type MarketingFeature = "promotion" | "voucher" | "gift_card" | "points";
 
 export interface MarketingFeatureDTO {
   feature: MarketingFeature;
@@ -372,6 +404,22 @@ export interface PromotionRepository {
     parameters?: Record<string, unknown> | null;
   }): Promise<GiftCardEventDTO>;
   listEventsByGiftCard(giftCardId: string): Promise<GiftCardEventDTO[]>;
+
+  // points（ADR-093）
+  getPointBalance(customerId: string): Promise<bigint>;
+  /** 原子增减积分并写流水；余额非负由 DB CHECK 兜底。返回变动后余额。 */
+  applyPointDelta(input: {
+    id: string;
+    customerId: string;
+    kind: PointLedgerKind;
+    delta: bigint;
+    orderId?: string | null;
+  }): Promise<{ balance_after: bigint }>;
+  listPointLedger(
+    customerId: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ items: PointLedgerDTO[]; count: number }>;
 }
 
 // —— Service 门面 ——
@@ -450,6 +498,21 @@ export interface IPromotionModuleService {
 
   // gift_card_event
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;
+
+  // points（ADR-093）
+  /** 当前积分余额（点数）。 */
+  getPointBalance(customerId: string): Promise<bigint>;
+  /**
+   * 订单完成发放积分（ADR-093）：按实付金额折算，幂等 —— 同一订单只发一次
+   * （unique partial index 兜底，重复调用返回首次那条流水）。
+   */
+  earnPointsForOrder(customerId: string, orderId: string, paidMinor: bigint): Promise<PointLedgerDTO>;
+  /** 积分流水（倒序）。 */
+  listPointLedger(
+    customerId: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ items: PointLedgerDTO[]; count: number }>;
 
   // 折扣计算（阶段 2-5 落地，阶段 1 占位抛 notImplemented）
   /** 三个功能开关的当前值；未落库的按关闭处理（默认关闭）。 */

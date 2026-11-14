@@ -88,11 +88,40 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
     promotion: false,
     voucher: false,
     gift_card: false,
+    points: false,
   };
   // —— 领券（ADR-029）：内存版，够驱动路由层契约测试 ——
   const collections = new Map<string, { voucherId: string; customerId: string; code: string }>();
+  // 积分（ADR-093）：内存余额 + 流水，够验发放与幂等
+  const pointBalances = new Map<string, bigint>();
+  const pointLedger: Array<{
+    id: string;
+    customer_id: string;
+    kind: string;
+    delta: bigint;
+    balance_after: bigint;
+    order_id: string | null;
+  }> = [];
   const promotion = {
     getFeatureFlags: async () => ({ ...featureFlags }),
+    getPointBalance: async (customerId: string) => pointBalances.get(customerId) ?? 0n,
+    earnPointsForOrder: async (customerId: string, orderId: string, paidMinor: bigint) => {
+      const points = paidMinor > 0n ? paidMinor / 100n : 0n;
+      // 幂等：同一订单只发一次
+      if (pointLedger.some((l) => l.kind === "earn" && l.order_id === orderId)) {
+        return { id: `ptl_${orderId}`, customer_id: customerId, kind: "earn", delta: 0n, balance_after: pointBalances.get(customerId) ?? 0n, order_id: orderId };
+      }
+      const before = pointBalances.get(customerId) ?? 0n;
+      const after = before + points;
+      pointBalances.set(customerId, after);
+      const row = { id: `ptl_${orderId}`, customer_id: customerId, kind: "earn", delta: points, balance_after: after, order_id: orderId };
+      pointLedger.push(row);
+      return { ...row };
+    },
+    listPointLedger: async (customerId: string) => ({
+      items: pointLedger.filter((l) => l.customer_id === customerId),
+      count: pointLedger.filter((l) => l.customer_id === customerId).length,
+    }),
     listPublicVouchers: async (customerId?: string | null) => {
       if (!featureFlags.voucher) return []; // 与真实服务一致：开关关着不露券
       const mine = [...collections.values()].filter((c) => c.customerId === customerId);
@@ -993,6 +1022,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         // state.orderStatus 让测试把订单摆到指定状态（确认收货只对 fulfilled/delivered 开放）
         return {
           ...base,
+          customer_id: state.orderCustomerId ?? base.customer_id ?? null,
           status: state.orderStatus ?? base.status,
           // 顾客留言：默认 null，测试可置值验「店面与后台看到同一段」
           customer_note: state.orderCustomerNote ?? base.customer_note,

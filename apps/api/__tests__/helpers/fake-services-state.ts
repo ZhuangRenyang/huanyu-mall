@@ -43,6 +43,8 @@ export interface FakeServicesState {
   monthlySoldByVariant?: Record<string, number>;
   /** 低库存规格数（ADR-074 工作台预警卡）：不配就是 0。 */
   lowStockCount?: number;
+  /** 订单归属顾客（ADR-093 积分发放）：不配 = 游客单（customer_id null）。 */
+  orderCustomerId?: string | null;
   /** 某订单的库存预留（ADR-075 取消订单用）：用例可配「在占用 / 已释放」两种。 */
   orderReservations?: Array<{ id: string; status: string }>;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */

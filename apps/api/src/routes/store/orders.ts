@@ -169,6 +169,27 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         actor: "customer",
         reason: "买家确认收货",
       });
+      /*
+       * 订单完成发放积分（ADR-093）。
+       *
+       * 只在积分功能开启时发；按订单实付折算，同一订单幂等（服务层去重）。
+       * 发放失败不影响确认收货本身 —— 积分是赠予，不能因为它把「确认收货」也报错，
+       * 让顾客以为货没确认。失败记日志即可。
+       */
+      if (order.customer_id) {
+        try {
+          const flags = await deps.services.promotion.getFeatureFlags();
+          if (flags.points) {
+            await deps.services.promotion.earnPointsForOrder(
+              order.customer_id,
+              id,
+              order.total_minor,
+            );
+          }
+        } catch (err) {
+          req.log.warn({ err, orderId: id }, "订单完成发放积分失败");
+        }
+      }
       // 重新取一次：transition 返回的 DTO 不带行项，前端要整单渲染
       reply.ok(mapOrder(await deps.services.order.retrieveOrder(id)));
     },

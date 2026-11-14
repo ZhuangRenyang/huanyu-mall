@@ -184,6 +184,37 @@ export const giftCard = pgTable(
   ],
 );
 
+/** 积分余额（ADR-093）：顾客维度，整数点数。 */
+export const pointBalance = pgTable(
+  "point_balance",
+  {
+    customerId: text("customer_id").primaryKey(),
+    balance: bigint("balance", { mode: "bigint" }).notNull().default(0n),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check("chk_point_balance_nonneg", sql`${t.balance} >= 0`)],
+);
+
+/** 积分流水（ADR-093）：正=增加，负=减少；balance_after 可回溯。 */
+export const pointLedger = pgTable(
+  "point_ledger",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id").notNull(),
+    kind: text("kind").notNull(), // 'earn' | 'spend' | 'refund' | 'adjust'
+    delta: bigint("delta", { mode: "bigint" }).notNull(),
+    balanceAfter: bigint("balance_after", { mode: "bigint" }).notNull(),
+    orderId: text("order_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("idx_point_ledger_customer").on(t.customerId, t.createdAt),
+    uniqueIndex("uq_point_ledger_earn_order")
+      .on(t.orderId)
+      .where(sql`${t.kind} = 'earn' AND ${t.orderId} IS NOT NULL`),
+  ],
+);
+
 export const giftCardEvent = pgTable(
   "gift_card_event",
   {

@@ -30,6 +30,21 @@ export function storePromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
   });
 
   /**
+   * 我的积分（ADR-093）：余额 + 最近流水。
+   *
+   * 积分是顾客资产，只读自己的；不登录 401。
+   * 抵扣还没接入结账（下一刀），这里先让「订单完成发积分」有可见的出口。
+   */
+  app.get("/api/v1/store/points", { preHandler: auth.customerAuth }, async (req, reply) => {
+    const customerId = requireCustomerId(req);
+    const [balance, ledger] = await Promise.all([
+      deps.services.promotion.getPointBalance(customerId),
+      deps.services.promotion.listPointLedger(customerId, 20, 0),
+    ]);
+    reply.ok({ balance: balance.toString(), items: ledger.items });
+  });
+
+  /**
    * 可领取的店铺券。
    *
    * 允许匿名访问（商品页要展示券条），登录后每个券上多一个 `collected` 标记。

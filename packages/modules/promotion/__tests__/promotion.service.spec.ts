@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { giftCardNotFound, voucherCodeNotFound } from "../src/errors.js";
-import { PromotionService, voucherCodeExpiry, voucherIncludesItem } from "../src/services/promotion.service.js";
+import {
+  pointDiscountMinor,
+  pointsEarnedFromPaid,
+  PromotionService,
+  voucherCodeExpiry,
+  voucherIncludesItem,
+} from "../src/services/promotion.service.js";
 import type {
   CollectedVoucherDTO,
   CreateGiftCardInput,
@@ -14,6 +20,8 @@ import type {
   ListQuery,
   MarketingFeature,
   MarketingFeatureDTO,
+  PointLedgerDTO,
+  PointLedgerKind,
   PromotionDTO,
   PromotionRepository,
   PromotionRuleDTO,
@@ -441,6 +449,48 @@ class InMemoryPromotionRepository implements PromotionRepository {
   async listEventsByGiftCard(giftCardId: string): Promise<GiftCardEventDTO[]> {
     return this.giftCardEvents.get(giftCardId) ?? [];
   }
+
+  // —— points（ADR-093）——
+  private pointBalances = new Map<string, bigint>();
+  private pointLedger: PointLedgerDTO[] = [];
+
+  async getPointBalance(customerId: string): Promise<bigint> {
+    return this.pointBalances.get(customerId) ?? 0n;
+  }
+  async applyPointDelta(input: {
+    id: string;
+    customerId: string;
+    kind: PointLedgerKind;
+    delta: bigint;
+    orderId?: string | null;
+  }): Promise<{ balance_after: bigint }> {
+    // 幂等：earn 同订单只记一次（与真实 unique index 同语义）
+    if (input.kind === "earn" && input.orderId && this.pointLedger.some((l) => l.kind === "earn" && l.order_id === input.orderId)) {
+      return { balance_after: this.pointBalances.get(input.customerId) ?? 0n };
+    }
+    const before = this.pointBalances.get(input.customerId) ?? 0n;
+    const after = before + input.delta;
+    if (after < 0n) throw new Error("积分余额不足");
+    this.pointBalances.set(input.customerId, after);
+    this.pointLedger.push({
+      id: input.id,
+      customer_id: input.customerId,
+      kind: input.kind,
+      delta: input.delta,
+      balance_after: after,
+      order_id: input.orderId ?? null,
+      created_at: new Date().toISOString(),
+    });
+    return { balance_after: after };
+  }
+  async listPointLedger(
+    customerId: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ items: PointLedgerDTO[]; count: number }> {
+    const all = this.pointLedger.filter((l) => l.customer_id === customerId);
+    return { items: all.slice(offset, offset + limit), count: all.length };
+  }
 }
 
 describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
@@ -587,6 +637,7 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
       promotion: false,
       voucher: false,
       gift_card: false,
+      points: false,
     });
   });
 
@@ -1622,5 +1673,32 @@ describe("券排除范围（ADR-092）", () => {
       giftCardCodes: [],
     });
     expect(resOnlyClearance.voucherDiscountMinor).toBe(0n);
+  });
+});
+
+describe("积分（ADR-093）", () => {
+  it("pointsEarnedFromPaid：每 100 minor 发 1 点，向下取整", () => {
+    expect(pointsEarnedFromPaid(10000n)).toBe(100n);
+    expect(pointsEarnedFromPaid(9999n)).toBe(99n);
+    expect(pointsEarnedFromPaid(0n)).toBe(0n);
+    expect(pointsEarnedFromPaid(-100n)).toBe(0n);
+  });
+
+  it("pointDiscountMinor：1 点抵 1 minor，封顶到应付 50%", () => {
+    expect(pointDiscountMinor(100n, 10000n)).toBe(100n);
+    // 积分远超应付一半时封顶
+    expect(pointDiscountMinor(100000n, 10000n)).toBe(5000n);
+    expect(pointDiscountMinor(0n, 10000n)).toBe(0n);
+    expect(pointDiscountMinor(100n, 0n)).toBe(0n);
+  });
+
+  it("earnPointsForOrder：同一订单只发一次（幂等）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.earnPointsForOrder("cust_1", "ord_1", 10000n);
+    await service.earnPointsForOrder("cust_1", "ord_1", 10000n); // 重复发放
+    expect(await service.getPointBalance("cust_1")).toBe(100n);
+    const ledger = await service.listPointLedger("cust_1", 20, 0);
+    expect(ledger.count).toBe(1);
   });
 });

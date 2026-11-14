@@ -262,7 +262,7 @@ describe("营销功能开关（默认全关，ADR-014）", () => {
       // 默认全关
       const initial = await app.inject({ method: "GET", url: "/api/v1/admin/promotions/features", headers: adminJson });
       expect(initial.statusCode).toBe(200);
-      expect(initial.json().data).toEqual({ promotion: false, voucher: false, gift_card: false });
+      expect(initial.json().data).toEqual({ promotion: false, voucher: false, gift_card: false, points: false });
 
       // 打开促销
       const on = await app.inject({

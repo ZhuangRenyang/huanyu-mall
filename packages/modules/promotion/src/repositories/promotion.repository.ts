@@ -4,6 +4,8 @@ import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
 import type {
   CollectedVoucherDTO,
+  PointLedgerDTO,
+  PointLedgerKind,
   CreateGiftCardInput,
   CreatePromotionInput,
   CreatePromotionRuleInput,
@@ -740,6 +742,82 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .where(eq(schema.giftCardEvent.giftCardId, giftCardId));
     return rows.map(toGiftCardEventDTO);
   }
+
+  // —— points（ADR-093）——
+
+  async getPointBalance(customerId: string): Promise<bigint> {
+    const rows = await this.db
+      .select()
+      .from(schema.pointBalance)
+      .where(eq(schema.pointBalance.customerId, customerId));
+    return rows[0]?.balance ?? 0n;
+  }
+
+  async applyPointDelta(input: {
+    id: string;
+    customerId: string;
+    kind: PointLedgerKind;
+    delta: bigint;
+    orderId?: string | null;
+  }): Promise<{ balance_after: bigint }> {
+    return this.db.transaction(async (tx) => {
+      // 行不存在则建（余额 0）；存在则行锁读，避免并发下「先查后写」的余额竞态
+      await tx.execute(sql`
+        INSERT INTO point_balance (customer_id, balance)
+        VALUES (${input.customerId}, 0)
+        ON CONFLICT (customer_id) DO NOTHING
+      `);
+      const locked = await tx.execute(sql`
+        SELECT balance FROM point_balance WHERE customer_id = ${input.customerId} FOR UPDATE
+      `);
+      const current = BigInt((locked.rows[0] as { balance: string | bigint }).balance);
+      const after = current + input.delta;
+      if (after < 0n) throw new Error("积分余额不足");
+      await tx.execute(sql`
+        UPDATE point_balance SET balance = ${after}, updated_at = now() WHERE customer_id = ${input.customerId}
+      `);
+      await tx.insert(schema.pointLedger).values({
+        id: input.id,
+        customerId: input.customerId,
+        kind: input.kind,
+        delta: input.delta,
+        balanceAfter: after,
+        orderId: input.orderId ?? null,
+      });
+      return { balance_after: after };
+    });
+  }
+
+  async listPointLedger(
+    customerId: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ items: PointLedgerDTO[]; count: number }> {
+    const rows = await this.db
+      .select()
+      .from(schema.pointLedger)
+      .where(eq(schema.pointLedger.customerId, customerId))
+      .orderBy(desc(schema.pointLedger.createdAt))
+      .limit(limit)
+      .offset(offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.pointLedger)
+      .where(eq(schema.pointLedger.customerId, customerId));
+    return { items: rows.map(toPointLedgerDTO), count: countRows[0]?.count ?? 0 };
+  }
+}
+
+function toPointLedgerDTO(r: typeof schema.pointLedger.$inferSelect): PointLedgerDTO {
+  return {
+    id: r.id,
+    customer_id: r.customerId,
+    kind: r.kind as PointLedgerDTO["kind"],
+    delta: r.delta,
+    balance_after: r.balanceAfter,
+    order_id: r.orderId ?? null,
+    created_at: r.createdAt.toISOString(),
+  };
 }
 
 // —— DTO 映射 ——

@@ -14,6 +14,7 @@ import {
 import type {
   CollectedVoucherDTO,
   ComputeDiscountsInput,
+  PointLedgerDTO,
   ComputeDiscountsResult,
   CreateGiftCardInput,
   CreatePromotionInput,
@@ -39,6 +40,11 @@ import type {
   VoucherType,
 } from "../types.js";
 import { evalPredicate } from "./predicate.js";
+import {
+  POINT_DISCOUNT_MINOR_PER_POINT,
+  POINT_EARN_DIVISOR_MINOR,
+  POINT_MAX_DISCOUNT_RATIO_BPS,
+} from "../types.js";
 
 /**
  * M-promotion 对外门面。阶段 1 交付四类实体（promotion / voucher / gift_card + 子表）的 CRUD 骨架；
@@ -456,6 +462,7 @@ export class PromotionService implements IPromotionModuleService {
       promotion: false,
       voucher: false,
       gift_card: false,
+      points: false,
     };
     for (const row of rows) flags[row.feature] = row.enabled;
     return flags;
@@ -463,6 +470,72 @@ export class PromotionService implements IPromotionModuleService {
 
   async setFeatureEnabled(feature: MarketingFeature, enabled: boolean): Promise<void> {
     await this.repo.setFeatureEnabled(feature, enabled);
+  }
+
+  // —— points（ADR-093）——
+
+  async getPointBalance(customerId: string): Promise<bigint> {
+    return this.repo.getPointBalance(customerId);
+  }
+
+  /**
+   * 订单完成发放积分（ADR-093）。
+   *
+   * 幂等：unique partial index（kind='earn' 的 order_id）保证同一订单只发一次。
+   * 若重复调用（事件重放），insert ledger 会因唯一约束失败 —— 这里捕获后
+   * 返回「已有的那一条」，而不是抛错让整条链路重试。
+   */
+  async earnPointsForOrder(customerId: string, orderId: string, paidMinor: bigint): Promise<PointLedgerDTO> {
+    const points = pointsEarnedFromPaid(paidMinor);
+    if (points <= 0n) {
+      // 实付不足 1 元没有积分，仍返回一条 0 值流水占位（幂等键不落空）
+      return {
+        id: `ptl_${orderId}`,
+        customer_id: customerId,
+        kind: "earn",
+        delta: 0n,
+        balance_after: await this.repo.getPointBalance(customerId),
+        order_id: orderId,
+        created_at: new Date().toISOString(),
+      };
+    }
+    try {
+      const res = await this.repo.applyPointDelta({
+        id: prefixedUlid("ptl"),
+        customerId,
+        kind: "earn",
+        delta: points,
+        orderId,
+      });
+      return {
+        id: `ptl_${orderId}`,
+        customer_id: customerId,
+        kind: "earn",
+        delta: points,
+        balance_after: res.balance_after,
+        order_id: orderId,
+        created_at: new Date().toISOString(),
+      };
+    } catch {
+      // 同订单重复发放：返回 0 增量占位，不抛错（事件重放安全）
+      return {
+        id: `ptl_${orderId}`,
+        customer_id: customerId,
+        kind: "earn",
+        delta: 0n,
+        balance_after: await this.repo.getPointBalance(customerId),
+        order_id: orderId,
+        created_at: new Date().toISOString(),
+      };
+    }
+  }
+
+  async listPointLedger(
+    customerId: string,
+    limit: number,
+    offset: number,
+  ): Promise<{ items: PointLedgerDTO[]; count: number }> {
+    return this.repo.listPointLedger(customerId, limit, offset);
   }
 
   async computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
@@ -767,4 +840,18 @@ export function voucherCodeExpiry(
   // undefined 也要挡住：老仓储/旧数据没有这个字段，不能算出 Invalid Date
   if (validDays === null || validDays === undefined || validDays <= 0) return null;
   return new Date(now.getTime() + validDays * 86_400_000);
+}
+
+/** 实付金额 → 发放积分（ADR-093）：每 POINT_EARN_DIVISOR_MINOR minor 发 1 点，向下取整。 */
+export function pointsEarnedFromPaid(paidMinor: bigint): bigint {
+  if (paidMinor <= 0n) return 0n;
+  return paidMinor / POINT_EARN_DIVISOR_MINOR;
+}
+
+/** 积分 → 抵扣金额（ADR-093）：每点抵 POINT_DISCOUNT_MINOR_PER_POINT minor，封顶到应付的 POINT_MAX_DISCOUNT_RATIO_BPS。 */
+export function pointDiscountMinor(points: bigint, payableMinor: bigint): bigint {
+  if (points <= 0n || payableMinor <= 0n) return 0n;
+  const raw = points * POINT_DISCOUNT_MINOR_PER_POINT;
+  const cap = (payableMinor * POINT_MAX_DISCOUNT_RATIO_BPS) / 10000n;
+  return raw > cap ? cap : raw;
 }

@@ -160,6 +160,8 @@ export function createStoreClient(opts: ClientOptions) {
       put(`/api/v1/store/carts/${cartId}/voucher-codes`, b),
     /** 输礼品卡码/清码：覆盖式设置（只传卡码凭证，抵扣金额由后端算，铁律 13）。 */
     getPromotionFeatures: () => get("/api/v1/store/promotions/features"),
+    /** 我的积分（ADR-093）：余额 + 最近流水。 */
+    getStorePoints: () => get("/api/v1/store/points"),
     /** 可领取的店铺券（匿名可读；登录后带 collected 标记）。 */
     listPublicVouchers: () => get("/api/v1/store/vouchers"),
     /** 本商品可用的店铺券（ADR-071）：商品页领券区只摆这个商品能用得上的。 */
