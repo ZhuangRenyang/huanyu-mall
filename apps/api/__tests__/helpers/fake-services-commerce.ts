@@ -122,6 +122,23 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       items: pointLedger.filter((l) => l.customer_id === customerId),
       count: pointLedger.filter((l) => l.customer_id === customerId).length,
     }),
+    /** 退款退回积分（ADR-095）：扣回 earn、退回 spend，幂等。 */
+    refundPointsForOrder: async (orderId: string) => {
+      const entries = pointLedger.filter((l) => l.order_id === orderId);
+      if (entries.length === 0 || entries.some((l) => l.kind === "refund")) return;
+      for (const e of entries) {
+        const before = pointBalances.get(e.customer_id) ?? 0n;
+        pointBalances.set(e.customer_id, before - e.delta);
+        pointLedger.push({
+          id: `ptl_refund_${orderId}_${e.kind}`,
+          customer_id: e.customer_id,
+          kind: "refund",
+          delta: -e.delta,
+          balance_after: before - e.delta,
+          order_id: orderId,
+        });
+      }
+    },
     listPublicVouchers: async (customerId?: string | null) => {
       if (!featureFlags.voucher) return []; // 与真实服务一致：开关关着不露券
       const mine = [...collections.values()].filter((c) => c.customerId === customerId);

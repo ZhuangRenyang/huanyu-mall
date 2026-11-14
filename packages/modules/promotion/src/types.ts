@@ -426,6 +426,8 @@ export interface PromotionRepository {
     limit: number,
     offset: number,
   ): Promise<{ items: PointLedgerDTO[]; count: number }>;
+  /** 按订单查积分流水（退款退回积分用，ADR-095）。 */
+  listPointLedgerByOrder(orderId: string): Promise<PointLedgerDTO[]>;
 }
 
 // —— Service 门面 ——
@@ -506,6 +508,8 @@ export interface IPromotionModuleService {
   consumePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
   /** workflow 补偿：退回积分。 */
   releasePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
+  /** 退款时退回积分（ADR-095）：扣回该单发放的、退回该单抵扣的，幂等。 */
+  refundPointsForOrder(orderId: string): Promise<void>;
 
   // gift_card_event
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;

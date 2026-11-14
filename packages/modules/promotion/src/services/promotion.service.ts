@@ -566,6 +566,47 @@ export class PromotionService implements IPromotionModuleService {
     });
   }
 
+  /**
+   * 退款退回积分（ADR-095）：订单退款后，把这单发放的积分扣回、抵扣的积分退回。
+   *
+   * 幂等：已写过 refund 流水的订单不再处理（防重复退款重复退回）。
+   * 语义：
+   * - earn（发放，delta 正）→ 扣回（delta 取负，即 -earn）；
+   * - spend（抵扣，delta 负）→ 退回（delta 取正，即 -spend）。
+   */
+  async refundPointsForOrder(orderId: string): Promise<void> {
+    const ledger = await this.repo.listPointLedgerByOrder(orderId);
+    if (ledger.length === 0) return;
+    if (ledger.some((l) => l.kind === "refund")) return; // 已处理过，幂等返回
+
+    // 先退回抵扣（加回），再扣回发放（减去）——顺序不能反：
+    // 先扣 earn 会把余额打成负数（spend 已经扣过一轮），触发余额不足。
+    for (const entry of ledger) {
+      const customerId = entry.customer_id;
+      if (entry.kind === "spend" && entry.delta < 0n) {
+        await this.repo.applyPointDelta({
+          id: prefixedUlid("ptl"),
+          customerId,
+          kind: "refund",
+          delta: -entry.delta,
+          orderId,
+        });
+      }
+    }
+    for (const entry of ledger) {
+      const customerId = entry.customer_id;
+      if (entry.kind === "earn" && entry.delta > 0n) {
+        await this.repo.applyPointDelta({
+          id: prefixedUlid("ptl"),
+          customerId,
+          kind: "refund",
+          delta: -entry.delta,
+          orderId,
+        });
+      }
+    }
+  }
+
   async computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
     const now = new Date();
     // 功能级总开关：关闭的功能整体不参与计算（默认全关，ADR-014）。

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
@@ -805,6 +805,16 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .from(schema.pointLedger)
       .where(eq(schema.pointLedger.customerId, customerId));
     return { items: rows.map(toPointLedgerDTO), count: countRows[0]?.count ?? 0 };
+  }
+
+  /** 按订单查积分流水（退款退回积分用，ADR-095）。 */
+  async listPointLedgerByOrder(orderId: string): Promise<PointLedgerDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.pointLedger)
+      .where(eq(schema.pointLedger.orderId, orderId))
+      .orderBy(asc(schema.pointLedger.createdAt));
+    return rows.map(toPointLedgerDTO);
   }
 }
 

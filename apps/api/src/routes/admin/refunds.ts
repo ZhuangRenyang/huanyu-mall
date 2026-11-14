@@ -35,6 +35,22 @@ const rejectBody = z.object({
 });
 
 /**
+ * 退款退回积分（ADR-095）：打款已成功，积分退回失败不能把「已退款」报成失败，
+ * 否则商家会重复点 —— 只记日志。
+ */
+async function refundPointsSafely(
+  deps: AppDeps,
+  req: { log: { warn: (obj: unknown, msg?: string) => void } },
+  orderId: string,
+): Promise<void> {
+  try {
+    await deps.services.promotion.refundPointsForOrder(orderId);
+  } catch (err) {
+    req.log.warn({ err, orderId }, "退款退回积分失败");
+  }
+}
+
+/**
  * 退款进度通知（ADR-072）。
  *
  * 审核结果必须让顾客知道：他不看后台，只看邮箱和「我的订单」。
@@ -201,6 +217,8 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
 
       const refundId = (result as { refundId: string }).refundId;
       const after = await deps.services.order.approveRefundRequest(id, refundId, body.note ?? null);
+      // 退款退回积分（ADR-095）：扣回该单发放的、退回该单抵扣的；失败不阻断退款
+      await refundPointsSafely(deps, req, request.order_id);
       await notifyRefundUpdate(deps, req, {
         request,
         status: "refunded",
@@ -280,6 +298,8 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
         refundId,
         body.note ?? null,
       );
+      // 退款退回积分（ADR-095）
+      await refundPointsSafely(deps, req, request.order_id);
       await notifyRefundUpdate(deps, req, {
         request,
         status: "refunded",

@@ -491,6 +491,9 @@ class InMemoryPromotionRepository implements PromotionRepository {
     const all = this.pointLedger.filter((l) => l.customer_id === customerId);
     return { items: all.slice(offset, offset + limit), count: all.length };
   }
+  async listPointLedgerByOrder(orderId: string): Promise<PointLedgerDTO[]> {
+    return this.pointLedger.filter((l) => l.order_id === orderId);
+  }
 }
 
 describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
@@ -1743,5 +1746,24 @@ describe("积分抵扣（ADR-094）", () => {
     expect(await service.getPointBalance("cust_1")).toBe(40n);
     await service.releasePointsForOrder("cust_1", 60n, "ord_spend");
     expect(await service.getPointBalance("cust_1")).toBe(100n);
+  });
+});
+
+describe("退款退回积分（ADR-095）", () => {
+  it("refundPointsForOrder：扣回发放、退回抵扣，且幂等", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    // 下单：用 60 点抵扣，完成后发 100 点
+    await service.earnPointsForOrder("cust_1", "ord_1", 10000n); // 发 100
+    await service.consumePointsForOrder("cust_1", 60n, "ord_1"); // 抵 60
+    expect(await service.getPointBalance("cust_1")).toBe(40n);
+
+    // 退款：扣回 100，退回 60 → 余额回 0
+    await service.refundPointsForOrder("ord_1");
+    expect(await service.getPointBalance("cust_1")).toBe(0n);
+
+    // 幂等：再退一次不重复
+    await service.refundPointsForOrder("ord_1");
+    expect(await service.getPointBalance("cust_1")).toBe(0n);
   });
 });
