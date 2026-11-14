@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { giftCardNotFound, voucherCodeNotFound } from "../src/errors.js";
-import { PromotionService } from "../src/services/promotion.service.js";
+import { PromotionService, voucherCodeExpiry } from "../src/services/promotion.service.js";
 import type {
   CollectedVoucherDTO,
   CreateGiftCardInput,
@@ -1515,5 +1515,15 @@ describe("本商品可用券（ADR-071）", () => {
 
     const list = await service.listPublicVouchersForProduct({ productId: "prod_a" });
     expect(list.some((v) => v.id === broken.id)).toBe(false);
+  });
+});
+
+describe("领取后 N 天有效（ADR-085）", () => {
+  it("valid_days 为空 = 跟随固定区间；1 天 = 领取时刻 + 86400000", () => {
+    expect(voucherCodeExpiry(null)).toBeNull();
+    expect(voucherCodeExpiry(0)).toBeNull();
+    const now = new Date("2026-11-14T10:00:00.000Z");
+    expect(voucherCodeExpiry(1, now)?.toISOString()).toBe("2026-11-15T10:00:00.000Z");
+    expect(voucherCodeExpiry(30, now)?.toISOString()).toBe("2026-12-14T10:00:00.000Z");
   });
 });

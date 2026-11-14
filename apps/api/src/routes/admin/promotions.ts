@@ -58,6 +58,8 @@ const createVoucherBody = z
     is_public: z.boolean().optional(),
     /** 每人限领张数。 */
     collect_limit: z.number().int().min(1).max(99).optional(),
+    /** 领取后 N 天有效（ADR-085）；不传 = 只用固定区间。 */
+    valid_days: z.number().int().min(1).max(365).nullable().optional(),
     /** 适用范围：仅 type='specific_product' 时需要。 */
     scopes: z.array(voucherScopeSchema).min(1).max(200).optional(),
   })
@@ -82,6 +84,7 @@ const updateVoucherBody = z.object({
   ends_at: z.string().datetime().nullable().optional(),
   is_public: z.boolean().optional(),
   collect_limit: z.number().int().min(1).max(99).optional(),
+  valid_days: z.number().int().min(1).max(365).nullable().optional(),
   scopes: z.array(voucherScopeSchema).min(1).max(200).optional(),
 });
 
@@ -552,6 +555,7 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         endsAt: b.ends_at ? new Date(b.ends_at) : b.ends_at === null ? null : undefined,
         isPublic: b.is_public,
         collectLimit: b.collect_limit,
+        validDays: b.valid_days ?? null,
         ...(b.scopes ? { scopes: b.scopes.map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })) } : {}),
       });
       const codes = b.codes && b.codes.length > 0 ? b.codes : [generateVoucherCode()];
@@ -618,6 +622,7 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         endsAt: b.ends_at !== undefined ? (b.ends_at ? new Date(b.ends_at) : null) : undefined,
         isPublic: b.is_public,
         collectLimit: b.collect_limit,
+        validDays: b.valid_days ?? null,
         ...(b.scopes !== undefined
           ? { scopes: b.scopes.map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })) }
           : {}),

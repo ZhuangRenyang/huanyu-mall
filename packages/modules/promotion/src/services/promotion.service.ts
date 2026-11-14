@@ -230,6 +230,12 @@ export class PromotionService implements IPromotionModuleService {
     }
 
     const code = await this.issueUniqueCode(voucherId);
+    /*
+     * 领取后 N 天有效（ADR-085）：到期时间落在**码**上，不落在券上 ——
+     * 同一张券不同顾客的领取时间不同，只有一个全局 ends_at 时「N 天」无从表达。
+     */
+    const expiresAt = voucherCodeExpiry(voucher.valid_days);
+    if (expiresAt) await this.repo.setVoucherCodeExpiry(code.id, expiresAt);
     await this.repo.insertVoucherCollection({
       id: prefixedUlid("vcol"),
       voucherId,
@@ -558,6 +564,8 @@ export class PromotionService implements IPromotionModuleService {
         if (!found) continue; // 券码不存在 → 静默跳过（预览语义，不抛错）
         const { code: vc, voucher } = found;
         if (!vc.is_active) continue;
+        // 码级到期（领取后 N 天，ADR-085）：与券的固定 ends_at 取交集
+        if (vc.expires_at && vc.expires_at.getTime() < now.getTime()) continue;
         if (voucher.status !== "active") continue; // 停用即时生效（硬约束 6）
         if (voucher.starts_at && voucher.starts_at.getTime() > now.getTime()) continue;
         if (voucher.ends_at && voucher.ends_at.getTime() < now.getTime()) continue;
@@ -717,4 +725,14 @@ function inWindow(startsAt: Date | null, endsAt: Date | null, now: Date): boolea
   if (startsAt && now < startsAt) return false;
   if (endsAt && now > endsAt) return false;
   return true;
+}
+
+/** 领取后 N 天有效的到期时间（ADR-085）：纯函数，便于单测边界。 */
+export function voucherCodeExpiry(
+  validDays: number | null | undefined,
+  now: Date = new Date(),
+): Date | null {
+  // undefined 也要挡住：老仓储/旧数据没有这个字段，不能算出 Invalid Date
+  if (validDays === null || validDays === undefined || validDays <= 0) return null;
+  return new Date(now.getTime() + validDays * 86_400_000);
 }

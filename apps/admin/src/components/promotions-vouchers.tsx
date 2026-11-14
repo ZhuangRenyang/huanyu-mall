@@ -251,6 +251,8 @@ function VoucherEditor({
   /** 店铺券：公开可领 + 每人限领（ADR-029）。 */
   const [isPublic, setIsPublic] = useState(false);
   const [collectLimit, setCollectLimit] = useState('1');
+  /** 领取后 N 天有效（ADR-085）；空 = 用上面的固定区间。 */
+  const [validDays, setValidDays] = useState('');
   /* 适用范围（ADR-064）：只有 type='specific_product' 时显示与提交 */
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
   const [productIds, setProductIds] = useState<string[]>([]);
@@ -299,6 +301,7 @@ function VoucherEditor({
     setCodesText('');
     setIsPublic(voucher?.isPublic ?? false);
     setCollectLimit(String(voucher?.collectLimit ?? 1));
+    setValidDays(voucher?.validDays != null ? String(voucher.validDays) : '');
     // 范围回填（ADR-064）
     const scopes = voucher?.scopes ?? [];
     setCategoryIds(scopes.filter((sc) => sc.scopeType === 'category').map((sc) => sc.scopeId));
@@ -345,6 +348,7 @@ function VoucherEditor({
       endsAt: fromLocalInput(endsAt),
       isPublic,
       collectLimit: collectLimit.trim() ? Math.max(1, Math.round(Number(collectLimit))) : 1,
+      validDays: validDays.trim() ? Math.max(1, Math.round(Number(validDays))) : null,
       ...(voucher ? {} : { codes: parseCodes() }),
       ...(type === 'specific_product' ? { scopes } : {}),
     };
@@ -570,6 +574,19 @@ function VoucherEditor({
                   onChange={(e) => setCollectLimit(e.target.value)}
                   className="tabular w-32"
                 />
+                <TextField
+                  id="v-valid-days"
+                  label="领取后有效天数（选填）"
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={validDays}
+                  onChange={(e) => setValidDays(e.target.value)}
+                  className="tabular mt-3 w-40"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  填了就按「领取那一刻起 N 天」算，与固定区间取更早的截止时间。
+                </p>
               </div>
             )}
           </div>

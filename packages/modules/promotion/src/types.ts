@@ -65,6 +65,8 @@ export interface VoucherDTO {
   is_public: boolean;
   /** 每个顾客最多领几张。 */
   collect_limit: number;
+  /** 领取后 N 天有效（ADR-085）；空 = 只用固定区间。 */
+  valid_days: number | null;
 }
 
 /** 券适用范围（ADR-064）：product=指定商品，category=指定分类。 */
@@ -83,6 +85,8 @@ export interface VoucherCodeDTO {
   code: string;
   used: number;
   is_active: boolean;
+  /** 领取时按 valid_days 算出的到期时间（ADR-085）；空 = 跟随券 ends_at。 */
+  expires_at: Date | null;
 }
 
 /** 我的卡券（领取记录 + 券信息平铺，店面列表直接渲染）。 */
@@ -175,6 +179,8 @@ export interface CreateVoucherInput {
   isPublic?: boolean;
   /** 每人限领。 */
   collectLimit?: number;
+  /** 领取后 N 天有效（ADR-085）。 */
+  validDays?: number | null;
   /**
    * 适用范围（ADR-064）：仅 type='specific_product' 时生效。
    * 创建时 type 为 specific_product 必须给至少一条；更新时不给 = 不改变范围。
@@ -311,6 +317,8 @@ export interface PromotionRepository {
 
   // voucher_code
   insertVoucherCode(input: CreateVoucherCodeInput & { id: string }): Promise<VoucherCodeDTO>;
+  /** 给券码写入到期时间（领取时按 valid_days 计算，ADR-085）。 */
+  setVoucherCodeExpiry(id: string, expiresAt: Date): Promise<void>;
   findVoucherCodeById(id: string): Promise<VoucherCodeDTO | null>;
   findVoucherCodeByCode(code: string): Promise<VoucherCodeDTO | null>;
   /** 按 code 联查 voucher_code + 其归属 voucher（computeDiscounts 单次查询，禁 N+1）。 */

@@ -42,6 +42,8 @@ export interface VoucherView {
   isPublic: boolean;
   /** 每人限领张数。 */
   collectLimit: number;
+  /** 领取后 N 天有效（ADR-085）；空 = 跟随固定区间。 */
+  validDays: number | null;
   /** 适用范围（ADR-064）：type='specific_product' 时非空。 */
   scopes: VoucherScopeView[];
 }
@@ -93,6 +95,8 @@ export interface VoucherInput {
   isPublic: boolean;
   /** 每人限领。 */
   collectLimit: number;
+  /** 领取后 N 天有效（ADR-085）；空 = 跟随固定区间。 */
+  validDays: number | null;
   /** 适用范围（ADR-064）：仅 type='specific_product' 时传。 */
   scopes?: VoucherScopeView[];
 }
@@ -122,6 +126,7 @@ function mapVoucher(v: AdminVoucher): VoucherView {
     status: v.status,
     isPublic: v.is_public ?? false,
     collectLimit: v.collect_limit ?? 1,
+    validDays: v.valid_days ?? null,
     scopes: (v.scopes ?? []).map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })),
   };
 }
@@ -184,6 +189,7 @@ const SEED_VOUCHERS: VoucherView[] = [
     status: 'active',
     isPublic: true,
     collectLimit: 1,
+    validDays: null,
     scopes: [],
   },
 ];
@@ -327,6 +333,7 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
       status: 'active',
       isPublic: input.isPublic,
       collectLimit: input.collectLimit,
+      validDays: input.validDays,
       scopes: input.scopes ?? [],
     };
     mockSaveVoucher(v);
@@ -343,6 +350,7 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
     ends_at: input.endsAt,
     is_public: input.isPublic,
     collect_limit: input.collectLimit,
+    valid_days: input.validDays,
     ...(input.codes && input.codes.length > 0 ? { codes: input.codes } : {}),
     ...(input.scopes && input.scopes.length > 0
       ? { scopes: input.scopes.map((sc) => ({ scope_type: sc.scopeType, scope_id: sc.scopeId })) }
@@ -366,6 +374,7 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
         endsAt: input.endsAt,
         isPublic: input.isPublic,
         collectLimit: input.collectLimit,
+      validDays: input.validDays,
         scopes: input.scopes ?? [],
       });
       mockSaveVoucher(v);
@@ -383,6 +392,7 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
     ends_at: input.endsAt,
     is_public: input.isPublic,
     collect_limit: input.collectLimit,
+    valid_days: input.validDays,
     ...(input.scopes && input.scopes.length > 0
       ? { scopes: input.scopes.map((sc) => ({ scope_type: sc.scopeType, scope_id: sc.scopeId })) }
       : {}),

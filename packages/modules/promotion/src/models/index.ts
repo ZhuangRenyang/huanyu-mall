@@ -82,6 +82,8 @@ export const voucher = pgTable("voucher", {
   isPublic: boolean("is_public").notNull().default(false),
   /** 每个顾客最多领几张。 */
   collectLimit: integer("collect_limit").notNull().default(1),
+  /** 领取后 N 天有效（ADR-085）；空 = 只用 starts_at/ends_at 固定窗口。 */
+  validDays: integer("valid_days"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -97,6 +99,8 @@ export const voucherCode = pgTable(
     code: text("code").notNull(),
     used: integer("used").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
+    /** 领取时按 valid_days 算出的到期时间（ADR-085）；空 = 跟随券的 ends_at。 */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),

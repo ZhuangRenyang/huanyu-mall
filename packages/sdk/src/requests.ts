@@ -256,6 +256,8 @@ export interface CreateVoucherRequest {
   is_public?: boolean;
   /** 每人限领张数。 */
   collect_limit?: number;
+  /** 领取后 N 天有效（ADR-085）。 */
+  valid_days?: number | null;
   /** 适用范围（ADR-064）：指定商品/分类。 */
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }
@@ -272,6 +274,7 @@ export interface UpdateVoucherRequest {
   ends_at?: string | null;
   is_public?: boolean;
   collect_limit?: number;
+  valid_days?: number | null;
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }
 

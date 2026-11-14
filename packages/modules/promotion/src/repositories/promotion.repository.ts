@@ -266,6 +266,7 @@ export class DrizzlePromotionRepository implements PromotionRepository {
         status: input.status ?? "active",
         isPublic: input.isPublic ?? false,
         collectLimit: input.collectLimit ?? 1,
+        validDays: input.validDays ?? null,
       })
       .returning();
     return toVoucherDTO(rows[0]!);
@@ -311,6 +312,7 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     if (patch.status !== undefined) set.status = patch.status;
     if (patch.isPublic !== undefined) set.isPublic = patch.isPublic;
     if (patch.collectLimit !== undefined) set.collectLimit = patch.collectLimit;
+    if (patch.validDays !== undefined) set.validDays = patch.validDays;
     const rows = await this.db
       .update(schema.voucher)
       .set(set)
@@ -456,6 +458,13 @@ export class DrizzlePromotionRepository implements PromotionRepository {
   }
 
   // —— voucher_code ——
+  async setVoucherCodeExpiry(id: string, expiresAt: Date): Promise<void> {
+    await this.db
+      .update(schema.voucherCode)
+      .set({ expiresAt, updatedAt: new Date() })
+      .where(eq(schema.voucherCode.id, id));
+  }
+
   async insertVoucherCode(input: CreateVoucherCodeInput & { id: string }): Promise<VoucherCodeDTO> {
     const rows = await this.db
       .insert(schema.voucherCode)
@@ -771,6 +780,7 @@ function toVoucherDTO(r: typeof schema.voucher.$inferSelect): VoucherDTO {
     status: r.status as VoucherDTO["status"],
     is_public: r.isPublic,
     collect_limit: r.collectLimit,
+    valid_days: r.validDays,
   };
 }
 
@@ -790,6 +800,7 @@ function toVoucherCodeDTO(r: typeof schema.voucherCode.$inferSelect): VoucherCod
     code: r.code,
     used: r.used,
     is_active: r.isActive,
+    expires_at: r.expiresAt,
   };
 }
 
@@ -833,7 +844,13 @@ function toCollectedVoucherDTO(r: {
     discount_value: r.voucher.discountValue,
     min_spent: r.voucher.minSpent,
     starts_at: r.voucher.startsAt,
-    ends_at: r.voucher.endsAt,
+    // 码级到期（领取后 N 天）与券的固定 ends_at 取更早的那个（ADR-085）
+    ends_at:
+      r.code.expiresAt && r.voucher.endsAt
+        ? r.code.expiresAt < r.voucher.endsAt
+          ? r.code.expiresAt
+          : r.voucher.endsAt
+        : (r.code.expiresAt ?? r.voucher.endsAt),
     status: r.collection.status as CollectedVoucherDTO["status"],
     collected_at: r.collection.collectedAt,
     used_at: r.collection.usedAt,
