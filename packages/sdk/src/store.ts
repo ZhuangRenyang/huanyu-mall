@@ -109,7 +109,7 @@ export interface CartTotals {
 
 /** 命中的促销折扣明细（voucher / gift card / 目录 / 订单，金额由后端算）。 */
 export interface CartDiscount {
-  type: 'catalogue' | 'order' | 'voucher' | 'gift_card';
+  type: 'catalogue' | 'order' | 'voucher' | 'gift_card' | 'points';
   promotion_id: string;
   code: string | null;
   amount_minor: number;
@@ -128,6 +128,8 @@ export interface Cart {
   voucher_codes?: string[];
   /** 顾客输入的 gift card 码（后端持久化，刷新不丢）。 */
   gift_card_codes?: string[];
+  /** 顾客想用的积分数（ADR-094）。 */
+  points_to_use?: number;
   line_items: CartLineItem[];
   shipping_method?: CartShippingMethod;
   totals: CartTotals;

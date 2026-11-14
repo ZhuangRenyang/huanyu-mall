@@ -15,6 +15,8 @@ import { getStoreClient } from './api';
 export interface CartPromoView {
   voucherCodes: string[];
   giftCardCodes: string[];
+  /** 顾客想用的积分数（ADR-094）。 */
+  pointsToUse: number;
   /** 后端算好的折扣合计（minor unit）。 */
   discountMinor: number;
   /** 后端算好的税额（minor unit）。前端绝不自己乘税率（铁律 13）。 */
@@ -34,6 +36,7 @@ export interface CartPromoView {
 export const EMPTY_PROMO: CartPromoView = {
   voucherCodes: [],
   giftCardCodes: [],
+  pointsToUse: 0,
   discountMinor: 0,
   taxMinor: 0,
   shippingMinor: 0,
@@ -47,6 +50,7 @@ export function toPromoView(cart: Cart): CartPromoView {
   return {
     voucherCodes: cart.voucher_codes ?? [],
     giftCardCodes: cart.gift_card_codes ?? [],
+    pointsToUse: Number(cart.points_to_use ?? 0),
     discountMinor: cart.totals?.discount_minor ?? 0,
     taxMinor: cart.totals?.tax_minor ?? 0,
     shippingMinor: cart.totals?.shipping_minor ?? 0,
@@ -80,6 +84,16 @@ export async function setCartVoucherCodes(
 ): Promise<CartPromoView> {
   const cart = (await getStoreClient().setVoucherCodes(cartId, { codes })) as Cart;
   // 写接口不带国家，税额会按默认税率回；有国家就再读一次，保证展示与结账一致
+  return country ? fetchCartPromo(cartId, country) : toPromoView(cart);
+}
+
+/** 设置积分抵扣意愿（ADR-094）：只传点数，抵扣额由后端折算封顶。 */
+export async function setCartPointsToUse(
+  cartId: string,
+  points: number,
+  country?: string,
+): Promise<CartPromoView> {
+  const cart = (await getStoreClient().setPointsToUse(cartId, points)) as Cart;
   return country ? fetchCartPromo(cartId, country) : toPromoView(cart);
 }
 
@@ -121,6 +135,7 @@ const DISCOUNT_LABEL: Record<CartDiscount['type'], string> = {
   gift_card: '礼品卡',
   order: '订单促销',
   catalogue: '目录促销',
+  points: '积分抵扣',
 };
 
 /**
@@ -142,11 +157,22 @@ export function buildDiscountLines(promo: CartPromoView): DiscountLine[] {
   return [];
 }
 
+/** 拉取当前顾客积分余额（ADR-094）；未登录或失败返回 0。 */
+export async function fetchPointBalance(): Promise<number> {
+  try {
+    const res = (await getStoreClient().getStorePoints()) as { balance?: string | number };
+    return Number(res.balance ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
 /** 营销功能开关（后端为准；默认全关）。 */
 export interface PromotionFeatures {
   promotion: boolean;
   voucher: boolean;
   gift_card: boolean;
+  points: boolean;
 }
 
 export async function fetchPromotionFeatures(): Promise<PromotionFeatures> {
@@ -155,5 +181,6 @@ export async function fetchPromotionFeatures(): Promise<PromotionFeatures> {
     promotion: res.promotion ?? false,
     voucher: res.voucher ?? false,
     gift_card: res.gift_card ?? false,
+    points: res.points ?? false,
   };
 }

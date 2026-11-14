@@ -68,6 +68,7 @@ export function mapCart(cart: CartDetailDTO) {
     status: cart.status,
     voucher_codes: cart.voucher_codes,
     gift_card_codes: cart.gift_card_codes,
+    points_to_use: cart.points_to_use,
     line_items: cart.items.map(mapLineItem),
     shipping_method: cart.shipping_method,
     totals: cart.totals,

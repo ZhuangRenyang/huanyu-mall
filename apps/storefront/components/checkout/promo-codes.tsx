@@ -15,26 +15,35 @@ import { fetchPromotionFeatures, type PromotionFeatures } from '@/lib/promo';
 export interface PromoCodesProps {
   voucherCodes: string[];
   giftCardCodes: string[];
+  /** 当前顾客积分余额（ADR-094）。 */
+  pointBalance: number;
+  /** 已设置的积分抵扣意愿。 */
+  pointsToUse: number;
   busy: boolean;
   error: string | null;
   onApplyVoucher: (code: string) => void;
   onApplyGiftCard: (code: string) => void;
   onRemoveVoucher: (code: string) => void;
   onRemoveGiftCard: (code: string) => void;
+  onSetPoints: (points: number) => void;
 }
 
 export function PromoCodes({
   voucherCodes,
   giftCardCodes,
+  pointBalance,
+  pointsToUse,
   busy,
   error,
   onApplyVoucher,
   onApplyGiftCard,
   onRemoveVoucher,
   onRemoveGiftCard,
+  onSetPoints,
 }: PromoCodesProps) {
   const [voucherInput, setVoucherInput] = useState('');
   const [giftCardInput, setGiftCardInput] = useState('');
+  const [pointsInput, setPointsInput] = useState('');
   // 功能开关以后端为准：关闭的功能不显示输码入口（默认全关）。
   const [features, setFeatures] = useState<PromotionFeatures | null>(null);
 
@@ -42,7 +51,9 @@ export function PromoCodes({
     let alive = true;
     fetchPromotionFeatures()
       .then((f) => alive && setFeatures(f))
-      .catch(() => alive && setFeatures({ promotion: false, voucher: false, gift_card: false }));
+      .catch(() =>
+        alive && setFeatures({ promotion: false, voucher: false, gift_card: false, points: false }),
+      );
     return () => {
       alive = false;
     };
@@ -60,9 +71,15 @@ export function PromoCodes({
     onApplyGiftCard(code);
     setGiftCardInput('');
   };
+  const submitPoints = () => {
+    const n = Math.max(0, Math.floor(Number(pointsInput)));
+    if (!Number.isFinite(n) || n <= 0 || busy) return;
+    onSetPoints(n);
+    setPointsInput('');
+  };
 
-  // 未加载完或两个功能都关闭 → 整块不渲染，避免顾客输了码才发现不能用。
-  if (!features || (!features.voucher && !features.gift_card)) return null;
+  // 未加载完或三个功能都关闭 → 整块不渲染，避免顾客输了码才发现不能用。
+  if (!features || (!features.voucher && !features.gift_card && !features.points)) return null;
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-4">
@@ -109,6 +126,39 @@ export function PromoCodes({
           </Button>
         </div>
         )}
+        {features.points && (
+        <div className="space-y-1">
+          <div className="flex gap-2">
+            <Input
+              aria-label="用积分抵扣"
+              placeholder={`可用 ${pointBalance} 积分，100 积分抵 1 元`}
+              value={pointsInput}
+              onChange={(e) => setPointsInput(e.target.value.replace(/[^\d]/g, ''))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  submitPoints();
+                }
+              }}
+              disabled={busy || pointBalance <= 0}
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              className="shrink-0"
+              onClick={submitPoints}
+              disabled={busy || pointBalance <= 0 || !pointsInput.trim()}
+            >
+              应用
+            </Button>
+          </div>
+          {pointBalance > 0 && (
+            <p className="text-xs text-muted-foreground">
+              输入想用的积分，下单时按 100 积分抵 1 元自动折算（最高抵订单一半）。
+            </p>
+          )}
+        </div>
+        )}
       </div>
 
       {error && (
@@ -117,7 +167,7 @@ export function PromoCodes({
         </p>
       )}
 
-      {(voucherCodes.length > 0 || giftCardCodes.length > 0) && (
+      {(voucherCodes.length > 0 || giftCardCodes.length > 0 || pointsToUse > 0) && (
         <div className="flex flex-wrap gap-1.5">
           {features.voucher &&
             voucherCodes.map((code) => (
@@ -127,6 +177,15 @@ export function PromoCodes({
             giftCardCodes.map((code) => (
               <Chip key={`g-${code}`} icon={Tag} label={code} onRemove={() => onRemoveGiftCard(code)} disabled={busy} />
             ))}
+          {features.points && pointsToUse > 0 && (
+            <Chip
+              key="points"
+              icon={Tag}
+              label={`${pointsToUse} 积分`}
+              onRemove={() => onSetPoints(0)}
+              disabled={busy}
+            />
+          )}
         </div>
       )}
     </div>

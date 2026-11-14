@@ -11,7 +11,9 @@ import {
   applyPromoCodesToCart,
   buildDiscountLines,
   fetchCartPromo,
+  fetchPointBalance,
   setCartGiftCardCodes,
+  setCartPointsToUse,
   setCartVoucherCodes,
   EMPTY_PROMO,
   type CartPromoView,
@@ -92,6 +94,13 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
   const [promo, setPromo] = useState<CartPromoView>(EMPTY_PROMO);
   const [promoBusy, setPromoBusy] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
+  /** 当前顾客积分余额（ADR-094）：登录后拉一次，用于「用积分」输入框提示上限。 */
+  const [pointBalance, setPointBalance] = useState(0);
+
+  useEffect(() => {
+    if (!live || !getAccessToken()) return;
+    void fetchPointBalance().then(setPointBalance).catch(() => setPointBalance(0));
+  }, [live]);
 
   // 可选国家清单：进页面拉一次；接口失败退回最小清单，后端说没配配送范围则挡住下单
   useEffect(() => {
@@ -185,6 +194,13 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
       void mutatePromo((cartId) => setCartGiftCardCodes(cartId, next, countryRef.current || undefined));
     },
     [promo.giftCardCodes, mutatePromo],
+  );
+  /** 设置积分抵扣意愿（ADR-094）：只传点数，抵扣额由后端折算封顶。 */
+  const setPoints = useCallback(
+    (points: number) => {
+      void mutatePromo((cartId) => setCartPointsToUse(cartId, points, countryRef.current || undefined));
+    },
+    [mutatePromo],
   );
 
   // 回填草稿（返回/刷新不丢）
@@ -390,6 +406,10 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
       // 展示价与实收价不一致。覆盖式设置幂等，复用原车时也不会有副作用。
       if (promo.voucherCodes.length > 0 || promo.giftCardCodes.length > 0) {
         await applyPromoCodesToCart(cartId, promo.voucherCodes, promo.giftCardCodes);
+      }
+      // 积分抵扣意愿也要搬到最终下单的那辆车（ADR-094）：换车只搬行不搬积分
+      if (promo.pointsToUse > 0) {
+        await setCartPointsToUse(cartId, promo.pointsToUse);
       }
 
       const result = await submitLiveCheckout({
@@ -665,12 +685,15 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
               <PromoCodes
                 voucherCodes={promo.voucherCodes}
                 giftCardCodes={promo.giftCardCodes}
+                pointBalance={pointBalance}
+                pointsToUse={promo.pointsToUse}
                 busy={promoBusy}
                 error={promoError}
                 onApplyVoucher={applyVoucher}
                 onApplyGiftCard={applyGiftCard}
                 onRemoveVoucher={removeVoucher}
                 onRemoveGiftCard={removeGiftCard}
+                onSetPoints={setPoints}
               />
             </>
           )}
