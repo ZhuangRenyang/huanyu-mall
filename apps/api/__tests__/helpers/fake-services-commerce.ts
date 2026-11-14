@@ -1144,6 +1144,19 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         amountMinor: state.orderCreated ? BigInt(String(order.total_minor ?? 0)) : 0n,
         currencyCode: "CNY",
       }),
+      // 统计报表（ADR-097）：与 summarizePaidSince 同口径，仅时段不同
+      summarizePaidBetween: async () => ({
+        count: state.orderCreated ? 1 : 0,
+        amountMinor: state.orderCreated ? BigInt(String(order.total_minor ?? 0)) : 0n,
+        currencyCode: "CNY",
+      }),
+      summarizeRefundsBetween: async () => ({
+        count: 0,
+        amountMinor: 0n,
+        currencyCode: "CNY",
+      }),
+      topSellingVariants: async (limit: number) =>
+        state.orderCreated ? [{ variantId: "var_1", quantity: 1 }] : [],
       /** 改状态（测试专用）：验「已付款不能直接取消」需要把单推到 paid。 */
       updateStatus: async (_id: string, status: string) => {
         order.status = status;

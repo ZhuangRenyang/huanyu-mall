@@ -179,6 +179,24 @@ export class OrderService implements IOrderModuleService {
     return this.repo.summarizePaidSince(since);
   }
 
+  async summarizePaidBetween(
+    from: Date,
+    to: Date,
+  ): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }> {
+    return this.repo.summarizePaidBetween(from, to);
+  }
+
+  async summarizeRefundsBetween(
+    from: Date,
+    to: Date,
+  ): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }> {
+    return this.repo.summarizeRefundsBetween(from, to);
+  }
+
+  async topSellingVariants(limit: number): Promise<Array<{ variantId: string; quantity: number }>> {
+    return this.repo.topSellingVariants(limit);
+  }
+
   async summarizeByCustomerIds(customerIds: string[]): Promise<CustomerOrderSummaryDTO[]> {
     return this.repo.summarizeByCustomerIds(customerIds);
   }

@@ -408,6 +408,12 @@ export interface OrderRepository {
   ): Promise<Record<string, number>>;
   /** 某时刻之后「已付款」订单数与金额（工作台「今日」口径）。 */
   summarizePaidSince(since: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
+  /** 时间段内已付款订单数与金额（统计报表，ADR-097）。 */
+  summarizePaidBetween(from: Date, to: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
+  /** 时间段内退款总额与笔数（统计报表，ADR-097）。 */
+  summarizeRefundsBetween(from: Date, to: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
+  /** 销量排行 top N（统计报表，ADR-097）。 */
+  topSellingVariants(limit: number): Promise<Array<{ variantId: string; quantity: number }>>;
   updateStatus(id: string, status: OrderStatus): Promise<void>;
   updatePaymentStatus(id: string, paymentStatus: PaymentStatus): Promise<void>;
 }
@@ -426,6 +432,12 @@ export interface IOrderModuleService {
   ): Promise<Record<string, number>>;
   /** 某时刻之后「已付款」订单数与金额（工作台「今日」口径）。 */
   summarizePaidSince(since: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
+  /** 时间段内已付款订单数与金额（统计报表，ADR-097）。 */
+  summarizePaidBetween(from: Date, to: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
+  /** 时间段内退款总额与笔数（统计报表，ADR-097）。 */
+  summarizeRefundsBetween(from: Date, to: Date): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }>;
+  /** 销量排行 top N（统计报表，ADR-097）。 */
+  topSellingVariants(limit: number): Promise<Array<{ variantId: string; quantity: number }>>;
   retrieveOrder(id: string): Promise<OrderDetailDTO>;
   /** 写商家备注（仅后台可见）；传 null/空串即清空。 */
   setMerchantNote(id: string, note: string | null): Promise<OrderDetailDTO>;

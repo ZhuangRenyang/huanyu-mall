@@ -340,6 +340,8 @@ export function createAdminClient(opts: ClientOptions) {
       post("/api/v1/admin/auth/change-password", b),
     /** 工作台：今日支付、待发货、待退款、最近订单（ADR-030）。 */
     getDashboard: () => get("/api/v1/admin/dashboard"),
+    /** 统计报表（ADR-097）：近 30 天交易汇总 + 状态分布 + 销量排行。 */
+    getStatistics: () => get("/api/v1/admin/statistics"),
     /** 微页面（ADR-082）。 */
     listMicroPages: () => get("/api/v1/admin/settings/pages"),
     createMicroPage: (

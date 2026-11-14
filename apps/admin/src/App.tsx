@@ -16,6 +16,7 @@ import { SettingsPage } from './pages/settings';
 import { DesignPage } from './pages/design';
 import { AppsPage } from './pages/apps';
 import { MaintenancePage } from './pages/maintenance';
+import { StatisticsPage } from './pages/statistics';
 import {
   MarketingGiftCardsPage,
   MarketingPromotionsPage,
@@ -52,6 +53,7 @@ export function App() {
           <Route path="apps" element={<AppsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="maintenance" element={<MaintenancePage />} />
+          <Route path="statistics" element={<StatisticsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

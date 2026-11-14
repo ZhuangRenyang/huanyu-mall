@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 
@@ -481,6 +481,22 @@ export class DrizzleOrderRepository implements OrderRepository {
     return Object.fromEntries(rows.map((r) => [r.variantId, Number(r.count ?? 0)]));
   }
 
+  /** 销量排行 top N（统计报表，ADR-097）：按变体聚合销量，返回 [{variantId, quantity}]。 */
+  async topSellingVariants(limit: number): Promise<Array<{ variantId: string; quantity: number }>> {
+    const rows = await this.db
+      .select({
+        variantId: schema.orderLineItem.variantId,
+        quantity: sql<number>`sum(${schema.orderLineItem.quantity})::int`,
+      })
+      .from(schema.orderLineItem)
+      .innerJoin(schema.order, eq(schema.orderLineItem.orderId, schema.order.id))
+      .where(inArray(schema.order.status, SOLD_STATUSES))
+      .groupBy(schema.orderLineItem.variantId)
+      .orderBy(desc(sql`sum(${schema.orderLineItem.quantity})`))
+      .limit(limit);
+    return rows.map((r) => ({ variantId: r.variantId, quantity: Number(r.quantity ?? 0) }));
+  }
+
   async countByStatus(): Promise<Record<string, number>> {
     const rows = await this.db
       .select({ status: schema.order.status, count: sql<number>`count(*)::int` })
@@ -503,6 +519,60 @@ export class DrizzleOrderRepository implements OrderRepository {
         and(
           eq(schema.order.paymentStatus, "paid"),
           gte(schema.order.createdAt, since),
+        ),
+      );
+    const row = rows[0];
+    return {
+      count: Number(row?.count ?? 0),
+      amountMinor: BigInt(row?.amount ?? "0"),
+      currencyCode: row?.currency ?? null,
+    };
+  }
+
+  /** 时间段内已付款订单数与金额（统计报表，ADR-097）。 */
+  async summarizePaidBetween(
+    from: Date,
+    to: Date,
+  ): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }> {
+    const rows = await this.db
+      .select({
+        count: sql<number>`count(*)::int`,
+        amount: sql<string>`coalesce(sum(${schema.order.totalMinor}), 0)::text`,
+        currency: sql<string | null>`max(${schema.order.currencyCode})`,
+      })
+      .from(schema.order)
+      .where(
+        and(
+          eq(schema.order.paymentStatus, "paid"),
+          gte(schema.order.createdAt, from),
+          lt(schema.order.createdAt, to),
+        ),
+      );
+    const row = rows[0];
+    return {
+      count: Number(row?.count ?? 0),
+      amountMinor: BigInt(row?.amount ?? "0"),
+      currencyCode: row?.currency ?? null,
+    };
+  }
+
+  /** 时间段内退款总额与笔数（统计报表，ADR-097）：只数已同意的退款单。 */
+  async summarizeRefundsBetween(
+    from: Date,
+    to: Date,
+  ): Promise<{ count: number; amountMinor: bigint; currencyCode: string | null }> {
+    const rows = await this.db
+      .select({
+        count: sql<number>`count(*)::int`,
+        amount: sql<string>`coalesce(sum(${schema.refundRequest.amountMinor}), 0)::text`,
+        currency: sql<string | null>`max(${schema.refundRequest.currencyCode})`,
+      })
+      .from(schema.refundRequest)
+      .where(
+        and(
+          eq(schema.refundRequest.status, "approved"),
+          gte(schema.refundRequest.reviewedAt, from),
+          lt(schema.refundRequest.reviewedAt, to),
         ),
       );
     const row = rows[0];

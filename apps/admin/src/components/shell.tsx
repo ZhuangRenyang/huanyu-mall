@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   Banknote,
+  BarChart3,
   ClipboardList,
   Gift,
   LayoutDashboard,
@@ -38,7 +39,10 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     // 工作台单独成组放最前：淘宝/Shopify 进门都是「今天怎么样」，不是商品列表
     label: '首页',
-    items: [{ to: '/dashboard', label: '工作台', icon: LayoutDashboard }],
+    items: [
+      { to: '/dashboard', label: '工作台', icon: LayoutDashboard },
+      { to: '/statistics', label: '统计', icon: BarChart3 },
+    ],
   },
   {
     label: '商品',
