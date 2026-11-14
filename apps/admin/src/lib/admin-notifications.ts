@@ -33,6 +33,8 @@ export interface NotificationSettingsView {
   stockAlertEnabled: boolean;
   /** 退款进度邮件开关（ADR-072），默认开。 */
   refundEnabled: boolean;
+  /** 到货提醒有效期天数（ADR-089），默认 30。 */
+  stockAlertTtlDays: number;
   storefrontUrl: string;
 }
 
@@ -63,6 +65,7 @@ export interface NotificationSettingsPatch {
   shipmentEnabled?: boolean;
   stockAlertEnabled?: boolean;
   refundEnabled?: boolean;
+  stockAlertTtlDays?: number;
   storefrontUrl?: string;
 }
 
@@ -89,6 +92,7 @@ const DEFAULT_SETTINGS: NotificationSettingsView = {
   shipmentEnabled: true,
   stockAlertEnabled: true,
   refundEnabled: true,
+  stockAlertTtlDays: 30,
   storefrontUrl: '',
 };
 
@@ -170,6 +174,7 @@ function settingsToApi(patch: NotificationSettingsPatch): Record<string, unknown
   if (patch.shipmentEnabled !== undefined) body.shipment_enabled = patch.shipmentEnabled;
   if (patch.stockAlertEnabled !== undefined) body.stock_alert_enabled = patch.stockAlertEnabled;
   if (patch.refundEnabled !== undefined) body.refund_enabled = patch.refundEnabled;
+  if (patch.stockAlertTtlDays !== undefined) body.stock_alert_ttl_days = patch.stockAlertTtlDays;
   if (patch.storefrontUrl !== undefined) body.storefront_url = patch.storefrontUrl;
   return body;
 }
@@ -188,6 +193,7 @@ function settingsFromApi(raw: Record<string, unknown>): NotificationSettingsView
     shipmentEnabled: raw.shipment_enabled !== false,
     stockAlertEnabled: raw.stock_alert_enabled !== false,
     refundEnabled: raw.refund_enabled !== false,
+    stockAlertTtlDays: Number(raw.stock_alert_ttl_days ?? 30),
     storefrontUrl: String(raw.storefront_url ?? ''),
   };
 }

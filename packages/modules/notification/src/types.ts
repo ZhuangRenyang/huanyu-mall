@@ -25,6 +25,8 @@ export interface NotificationSettingsDTO {
   stock_alert_enabled: boolean;
   /** 退款进度邮件开关（ADR-072）。 */
   refund_enabled: boolean;
+  /** 到货提醒有效期天数（ADR-089）。 */
+  stock_alert_ttl_days: number;
   storefront_url: string;
 }
 
@@ -42,6 +44,7 @@ export interface UpdateNotificationSettingsInput {
   shipment_enabled?: boolean;
   stock_alert_enabled?: boolean;
   refund_enabled?: boolean;
+  stock_alert_ttl_days?: number;
   storefront_url?: string;
 }
 

@@ -17,6 +17,8 @@ export const notificationSettings = pgTable("notification_settings", {
   stockAlertEnabled: boolean("stock_alert_enabled").notNull().default(true),
   /** 退款进度邮件开关（ADR-072）。 */
   refundEnabled: boolean("refund_enabled").notNull().default(true),
+  /** 到货提醒有效期天数（ADR-089）。 */
+  stockAlertTtlDays: integer("stock_alert_ttl_days").notNull().default(30),
   storefrontUrl: text("storefront_url").notNull().default(""),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

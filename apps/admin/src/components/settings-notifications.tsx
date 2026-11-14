@@ -239,6 +239,21 @@ export function NotificationSettings() {
             />
             到货提醒邮件（顾客在售罄商品登记后，补货时发一封）
           </label>
+          <div className="pl-6">
+            <TextField
+              id="nt-stock-ttl"
+              label="到货提醒有效期（天）"
+              type="number"
+              min="1"
+              max="365"
+              value={String(settings.stockAlertTtlDays)}
+              onChange={(e) => patch({ stockAlertTtlDays: Math.max(1, Math.floor(Number(e.target.value) || 30)) })}
+              className="w-40"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              只通知最近 N 天内登记过的顾客；太久以前的登记发信会被当成骚扰。
+            </p>
+          </div>
           <label className="flex items-center gap-2 text-sm text-foreground">
             <Switch
               checked={settings.refundEnabled}

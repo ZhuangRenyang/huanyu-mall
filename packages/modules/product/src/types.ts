@@ -312,7 +312,8 @@ export interface IProductModuleService {
   /** 登记到货提醒（幂等：同一变体 + 邮箱只有一条）。 */
   subscribeStockAlert(input: SubscribeStockAlertInput): Promise<StockAlertDTO>;
   /** 补货时要通知的那批（工作流派发用）。 */
-  listPendingStockAlerts(variantIds: string[]): Promise<StockAlertDTO[]>;
+  /** ttlDays：店铺配置的有效期天数（ADR-089），不传用默认 30。 */
+  listPendingStockAlerts(variantIds: string[], ttlDays?: number): Promise<StockAlertDTO[]>;
   /** 标记已通知；返回影响条数。 */
   markStockAlertsNotified(ids: string[]): Promise<number>;
   /** 各变体的待通知人数（后台库存页显示「N 人等到货」）。 */

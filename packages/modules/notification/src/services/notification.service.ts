@@ -64,6 +64,10 @@ export class NotificationService implements INotificationModuleService {
       patch.stock_alert_enabled = input.stock_alert_enabled;
     }
     if (input.refund_enabled !== undefined) patch.refund_enabled = input.refund_enabled;
+    if (input.stock_alert_ttl_days !== undefined) {
+      // 1–365 天：0 天等于「永远不发」，负数是配置错误
+      patch.stock_alert_ttl_days = Math.min(Math.max(Math.floor(input.stock_alert_ttl_days), 1), 365);
+    }
     if (input.storefront_url !== undefined) patch.storefront_url = input.storefront_url;
     if (input.smtp_password !== undefined) {
       patch.smtp_password_enc =
@@ -263,6 +267,7 @@ const DEFAULT_SETTINGS: NotificationSettingsRecord = {
   shipment_enabled: true,
   stock_alert_enabled: true,
   refund_enabled: true,
+  stock_alert_ttl_days: 30,
   storefront_url: "",
 };
 
@@ -280,6 +285,7 @@ function settingsDTO(r: NotificationSettingsRecord): NotificationSettingsDTO {
     shipment_enabled: r.shipment_enabled,
     stock_alert_enabled: r.stock_alert_enabled,
     refund_enabled: r.refund_enabled,
+    stock_alert_ttl_days: r.stock_alert_ttl_days,
     storefront_url: r.storefront_url,
   };
 }

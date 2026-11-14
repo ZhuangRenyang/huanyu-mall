@@ -61,7 +61,7 @@ export interface FulfillmentListPort {
  * workflow 侧不碰 SQL，也不新增模块依赖边。
  */
 export interface StockAlertPort {
-  listPendingStockAlerts(variantIds: string[]): Promise<
+  listPendingStockAlerts(variantIds: string[], ttlDays?: number): Promise<
     Array<{
       id: string;
       product_id: string;
@@ -162,7 +162,16 @@ async function handleRestocked(event: DomainEvent, resolve: SubscriberResolve): 
   const productSvc = resolve("product") as unknown as StockAlertProductPort;
   const notify = resolve("notification") as StockAlertNotifyPort;
 
-  const pending = await alerts.listPendingStockAlerts(variantIds);
+  // 有效期由店铺设置决定（ADR-089）；测试/独立运行的注册表可能没有这个端口，退回默认 30 天
+  let ttlDays: number | undefined;
+  try {
+    ttlDays = await (
+      resolve("stock-alert-settings") as { getStockAlertTtlDays(): Promise<number> }
+    ).getStockAlertTtlDays();
+  } catch {
+    ttlDays = undefined;
+  }
+  const pending = await alerts.listPendingStockAlerts(variantIds, ttlDays);
   if (pending.length === 0) return;
 
   // 商品信息按商品缓存：同一商品可能有多人登记

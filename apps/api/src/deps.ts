@@ -126,6 +126,15 @@ export function createRealDeps(pool: Pool, config: ApiConfig): AppDeps {
    * 始终注册 —— 是否真能发由通道内部判断：生产未配 SMTP 会明确报错，
    * 开发降级为日志（配合 AUTH_EXPOSE_DEV_CODE 自测）。
    */
+  /**
+   * 到货提醒有效期（ADR-089）：从通知设置读，店铺改完立刻生效。
+   */
+  container.register("stock-alert-settings", () => ({
+    getStockAlertTtlDays: async () => {
+      const s = await container.resolve<INotificationModuleService>("notification").getSettings();
+      return s.stock_alert_ttl_days ?? 30;
+    },
+  }));
   container.register("email", () =>
     createEmailProvider(container.resolve<INotificationModuleService>("notification")),
   );

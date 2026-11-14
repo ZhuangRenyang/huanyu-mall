@@ -48,8 +48,13 @@ function slugify(name: string): string {
 export const STOCK_ALERT_TTL_DAYS = 30;
 
 /** 有效期起点：now 往前 N 天。 */
-export function stockAlertSince(now: Date = new Date()): Date {
-  return new Date(now.getTime() - STOCK_ALERT_TTL_DAYS * 24 * 60 * 60 * 1000);
+export function stockAlertSince(
+  now: Date = new Date(),
+  ttlDays: number = STOCK_ALERT_TTL_DAYS,
+): Date {
+  // 调用方可能传 0/负数/NaN（配置读坏了）：退回默认，别把「since = 现在」当成有效
+  const days = Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays : STOCK_ALERT_TTL_DAYS;
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 }
 
 export class ProductService implements IProductModuleService {
@@ -251,10 +256,13 @@ export class ProductService implements IProductModuleService {
    * 有效期在**服务层**过滤而不是 SQL：规则只有一条（created_at 在 N 天内），
    * 放服务层能用确定性的纯逻辑测；提醒条数很少，内存过滤不构成负担。
    */
-  async listPendingStockAlerts(variantIds: string[]): Promise<StockAlertDTO[]> {
+  async listPendingStockAlerts(
+    variantIds: string[],
+    ttlDays: number = STOCK_ALERT_TTL_DAYS,
+  ): Promise<StockAlertDTO[]> {
     if (!this.alerts) return [];
     const rows = await this.alerts.listPendingByVariantIds(variantIds);
-    const since = stockAlertSince();
+    const since = stockAlertSince(new Date(), ttlDays);
     return rows.filter((r) => r.created_at.getTime() >= since.getTime());
   }
 
