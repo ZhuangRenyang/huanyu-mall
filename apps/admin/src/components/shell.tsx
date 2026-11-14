@@ -14,6 +14,7 @@ import {
   Truck,
   TicketPercent,
   Warehouse,
+  Wrench,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { IconButton, cn } from '@mall/ui';
@@ -75,6 +76,12 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: '设置',
     items: [{ to: '/settings', label: '设置', icon: Settings }],
+  },
+  {
+    // 维护单独一组（CRMEB「设置 → 维护」那一块）：系统是否正常、邮件堵没堵、
+    // 数据有多少、出了事谁改了什么。它不是「店铺怎么卖」，不该塞进设置里
+    label: '维护',
+    items: [{ to: '/maintenance', label: '维护', icon: Wrench }],
   },
 ];
 

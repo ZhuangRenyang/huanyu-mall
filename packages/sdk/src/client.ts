@@ -326,6 +326,8 @@ export function createAdminClient(opts: ClientOptions) {
       post("/api/v1/admin/auth/change-password", b),
     /** 工作台：今日支付、待发货、待退款、最近订单（ADR-030）。 */
     getDashboard: () => get("/api/v1/admin/dashboard"),
+    /** 维护：系统探针 + 邮件队列 + 数据规模 + 最近审计（ADR-076）。 */
+    getMaintenanceStatus: () => get("/api/v1/admin/maintenance/status"),
     /** 评价管理（ADR-042）。 */
     listReviews: (q?: Query) => get("/api/v1/admin/reviews", q),
     setReviewVisible: (id: string, visible: boolean) =>
