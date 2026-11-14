@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { LayoutGrid } from 'lucide-react';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@mall/ui';
+import { Badge, Tabs, TabsContent, TabsList, TabsTrigger } from '@mall/ui';
+import { getAppsStatus, type AppsStatusView } from '@/lib/admin-apps';
 import { PaymentSettings } from '@/components/settings-payments';
 import { NotificationSettings } from '@/components/settings-notifications';
 
@@ -13,6 +15,11 @@ import { NotificationSettings } from '@/components/settings-notifications';
  * 没有界面开关，所以只说明事实，不放点了没反应的按钮。
  */
 export function AppsPage() {
+  const [status, setStatus] = useState<AppsStatusView | null>(null);
+  useEffect(() => {
+    void getAppsStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+
   return (
     <div className="space-y-5">
       <div>
@@ -24,6 +31,29 @@ export function AppsPage() {
           店铺接入了哪些外部能力：收款、发信、存文件、渠道。密钥加密存储，界面只显示掩码。
         </p>
       </div>
+
+      {status && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <StatusCard
+            label="收款"
+            value={`${status.payments.enabled}/${status.payments.total} 家已启用`}
+            ok={status.payments.enabled > 0}
+            hint={status.payments.enabled > 0 ? '顾客可正常付款' : '还没有启用任何支付通道'}
+          />
+          <StatusCard
+            label="发信"
+            value={status.mail.enabled && status.mail.smtpConfigured ? '已配置' : '未配置'}
+            ok={status.mail.enabled && status.mail.smtpConfigured}
+            hint="下单、发货、退款通知依赖它"
+          />
+          <StatusCard
+            label="渠道"
+            value={`${status.channels.active} 个启用`}
+            ok={status.channels.active > 0}
+            hint={status.channels.currency ? `当前币种 ${status.channels.currency}` : '没有启用中的渠道'}
+          />
+        </div>
+      )}
 
       <Tabs defaultValue="payments" className="gap-0">
         <TabsList aria-label="应用分组">
@@ -58,5 +88,28 @@ export function AppsPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function StatusCard({
+  label,
+  value,
+  ok,
+  hint,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+  hint: string;
+}) {
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <Badge variant={ok ? 'success' : 'warning'}>{ok ? '正常' : '待配置'}</Badge>
+      </div>
+      <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+    </section>
   );
 }

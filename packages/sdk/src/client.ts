@@ -349,6 +349,8 @@ export function createAdminClient(opts: ClientOptions) {
     updateBanner: (id: string, b: { image_file_id?: string; link?: string | null; is_active?: boolean }) =>
       patch(`/api/v1/admin/settings/banners/${id}`, b),
     deleteBanner: (id: string) => del(`/api/v1/admin/settings/banners/${id}`),
+    /** 应用接入状态（ADR-084）：支付/邮件/渠道。 */
+    getAppsStatus: () => get("/api/v1/admin/apps/status"),
     /** 维护：系统探针 + 邮件队列 + 数据规模 + 最近审计（ADR-076）。 */
     getMaintenanceStatus: () => get("/api/v1/admin/maintenance/status"),
     /** 评价管理（ADR-042）。 */
