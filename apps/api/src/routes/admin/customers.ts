@@ -3,13 +3,19 @@ import { z } from "zod";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { mapOrder } from "../mappers.js";
+import { auditEntry } from "../audit-context.js";
 
 const listQuery = z.object({
   /** 按邮箱/姓名搜索（淘宝客户列表顶部的搜索框）。 */
   q: z.string().max(60).optional(),
+  /** 按标签筛选（ADR-103）：分页与计数都按这个条件收敛。 */
+  tag_id: z.string().max(40).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).max(10000).default(0),
 });
+
+const tagBody = z.object({ name: z.string().min(1).max(20) });
+const setTagsBody = z.object({ tag_ids: z.array(z.string().min(1).max(40)).max(50) });
 
 /**
  * 后台客户管理（对齐淘宝「客户运营 → 客户列表」/ Shopify「Customers」）。
@@ -34,10 +40,15 @@ export function adminCustomerRoutes(app: FastifyInstance, deps: AppDeps): void {
       const q = req.query as z.infer<typeof listQuery>;
       const res = await deps.services.customer.listCustomers({
         q: q.q,
+        tagId: q.tag_id,
         limit: q.limit,
         offset: q.offset,
       });
-      const stats = await deps.services.order.summarizeByCustomerIds(res.items.map((c) => c.id));
+      const ids = res.items.map((c) => c.id);
+      const [stats, tagsByCustomer] = await Promise.all([
+        deps.services.order.summarizeByCustomerIds(ids),
+        deps.services.customer.listTagsByCustomerIds(ids),
+      ]);
       const byId = new Map(stats.map((s) => [s.customer_id, s]));
       reply.ok({
         items: res.items.map((c) => {
@@ -47,6 +58,8 @@ export function adminCustomerRoutes(app: FastifyInstance, deps: AppDeps): void {
             order_count: s?.order_count ?? 0,
             total_spent_minor: s?.total_spent_minor ?? 0n,
             last_order_at: s?.last_order_at ?? null,
+            // 标签一次批量取（禁 N+1）
+            tags: (tagsByCustomer[c.id] ?? []).map((t) => ({ id: t.id, name: t.name })),
           };
         }),
         count: res.count,
@@ -81,4 +94,73 @@ export function adminCustomerRoutes(app: FastifyInstance, deps: AppDeps): void {
       last_order_at: summary?.last_order_at ?? null,
     });
   });
+
+  // ---- 会员标签（ADR-103）----
+
+  /** 标签列表（带客户数，客户列表的筛选与打标共用）。 */
+  app.get("/api/v1/admin/customer-tags", { preHandler: guard }, async (_req, reply) => {
+    reply.ok({ items: await deps.services.customer.listTags() });
+  });
+
+  app.post(
+    "/api/v1/admin/customer-tags",
+    { preHandler: guard, schema: { body: tagBody } },
+    async (req, reply) => {
+      const b = req.body as z.infer<typeof tagBody>;
+      const tag = await deps.services.customer.createTag(b.name);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "customer_tag.create",
+          entityType: "customer_tag",
+          entityId: tag.id,
+          before: null,
+          after: tag,
+        }),
+      );
+      reply.code(201).ok(tag);
+    },
+  );
+
+  /** 删标签：同时清掉客户身上的关联（历史客户不受影响）。 */
+  app.delete("/api/v1/admin/customer-tags/:id", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await deps.services.customer.deleteTag(id);
+    await deps.audit.record(
+      auditEntry(req, {
+        action: "customer_tag.delete",
+        entityType: "customer_tag",
+        entityId: id,
+        before: { id },
+        after: null,
+      }),
+    );
+    reply.ok({ id });
+  });
+
+  /** 某客户身上的标签（详情/打标回填）。 */
+  app.get("/api/v1/admin/customers/:id/tags", { preHandler: guard }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    reply.ok({ items: await deps.services.customer.listCustomerTags(id) });
+  });
+
+  /** 覆盖式设置客户标签：传什么就是什么。 */
+  app.put(
+    "/api/v1/admin/customers/:id/tags",
+    { preHandler: guard, schema: { body: setTagsBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof setTagsBody>;
+      const tags = await deps.services.customer.setCustomerTags(id, b.tag_ids);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "customer.tags_update",
+          entityType: "customer",
+          entityId: id,
+          before: null,
+          after: { tags: tags.map((t) => t.id) },
+        }),
+      );
+      reply.ok({ items: tags });
+    },
+  );
 }

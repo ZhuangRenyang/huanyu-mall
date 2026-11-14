@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Mail, MapPin, Phone, Search, Users } from 'lucide-react';
+import { ChevronRight, Mail, MapPin, Phone, Search, Tag, Users } from 'lucide-react';
 import {
   Badge,
   Button,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   EmptyState,
   IconButton,
   Sheet,
@@ -14,6 +19,14 @@ import {
   formatMoney,
 } from '@mall/ui';
 import { customerName, getCustomer, listCustomers, type CustomerView } from '@/lib/admin-customers';
+import {
+  createCustomerTag,
+  deleteCustomerTag,
+  getCustomerTagIds,
+  listCustomerTags,
+  setCustomerTags,
+  type CustomerTagView,
+} from '@/lib/admin-customer-tags';
 import { getAdminApiMode } from '@/lib/admin-client';
 
 /**
@@ -38,6 +51,11 @@ export function CustomersPage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CustomerView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  /** 会员标签（ADR-103）：筛选 + 打标共用一份。 */
+  const [tags, setTags] = useState<CustomerTagView[]>([]);
+  const [tagFilter, setTagFilter] = useState('');
+  const [tagging, setTagging] = useState<CustomerView | null>(null);
+  const [managingTags, setManagingTags] = useState(false);
   const demo = getAdminApiMode() !== 'live';
 
   const load = useCallback(async () => {
@@ -46,6 +64,7 @@ export function CustomersPage() {
     try {
       const res = await listCustomers({
         q: applied || undefined,
+        ...(tagFilter ? { tagId: tagFilter } : {}),
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
       });
@@ -56,7 +75,19 @@ export function CustomersPage() {
     } finally {
       setLoading(false);
     }
-  }, [applied, page]);
+  }, [applied, page, tagFilter]);
+
+  const loadTags = useCallback(async () => {
+    try {
+      setTags(await listCustomerTags());
+    } catch {
+      // 标签拉失败不该挡住客户列表
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTags();
+  }, [loadTags]);
 
   useEffect(() => {
     void load();
@@ -94,6 +125,30 @@ export function CustomersPage() {
           <p className="mt-0.5 text-sm text-muted-foreground">
             顾客在店面临注册登录，这里可以查看资料、地址与购买记录。
           </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            标签
+            <select
+              value={tagFilter}
+              onChange={(e) => {
+                setTagFilter(e.target.value);
+                setPage(1);
+              }}
+              className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+            >
+              <option value="">全部</option>
+              {tags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}（{t.customerCount}）
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button variant="secondary" onClick={() => setManagingTags(true)}>
+            <Tag className="size-4" strokeWidth={2} aria-hidden="true" />
+            管理标签
+          </Button>
         </div>
         <label className="relative block w-full max-w-xs">
           <span className="sr-only">搜索客户</span>
@@ -147,6 +202,7 @@ export function CustomersPage() {
                 <th scope="col" className="px-4 py-3 font-medium">联系方式</th>
                 <th scope="col" className="px-4 py-3 font-medium">订单数</th>
                 <th scope="col" className="px-4 py-3 font-medium">累计消费</th>
+                <th scope="col" className="px-4 py-3 font-medium">标签</th>
                 <th scope="col" className="px-4 py-3 font-medium">最近下单</th>
                 <th scope="col" className="px-4 py-3 text-right font-medium">操作</th>
               </tr>
@@ -181,6 +237,22 @@ export function CustomersPage() {
                   <td className="tabular px-4 py-3">{c.orderCount}</td>
                   <td className="tabular px-4 py-3">
                     {formatMoney(c.totalSpentMinor, 'CNY')}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-1">
+                      {(c.tags ?? []).map((t) => (
+                        <Badge key={t.id} variant="brand">
+                          {t.name}
+                        </Badge>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setTagging(c)}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        {(c.tags ?? []).length === 0 ? '打标' : '编辑'}
+                      </button>
+                    </div>
                   </td>
                   <td className="tabular px-4 py-3 text-xs text-muted-foreground">
                     {c.lastOrderAt ? formatDate(c.lastOrderAt) : '—'}
@@ -336,7 +408,220 @@ export function CustomersPage() {
           </SheetBody>
         </SheetContent>
       </Sheet>
+
+      {/* 打标（ADR-103）：一个客户可以有多个标签 */}
+      {tagging && (
+        <TagCustomerDialog
+          customer={tagging}
+          tags={tags}
+          onClose={() => setTagging(null)}
+          onSaved={async () => {
+            setTagging(null);
+            await Promise.all([load(), loadTags()]);
+          }}
+        />
+      )}
+
+      {/* 标签管理：新建 / 删除（删除会同时清掉客户身上的关联） */}
+      {managingTags && (
+        <ManageTagsDialog
+          tags={tags}
+          onClose={() => setManagingTags(false)}
+          onChanged={async () => {
+            await loadTags();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** 给一个客户打标：勾选即保存（覆盖式）。 */
+function TagCustomerDialog({
+  customer,
+  tags,
+  onClose,
+  onSaved,
+}: {
+  customer: CustomerView;
+  tags: CustomerTagView[];
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [checked, setChecked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getCustomerTagIds(customer.id).then(setChecked);
+  }, [customer.id]);
+
+  const toggle = (id: string) => {
+    setChecked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await setCustomerTags(customer.id, checked);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>客户标签</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            {customerName(customer)} · {customer.email}
+          </p>
+          {tags.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              还没有标签，先在「管理标签」里建几个（如：高价值、待回购）。
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {tags.map((t) => (
+                <li key={t.id}>
+                  <label className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={checked.includes(t.id)}
+                      onChange={() => toggle(t.id)}
+                      className="size-4 accent-primary"
+                    />
+                    {t.name}
+                    <span className="text-xs text-muted-foreground">（{t.customerCount}）</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && (
+            <p className="text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            取消
+          </Button>
+          <Button disabled={busy} onClick={() => void save()}>
+            {busy ? '保存中…' : '保存'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 标签管理：新建 + 删除。 */
+function ManageTagsDialog({
+  tags,
+  onClose,
+  onChanged,
+}: {
+  tags: CustomerTagView[];
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const add = async () => {
+    if (name.trim() === '') return setError('请填写标签名称');
+    setBusy(true);
+    setError(null);
+    try {
+      await createCustomerTag(name.trim());
+      setName('');
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '新建失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteCustomerTag(id);
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>管理标签</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex items-end gap-2">
+            <label className="flex-1 text-xs font-medium text-muted-foreground">
+              新标签
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="如：高价值 / 待回购"
+                className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm text-foreground"
+              />
+            </label>
+            <Button disabled={busy} onClick={() => void add()}>
+              新建
+            </Button>
+          </div>
+          {tags.length === 0 ? (
+            <p className="text-xs text-muted-foreground">还没有标签。</p>
+          ) : (
+            <ul className="divide-y divide-border rounded-md border border-border">
+              {tags.map((t) => (
+                <li key={t.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                  <span className="text-foreground">
+                    {t.name}
+                    <span className="ml-2 text-xs text-muted-foreground">{t.customerCount} 人</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void remove(t.id)}
+                    className="text-xs text-destructive hover:underline"
+                  >
+                    删除
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {error && (
+            <p className="text-xs text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>
+            关闭
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

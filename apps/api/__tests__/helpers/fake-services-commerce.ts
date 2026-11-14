@@ -92,6 +92,9 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   };
   // —— 领券（ADR-029）：内存版，够驱动路由层契约测试 ——
   const collections = new Map<string, { voucherId: string; customerId: string; code: string }>();
+  // 会员标签（ADR-103）：内存标签 + 客户关联
+  const tags: Array<{ id: string; name: string }> = [];
+  const tagLinks = new Map<string, string[]>();
   // 会员等级（ADR-102）：内存阶梯
   const memberLevels: Array<{
     id: string;
@@ -1079,8 +1082,60 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         is_default_shipping: true,
         is_default_billing: false,
       }),
-      listCustomers: async () => ({
-        items: [
+      // 标签（ADR-103）：内存标签与关联，语义与真实服务一致
+      listTags: async () =>
+        tags.map((t) => ({
+          ...t,
+          customer_count: [...tagLinks.values()].filter((ids) => ids.includes(t.id)).length,
+        })),
+      createTag: async (name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) throw new DomainError({ code: 20001, message: "请填写标签名称" });
+        if (tags.some((t) => t.name === trimmed)) {
+          throw new DomainError({ code: 20002, message: "标签已存在" });
+        }
+        const dto = { id: `tag_${tags.length + 1}`, name: trimmed, customer_count: 0 };
+        tags.push({ id: dto.id, name: dto.name });
+        return dto;
+      },
+      deleteTag: async (id: string) => {
+        const i = tags.findIndex((t) => t.id === id);
+        if (i < 0) throw new DomainError({ code: 30001, message: `标签不存在：${id}` });
+        tags.splice(i, 1);
+        for (const [cid, ids] of tagLinks) {
+          tagLinks.set(cid, ids.filter((x) => x !== id));
+        }
+      },
+      setCustomerTags: async (customerId: string, tagIds: string[]) => {
+        const valid = new Set(tags.map((t) => t.id));
+        tagLinks.set(customerId, [...new Set(tagIds)].filter((id) => valid.has(id)));
+        return (tagLinks.get(customerId) ?? []).map((id) => ({
+          id,
+          name: tags.find((t) => t.id === id)?.name ?? id,
+          customer_count: 0,
+        }));
+      },
+      listCustomerTags: async (customerId: string) =>
+        (tagLinks.get(customerId) ?? []).map((id) => ({
+          id,
+          name: tags.find((t) => t.id === id)?.name ?? id,
+          customer_count: 0,
+        })),
+      listTagsByCustomerIds: async (customerIds: string[]) => {
+        const out: Record<string, Array<{ id: string; name: string; customer_count: number }>> = {};
+        for (const cid of customerIds) {
+          const ids = tagLinks.get(cid) ?? [];
+          if (ids.length === 0) continue;
+          out[cid] = ids.map((id) => ({
+            id,
+            name: tags.find((t) => t.id === id)?.name ?? id,
+            customer_count: 0,
+          }));
+        }
+        return out;
+      },
+      listCustomers: async (q?: { tagId?: string }) => {
+        const all = [
           {
             id: "cust_1",
             email: "a@b.com",
@@ -1089,9 +1144,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
             phone: null,
             metadata: null,
           },
-        ],
-        count: 1,
-      }),
+        ];
+        // 按标签筛选：只返回带该标签的客户（分页在测试里不涉及）
+        const items = q?.tagId
+          ? all.filter((c) => (tagLinks.get(c.id) ?? []).includes(q.tagId!))
+          : all;
+        return { items, count: items.length };
+      },
     },
     file: {
       upload: async () => ({

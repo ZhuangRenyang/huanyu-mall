@@ -62,11 +62,33 @@ export type UpdateAddressInput = Partial<AddAddressInput>;
 
 export interface CustomerListQuery {
   q?: string;
+  /** 按标签筛选（ADR-103）：只返回带该标签的客户。 */
+  tagId?: string;
   limit: number;
   offset: number;
 }
 
+/** 会员标签（ADR-103）。 */
+export interface CustomerTagDTO {
+  id: string;
+  name: string;
+  /** 带这个标签的客户数（列表展示用）。 */
+  customer_count: number;
+}
+
 export interface CustomerRepository {
+  // ---- 会员标签（ADR-103）----
+  listTags(): Promise<CustomerTagDTO[]>;
+  findTag(id: string): Promise<CustomerTagDTO | null>;
+  findTagByName(name: string): Promise<CustomerTagDTO | null>;
+  insertTag(row: { id: string; name: string }): Promise<CustomerTagDTO>;
+  /** 删标签：同时清掉关联（否则会留下指向不存在标签的孤儿行）。 */
+  deleteTag(id: string): Promise<void>;
+  /** 覆盖式设置某客户的标签。 */
+  setCustomerTags(customerId: string, tagIds: string[]): Promise<void>;
+  listCustomerTags(customerId: string): Promise<CustomerTagDTO[]>;
+  listTagsByCustomerIds(customerIds: string[]): Promise<Record<string, CustomerTagDTO[]>>;
+
   // ---- 会员等级（ADR-102）----
   insertMemberLevel(input: CreateMemberLevelInput & { id: string; sort: number }): Promise<MemberLevelDTO>;
   listMemberLevels(): Promise<MemberLevelDTO[]>;
@@ -144,6 +166,16 @@ export interface ICustomerModuleService {
   /** 全部收藏的商品 id（详情页判断「已收藏」用，不分页）。 */
   listFavoriteProductIds(customerId: string): Promise<string[]>;
   deleteCustomer(id: string): Promise<void>;
+
+  // ---- 会员标签（ADR-103）----
+  listTags(): Promise<CustomerTagDTO[]>;
+  createTag(name: string): Promise<CustomerTagDTO>;
+  deleteTag(id: string): Promise<void>;
+  /** 覆盖式设置客户标签；返回设置后的标签。 */
+  setCustomerTags(customerId: string, tagIds: string[]): Promise<CustomerTagDTO[]>;
+  listCustomerTags(customerId: string): Promise<CustomerTagDTO[]>;
+  /** 批量取客户标签（客户列表用，一次 IN 查询，禁 N+1）。 */
+  listTagsByCustomerIds(customerIds: string[]): Promise<Record<string, CustomerTagDTO[]>>;
 
   // ---- 会员等级（ADR-102）----
   listMemberLevels(): Promise<MemberLevelDTO[]>;

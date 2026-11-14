@@ -1,9 +1,10 @@
-import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
   AddAddressInput,
   CreateMemberLevelInput,
+  CustomerTagDTO,
   MemberLevelDTO,
   UpdateMemberLevelInput,
   FavoriteDTO,
@@ -52,7 +53,12 @@ export class DrizzleCustomerRepository implements CustomerRepository {
     return rows[0] ? toCustomerDTO(rows[0]) : null;
   }
 
-  async list(q: { q?: string; limit: number; offset: number }): Promise<{ items: CustomerDTO[]; count: number }> {
+  async list(q: {
+    q?: string;
+    tagId?: string;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: CustomerDTO[]; count: number }> {
     const conditions = [isNull(schema.customer.deletedAt)];
     if (q.q) {
       // 邮箱或姓名都能搜：商家手上通常只有其中一个
@@ -61,6 +67,13 @@ export class DrizzleCustomerRepository implements CustomerRepository {
         sql`(${schema.customer.email} ILIKE ${like}
           OR coalesce(${schema.customer.firstName}, '') ILIKE ${like}
           OR coalesce(${schema.customer.lastName}, '') ILIKE ${like})`,
+      );
+    }
+    if (q.tagId) {
+      // EXISTS 比 join + distinct 更省：分页与计数用的是同一段条件
+      conditions.push(
+        sql`EXISTS (SELECT 1 FROM customer_tag_link l
+                    WHERE l.customer_id = ${schema.customer.id} AND l.tag_id = ${q.tagId})`,
       );
     }
     const where = and(...conditions);
@@ -242,6 +255,93 @@ export class DrizzleCustomerRepository implements CustomerRepository {
       .where(eq(schema.customerAddress.id, addressId));
   }
 
+  // —— 会员标签（ADR-103）——
+
+  async listTags(): Promise<CustomerTagDTO[]> {
+    /*
+     * 标签 + 客户数一次查完：逐个标签 count 就是 N+1，
+     * 标签十几个之后页面会明显卡。
+     */
+    const rows = await this.db
+      .select({
+        tag: schema.customerTag,
+        count: sql<number>`count(${schema.customerTagLink.customerId})::int`,
+      })
+      .from(schema.customerTag)
+      .leftJoin(schema.customerTagLink, eq(schema.customerTagLink.tagId, schema.customerTag.id))
+      .groupBy(schema.customerTag.id)
+      .orderBy(asc(schema.customerTag.createdAt));
+    return rows.map((r) => toTagDTO(r.tag, Number(r.count ?? 0)));
+  }
+
+  async findTag(id: string): Promise<CustomerTagDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.customerTag)
+      .where(eq(schema.customerTag.id, id))
+      .limit(1);
+    return rows[0] ? toTagDTO(rows[0], 0) : null;
+  }
+
+  async findTagByName(name: string): Promise<CustomerTagDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.customerTag)
+      .where(eq(schema.customerTag.name, name))
+      .limit(1);
+    return rows[0] ? toTagDTO(rows[0], 0) : null;
+  }
+
+  async insertTag(row: { id: string; name: string }): Promise<CustomerTagDTO> {
+    const rows = await this.db.insert(schema.customerTag).values(row).returning();
+    return toTagDTO(rows[0]!, 0);
+  }
+
+  async deleteTag(id: string): Promise<void> {
+    // 先清关联再删标签：反过来会留下指向不存在标签的孤儿行
+    await this.db.delete(schema.customerTagLink).where(eq(schema.customerTagLink.tagId, id));
+    await this.db.delete(schema.customerTag).where(eq(schema.customerTag.id, id));
+  }
+
+  async setCustomerTags(customerId: string, tagIds: string[]): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(schema.customerTagLink)
+        .where(eq(schema.customerTagLink.customerId, customerId));
+      if (tagIds.length > 0) {
+        await tx
+          .insert(schema.customerTagLink)
+          .values(tagIds.map((tagId) => ({ customerId, tagId })))
+          // 同一标签重复传不报错（覆盖式语义）
+          .onConflictDoNothing();
+      }
+    });
+  }
+
+  async listCustomerTags(customerId: string): Promise<CustomerTagDTO[]> {
+    const rows = await this.db
+      .select({ tag: schema.customerTag })
+      .from(schema.customerTagLink)
+      .innerJoin(schema.customerTag, eq(schema.customerTag.id, schema.customerTagLink.tagId))
+      .where(eq(schema.customerTagLink.customerId, customerId))
+      .orderBy(asc(schema.customerTag.createdAt));
+    return rows.map((r) => toTagDTO(r.tag, 0));
+  }
+
+  async listTagsByCustomerIds(customerIds: string[]): Promise<Record<string, CustomerTagDTO[]>> {
+    if (customerIds.length === 0) return {};
+    const rows = await this.db
+      .select({ customerId: schema.customerTagLink.customerId, tag: schema.customerTag })
+      .from(schema.customerTagLink)
+      .innerJoin(schema.customerTag, eq(schema.customerTag.id, schema.customerTagLink.tagId))
+      .where(inArray(schema.customerTagLink.customerId, customerIds));
+    const out: Record<string, CustomerTagDTO[]> = {};
+    for (const r of rows) {
+      (out[r.customerId] ??= []).push(toTagDTO(r.tag, 0));
+    }
+    return out;
+  }
+
   // —— 会员等级（ADR-102）——
 
   async insertMemberLevel(
@@ -294,6 +394,14 @@ export class DrizzleCustomerRepository implements CustomerRepository {
     return rows[0] ? toMemberLevelDTO(rows[0]) : null;
   }
 
+}
+
+function toTagDTO(r: typeof schema.customerTag.$inferSelect, customerCount: number): CustomerTagDTO {
+  return {
+    id: r.id,
+    name: r.name,
+    customer_count: customerCount,
+  };
 }
 
 function toMemberLevelDTO(r: typeof schema.memberLevel.$inferSelect): MemberLevelDTO {

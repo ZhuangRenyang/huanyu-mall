@@ -5,6 +5,7 @@ import type {
   AddressDTO,
   CreateCustomerInput,
   CreateMemberLevelInput,
+  CustomerTagDTO,
   FavoriteDTO,
   CustomerDTO,
   MemberLevelDTO,
@@ -118,6 +119,48 @@ export class CustomerService implements ICustomerModuleService {
   async deleteCustomer(id: string): Promise<void> {
     await this.retrieveCustomer(id);
     await this.repo.softDelete(id);
+  }
+
+  // —— 会员标签（ADR-103）——
+
+  async listTags(): Promise<CustomerTagDTO[]> {
+    return this.repo.listTags();
+  }
+
+  /** 新建标签：名称唯一（唯一索引兜底），先查一次给友好错误。 */
+  async createTag(name: string): Promise<CustomerTagDTO> {
+    const trimmed = name?.trim() ?? "";
+    if (trimmed === "") throw new DomainError({ code: 20001, message: "请填写标签名称" });
+    if (trimmed.length > 20) {
+      throw new DomainError({ code: 20001, message: "标签名称不超过 20 个字" });
+    }
+    const existing = await this.repo.findTagByName(trimmed);
+    if (existing) throw new DomainError({ code: 20002, message: "标签已存在" });
+    return this.repo.insertTag({ id: prefixedUlid("tag"), name: trimmed });
+  }
+
+  async deleteTag(id: string): Promise<void> {
+    const tag = await this.repo.findTag(id);
+    if (!tag) throw new DomainError({ code: 30001, message: `标签不存在：${id}` });
+    await this.repo.deleteTag(id);
+  }
+
+  /** 覆盖式设置客户标签；不存在的标签直接忽略（幂等，不因一个脏 id 全失败）。 */
+  async setCustomerTags(customerId: string, tagIds: string[]): Promise<CustomerTagDTO[]> {
+    await this.retrieveCustomer(customerId);
+    const all = await this.repo.listTags();
+    const valid = new Set(all.map((t) => t.id));
+    const cleaned = [...new Set(tagIds)].filter((id) => valid.has(id));
+    await this.repo.setCustomerTags(customerId, cleaned);
+    return this.repo.listCustomerTags(customerId);
+  }
+
+  async listCustomerTags(customerId: string): Promise<CustomerTagDTO[]> {
+    return this.repo.listCustomerTags(customerId);
+  }
+
+  async listTagsByCustomerIds(customerIds: string[]): Promise<Record<string, CustomerTagDTO[]>> {
+    return this.repo.listTagsByCustomerIds(customerIds);
   }
 
   // —— 会员等级（ADR-102）——

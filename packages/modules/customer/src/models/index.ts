@@ -85,3 +85,26 @@ export const memberLevel = pgTable(
   },
   (t) => [uniqueIndex("uq_member_level_threshold").on(t.thresholdMinor)],
 );
+
+/** 会员标签（ADR-103）：多对多，用于筛选与画像。 */
+export const customerTag = pgTable(
+  "customer_tag",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_customer_tag_name").on(t.name)],
+);
+
+/** 客户-标签关联（ADR-103）：主键 (customer_id, tag_id) 天然去重。 */
+export const customerTagLink = pgTable(
+  "customer_tag_link",
+  {
+    customerId: text("customer_id").notNull(),
+    tagId: text("tag_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_customer_tag_link_tag").on(t.tagId)],
+);

@@ -41,12 +41,16 @@ export interface CustomerView {
   orderCount: number;
   totalSpentMinor: number;
   lastOrderAt: string | null;
+  /** 会员标签（ADR-103）。 */
+  tags?: Array<{ id: string; name: string }>;
   addresses?: CustomerAddressView[];
   orders?: CustomerOrderView[];
 }
 
 export interface CustomerListQuery {
   q?: string;
+  /** 按标签筛选（ADR-103）。 */
+  tagId?: string;
   limit?: number;
   offset?: number;
 }
@@ -115,6 +119,12 @@ function mapCustomer(raw: Record<string, unknown>): CustomerView {
     orderCount: Number(raw.order_count ?? 0),
     totalSpentMinor: Number(raw.total_spent_minor ?? 0),
     lastOrderAt: (raw.last_order_at as string | null) ?? null,
+    tags: Array.isArray(raw.tags)
+      ? (raw.tags as Array<{ id?: string; name?: string }>).map((t) => ({
+          id: String(t.id ?? ''),
+          name: String(t.name ?? ''),
+        }))
+      : [],
   };
 }
 
@@ -168,6 +178,7 @@ export async function listCustomers(q: CustomerListQuery = {}): Promise<Customer
     limit: q.limit ?? 20,
     offset: q.offset ?? 0,
     ...(q.q ? { q: q.q } : {}),
+    ...(q.tagId ? { tag_id: q.tagId } : {}),
   })) as { items?: Array<Record<string, unknown>>; count?: number };
   return {
     items: (res.items ?? []).map(mapCustomer),

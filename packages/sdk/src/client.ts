@@ -505,6 +505,13 @@ export function createAdminClient(opts: ClientOptions) {
     createShipment: (fulfillmentId: string, b: CreateShipmentRequest) =>
       post(`/api/v1/admin/fulfillments/${fulfillmentId}/shipments`, b),
     listCustomers: (q?: Query) => get("/api/v1/admin/customers", q),
+    // —— 会员标签（ADR-103）——
+    listCustomerTags: () => get("/api/v1/admin/customer-tags"),
+    createCustomerTag: (b: { name: string }) => post("/api/v1/admin/customer-tags", b),
+    deleteCustomerTag: (id: string) => del(`/api/v1/admin/customer-tags/${id}`),
+    getCustomerTags: (customerId: string) => get(`/api/v1/admin/customers/${customerId}/tags`),
+    setCustomerTags: (customerId: string, b: { tag_ids: string[] }) =>
+      put(`/api/v1/admin/customers/${customerId}/tags`, b),
     // —— 会员等级（ADR-102）——
     listMemberLevels: () => get("/api/v1/admin/member-levels"),
     createMemberLevel: (b: { name: string; threshold_minor: number; discount_bps: number }) =>
