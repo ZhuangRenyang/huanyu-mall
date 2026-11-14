@@ -326,6 +326,9 @@ export function createAdminClient(opts: ClientOptions) {
       post("/api/v1/admin/auth/change-password", b),
     /** 工作台：今日支付、待发货、待退款、最近订单（ADR-030）。 */
     getDashboard: () => get("/api/v1/admin/dashboard"),
+    /** 链接选择器（ADR-081）：按关键字找商品/分类，返回可直接用的站内路径。 */
+    listLinkTargets: (q: { type: "product" | "category"; q?: string }) =>
+      get("/api/v1/admin/settings/link-targets", q),
     /** 轮播图（ADR-080）：装修入口管理首页大图。 */
     listBanners: () => get("/api/v1/admin/settings/banners"),
     createBanner: (b: { image_file_id: string; link?: string | null; sort_order?: number }) =>

@@ -8,6 +8,7 @@ import {
   listBanners,
   removeBanner,
   saveHomeModules,
+  searchLinkTargets,
   setBannerActive,
   type BannerView,
   type HomeModuleId,
@@ -167,6 +168,10 @@ function BannerSection() {
   const [link, setLink] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 链接选择器（ADR-081）：先搜再点，不让商家手打前缀。 */
+  const [targetType, setTargetType] = useState<'product' | 'category'>('product');
+  const [keyword, setKeyword] = useState('');
+  const [targets, setTargets] = useState<Array<{ id: string; label: string; href: string }>>([]);
 
   const load = useCallback(async () => {
     try {
@@ -263,6 +268,47 @@ function BannerSection() {
           />
           {preview && <img src={preview} alt="" className="h-12 w-20 rounded object-cover" />}
         </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={targetType}
+            onChange={(e) => setTargetType(e.target.value as 'product' | 'category')}
+            className="rounded-md border border-border px-2 py-1.5 text-xs"
+            aria-label="链接类型"
+          >
+            <option value="product">商品</option>
+            <option value="category">分类</option>
+          </select>
+          <input
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="搜商品/分类名"
+            className="flex-1 rounded-md border border-border px-2 py-1.5 text-xs"
+          />
+          <Button
+            variant="secondary"
+            onClick={() => void searchLinkTargets(targetType, keyword).then(setTargets)}
+          >
+            查找
+          </Button>
+        </div>
+        {targets.length > 0 && (
+          <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border border-border p-2">
+            {targets.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLink(t.href);
+                    setTargets([]);
+                  }}
+                  className="w-full truncate rounded px-2 py-1 text-left text-xs text-foreground hover:bg-muted"
+                >
+                  {t.label} · {t.href}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <input
           value={link}
           onChange={(e) => setLink(e.target.value)}

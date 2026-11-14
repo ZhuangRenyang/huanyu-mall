@@ -113,6 +113,51 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
    * 商家改完保存成功、刷新又看到默认配色，以为没保存（ADR-046）。
    */
   /**
+   * 链接选择器（ADR-081）。
+   *
+   * 装修里的跳转必须是「能点开」的路径：让商家手打 URL，十次有三次拼错。
+   * 这里按关键字返回商品/分类的展示名与**带语言与渠道前缀**的站内路径，
+   * 商家点一下即可，不用知道 /zh-CN/cn 这类前缀规则。
+   */
+  app.get("/api/v1/admin/settings/link-targets", { preHandler: guard }, async (req, reply) => {
+    const query = req.query as { type?: string; q?: string };
+    const type = query.type === "category" ? "category" : "product";
+    const needle = (query.q ?? "").trim().toLowerCase();
+
+    // 首选启用中的渠道：路径必须带 locale 与 channel，否则店面 404
+    const channels = await deps.services.regionChannel.listChannels({ isActive: true });
+    const channel = channels[0];
+    const base = `/${channel?.default_locale ?? "zh-CN"}/${channel?.slug ?? "cn"}`;
+
+    if (type === "product") {
+      const res = await deps.services.product.listProducts({
+        ...(needle ? { q: needle } : {}),
+        limit: 10,
+      });
+      reply.ok({
+        items: res.items.map((p) => ({
+          id: p.id,
+          label: p.title,
+          href: `${base}/products/${p.handle}`,
+        })),
+      });
+      return;
+    }
+
+    const categories = await deps.services.product.listCategories(true);
+    reply.ok({
+      items: categories
+        .filter((c) => (needle ? c.name.toLowerCase().includes(needle) : true))
+        .slice(0, 10)
+        .map((c) => ({
+          id: c.id,
+          label: c.name,
+          href: `${base}/products?category=${encodeURIComponent(c.id)}`,
+        })),
+    });
+  });
+
+  /**
    * 轮播图（ADR-080）。
    *
    * 链接在服务层过白名单（站内 / 或 https），路由只做长度校验；

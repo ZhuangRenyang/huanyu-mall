@@ -202,3 +202,24 @@ export async function removeBanner(id: string): Promise<void> {
   }
   await adminClient().deleteBanner(id);
 }
+
+/** 链接选择器（ADR-081）：返回带 locale/channel 前缀的站内路径。 */
+export interface LinkTargetView {
+  id: string;
+  label: string;
+  href: string;
+}
+
+export async function searchLinkTargets(
+  type: 'product' | 'category',
+  keyword: string,
+): Promise<LinkTargetView[]> {
+  if (getAdminApiMode() !== 'live') return [];
+  const res = (await adminClient().listLinkTargets({
+    type,
+    ...(keyword.trim() ? { q: keyword.trim() } : {}),
+  })) as { items?: Array<{ id?: string; label?: string; href?: string }> };
+  return (res.items ?? [])
+    .filter((i): i is { id: string; label: string; href: string } => Boolean(i.id && i.label && i.href))
+    .map((i) => ({ id: i.id, label: i.label, href: i.href }));
+}
