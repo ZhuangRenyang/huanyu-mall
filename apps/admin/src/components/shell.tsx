@@ -4,6 +4,8 @@ import {
   ClipboardList,
   Gift,
   LayoutDashboard,
+  LayoutGrid,
+  Palette,
   LogOut,
   MessageSquare,
   Package,
@@ -35,7 +37,7 @@ interface NavItem {
 const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     // 工作台单独成组放最前：淘宝/Shopify 进门都是「今天怎么样」，不是商品列表
-    label: '概览',
+    label: '首页',
     items: [{ to: '/dashboard', label: '工作台', icon: LayoutDashboard }],
   },
   {
@@ -72,6 +74,16 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
       { to: '/marketing/vouchers', label: '优惠券', icon: TicketPercent },
       { to: '/marketing/gift-cards', label: '礼品卡', icon: Gift },
     ],
+  },
+  {
+    // 装修决定「长什么样」，应用决定「接入了什么」，设置决定「怎么卖」——
+    // 三件事读者与改动频率都不同，拆开才不会让设置变成一个什么都往里塞的抽屉（ADR-077）
+    label: '装修',
+    items: [{ to: '/design', label: '装修', icon: Palette }],
+  },
+  {
+    label: '应用',
+    items: [{ to: '/apps', label: '应用', icon: LayoutGrid }],
   },
   {
     label: '设置',

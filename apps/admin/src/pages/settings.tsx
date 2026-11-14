@@ -1,10 +1,8 @@
-import { CreditCard, Mail, Palette, Percent, ShieldCheck, Store, UserRound, Wrench } from 'lucide-react';
+import { Percent, ShieldCheck, Store, UserRound, Wrench } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@mall/ui';
 import { StoreProfileSettings } from '@/components/settings-store';
-import { ThemeSettings } from '@/components/settings-theme';
-import { PaymentSettings } from '@/components/settings-payments';
 import { AccountSettings } from '@/components/settings-account';
-import { NotificationSettings } from '@/components/settings-notifications';
 import { SystemSettings } from '@/components/settings-system';
 import { TaxSettings } from '@/components/settings-tax';
 import { CustomerAccountSettings } from '@/components/settings-customer-accounts';
@@ -20,11 +18,8 @@ import { CustomerAccountSettings } from '@/components/settings-customer-accounts
  * 这里显式归零以保持视觉一致。
  */
 const TABS = [
-  // 店名是最基础的店铺身份，排在外观之前：先定「我是谁」，再定「长什么样」
+  // 店名是最基础的店铺身份（谁在卖）
   { id: 'store', label: '店铺', icon: Store, panel: <StoreProfileSettings /> },
-  { id: 'theme', label: '外观', icon: Palette, panel: <ThemeSettings /> },
-  { id: 'payments', label: '支付方式', icon: CreditCard, panel: <PaymentSettings /> },
-  { id: 'notifications', label: '通知', icon: Mail, panel: <NotificationSettings /> },
   { id: 'tax', label: '税务', icon: Percent, panel: <TaxSettings /> },
   // 顾客注册方式属于「店铺怎么接待顾客」，和税务同级；不是系统参数
   { id: 'customers', label: '顾客账号', icon: UserRound, panel: <CustomerAccountSettings /> },
@@ -33,11 +28,24 @@ const TABS = [
 ];
 
 export function SettingsPage() {
+  /*
+   * 设置只剩「店铺怎么卖」：资料、税务、顾客账号、系统参数、账号安全。
+   * 装修（长什么样）与应用（接入了什么）已拆到独立入口（ADR-077），
+   * 这里保留 ?tab= 深链，旧书签不会失效。
+   */
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('tab');
+  const active = TABS.some((t) => t.id === requested) ? (requested as string) : 'store';
+
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold text-foreground">设置</h1>
 
-      <Tabs defaultValue="store" className="gap-0">
+      <Tabs
+        value={active}
+        onValueChange={(next) => setParams({ tab: next }, { replace: true })}
+        className="gap-0"
+      >
         <TabsList aria-label="设置分组">
           {TABS.map(({ id, label, icon: Icon }) => (
             <TabsTrigger key={id} value={id}>

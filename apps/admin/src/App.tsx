@@ -13,6 +13,8 @@ import { ShippingProfilesPage } from './pages/shipping-profiles';
 import { RefundsPage } from './pages/refunds';
 import { CustomersPage } from './pages/customers';
 import { SettingsPage } from './pages/settings';
+import { DesignPage } from './pages/design';
+import { AppsPage } from './pages/apps';
 import { MaintenancePage } from './pages/maintenance';
 import {
   MarketingGiftCardsPage,
@@ -46,6 +48,8 @@ export function App() {
           </Route>
           {/* 旧地址兼容：收藏过 /promotions 的书签仍可用 */}
           <Route path="promotions" element={<Navigate to="/marketing/promotions" replace />} />
+          <Route path="design" element={<DesignPage />} />
+          <Route path="apps" element={<AppsPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="maintenance" element={<MaintenancePage />} />
         </Route>
