@@ -270,6 +270,9 @@ class FakePromotionLookup implements PromotionLookupPort {
       // 积分抵扣（ADR-094）：测试桩按 pointsToUse 直接等额抵扣（1 点 = 1 minor）
       pointsAppliedMinor: ctx.pointsToUse && ctx.pointsToUse > 0n ? ctx.pointsToUse : 0n,
       pointsUsed: ctx.pointsToUse && ctx.pointsToUse > 0n ? ctx.pointsToUse : 0n,
+      // 秒杀（ADR-099）：这个测试桩不模拟秒杀，固定无
+      flashDiscountMinor: 0n,
+      flashAdjustments: [],
     };
   }
 }

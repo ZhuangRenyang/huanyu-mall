@@ -290,6 +290,20 @@ export interface ComputeDiscountsResult {
   giftCardAppliedMinor: bigint;
   /** 命中的 Gift Card 明细（多卡按顺序累加抵扣，封顶到剩余应付）。供下单侧固化 order_discount 留痕（type='gift_card'）并扣减余额。 */
   giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+  /** 秒杀优惠合计（ADR-099）：行级，直接抵到原价上。 */
+  flashDiscountMinor: bigint;
+  /**
+   * 命中的秒杀明细（ADR-099）。供购物车算折后行金额（计税基数）与下单侧
+   * 固化 order_discount 留痕（type='flash'）、扣减活动库存（按 quantity）。
+   */
+  flashAdjustments: Array<{
+    itemId: string;
+    variantId: string;
+    quantity: number;
+    amountMinor: bigint;
+    flashSaleId: string;
+    flashSaleItemId: string;
+  }>;
   /** 积分抵扣金额（ADR-094）：服务端按 pointsToUse 折算并封顶。 */
   pointsAppliedMinor: bigint;
   /** 实际用掉的积分数（1 点 = 1 minor，与 pointsAppliedMinor 同值）。 */
@@ -297,6 +311,56 @@ export interface ComputeDiscountsResult {
 }
 
 // —— Repository（drizzle 实现 + InMemory 测试桩）——
+/**
+ * 秒杀活动状态（ADR-099）。
+ *
+ * draft → active → ended。上架前是草稿（不参与计算），结束后不再生效；
+ * 不做「自动结束」的后台任务：读的时候按时间窗判断，状态只表达商家的意图。
+ */
+export type FlashSaleStatus = "draft" | "active" | "ended";
+
+/** 秒杀活动商品（ADR-099）。 */
+export interface FlashSaleItemDTO {
+  id: string;
+  flash_sale_id: string;
+  variant_id: string;
+  /** 商品/规格快照。 */
+  title: string;
+  original_price_minor: bigint;
+  flash_price_minor: bigint;
+  /** 活动库存（营销限量，不是仓库库存）。 */
+  stock: number;
+  sold: number;
+  /** 剩余可售 = stock - sold。 */
+  remaining: number;
+}
+
+/** 秒杀活动（ADR-099）。 */
+export interface FlashSaleDTO {
+  id: string;
+  name: string;
+  status: FlashSaleStatus;
+  starts_at: string;
+  ends_at: string;
+  items: FlashSaleItemDTO[];
+}
+
+export interface FlashSaleItemInput {
+  variantId: string;
+  /** 商品/规格快照（由调用侧取好传入）。 */
+  title: string;
+  originalPriceMinor: bigint;
+  flashPriceMinor: bigint;
+  stock: number;
+}
+
+export interface CreateFlashSaleInput {
+  name: string;
+  startsAt: Date;
+  endsAt: Date;
+  items: FlashSaleItemInput[];
+}
+
 /** 营销功能级开关（页面级总开关）：关闭后该功能整体不参与计算。 */
 export type MarketingFeature = "promotion" | "voucher" | "gift_card" | "points";
 
@@ -411,6 +475,31 @@ export interface PromotionRepository {
   }): Promise<GiftCardEventDTO>;
   listEventsByGiftCard(giftCardId: string): Promise<GiftCardEventDTO[]>;
 
+  // flash_sale（ADR-099）
+  insertFlashSale(row: { id: string; name: string; startsAt: Date; endsAt: Date }): Promise<FlashSaleDTO>;
+  insertFlashSaleItems(
+    saleId: string,
+    items: Array<FlashSaleItemInput & { id: string }>,
+  ): Promise<void>;
+  findFlashSale(id: string): Promise<FlashSaleDTO | null>;
+  listFlashSales(q: {
+    status?: FlashSaleStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: FlashSaleDTO[]; count: number }>;
+  /** 批量取活动商品（列表拼装，一次 IN 查询，禁 N+1）。 */
+  listFlashItemsBySaleIds(saleIds: string[]): Promise<Record<string, FlashSaleItemDTO[]>>;
+  updateFlashSaleStatus(id: string, status: FlashSaleStatus): Promise<FlashSaleDTO | null>;
+  /** 指定变体的**正在生效**的秒杀商品（状态 active + 时间窗内 + 还有剩余）。 */
+  listActiveFlashItemsByVariantIds(variantIds: string[], now: Date): Promise<FlashSaleItemDTO[]>;
+  /**
+   * 原子扣活动库存：仅当 `sold + quantity <= stock` 时成功（条件 UPDATE）。
+   * 返回 false = 已售罄（调用侧据此回滚整单，绝不落到「卖了但超量」）。
+   */
+  incrementFlashSold(itemId: string, quantity: number): Promise<boolean>;
+  /** 补偿：退回活动库存（下限 0，重复补偿不会把 sold 打成负数）。 */
+  decrementFlashSold(itemId: string, quantity: number): Promise<void>;
+
   // points（ADR-093）
   getPointBalance(customerId: string): Promise<bigint>;
   /** 原子增减积分并写流水；余额非负由 DB CHECK 兜底。返回变动后余额。 */
@@ -513,6 +602,24 @@ export interface IPromotionModuleService {
 
   // gift_card_event
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;
+
+  // flash_sale（ADR-099）
+  createFlashSale(input: CreateFlashSaleInput): Promise<FlashSaleDTO>;
+  listFlashSales(q: {
+    status?: FlashSaleStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: FlashSaleDTO[]; count: number }>;
+  /** 上架 / 结束：draft→active、active→ended（重复调用幂等返回）。 */
+  setFlashSaleStatus(id: string, status: "active" | "ended"): Promise<FlashSaleDTO>;
+  /** 店面：进行中的活动（按时间窗与状态过滤，附剩余可售）。 */
+  listActiveFlashSales(now?: Date): Promise<FlashSaleDTO[]>;
+  /**
+   * 下单成功后扣活动库存（ADR-099）：任一商品售罄就抛错，由 workflow 回滚整单。
+   */
+  consumeFlashStock(entries: Array<{ flashSaleItemId: string; quantity: number }>): Promise<void>;
+  /** workflow 补偿：退回活动库存。 */
+  releaseFlashStock(entries: Array<{ flashSaleItemId: string; quantity: number }>): Promise<void>;
 
   // points（ADR-093）
   /** 当前积分余额（点数）。 */

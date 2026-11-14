@@ -18,6 +18,7 @@ import { AppsPage } from './pages/apps';
 import { MaintenancePage } from './pages/maintenance';
 import { StatisticsPage } from './pages/statistics';
 import { InvoicesPage } from './pages/invoices';
+import { FlashSalesPage } from './pages/flash-sales';
 import {
   MarketingGiftCardsPage,
   MarketingPromotionsPage,
@@ -56,6 +57,7 @@ export function App() {
           <Route path="maintenance" element={<MaintenancePage />} />
           <Route path="statistics" element={<StatisticsPage />} />
           <Route path="invoices" element={<InvoicesPage />} />
+          <Route path="flash-sales" element={<FlashSalesPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

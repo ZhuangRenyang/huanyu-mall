@@ -92,6 +92,25 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   };
   // —— 领券（ADR-029）：内存版，够驱动路由层契约测试 ——
   const collections = new Map<string, { voucherId: string; customerId: string; code: string }>();
+  // 秒杀活动（ADR-099）：内存表，跨请求保留
+  const flashSales: Array<{
+    id: string;
+    name: string;
+    status: "draft" | "active" | "ended";
+    starts_at: string;
+    ends_at: string;
+    items: Array<{
+      id: string;
+      flash_sale_id: string;
+      variant_id: string;
+      title: string;
+      original_price_minor: bigint;
+      flash_price_minor: bigint;
+      stock: number;
+      sold: number;
+      remaining: number;
+    }>;
+  }> = [];
   // 积分（ADR-093）：内存余额 + 流水，够验发放与幂等
   const pointBalances = new Map<string, bigint>();
   const pointLedger: Array<{
@@ -122,6 +141,82 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       items: pointLedger.filter((l) => l.customer_id === customerId),
       count: pointLedger.filter((l) => l.customer_id === customerId).length,
     }),
+    /*
+     * 秒杀（ADR-099）：内存活动表。跨请求保留 —— 创建与上架是两次请求，
+     * 每次新建数组的话第二次就查不到了。
+     */
+    listFlashSales: async (q: { status?: string; limit?: number; offset?: number }) => {
+      const all = q.status ? flashSales.filter((s) => s.status === q.status) : flashSales;
+      return { items: all.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 20)), count: all.length };
+    },
+    createFlashSale: async (input: {
+      name: string;
+      startsAt: Date;
+      endsAt: Date;
+      items: Array<{
+        variantId: string;
+        title: string;
+        originalPriceMinor: bigint;
+        flashPriceMinor: bigint;
+        stock: number;
+      }>;
+    }) => {
+      if (!(input.endsAt.getTime() > input.startsAt.getTime())) {
+        throw new DomainError({ code: 20001, message: "结束时间必须晚于开始时间" });
+      }
+      for (const it of input.items) {
+        if (it.flashPriceMinor >= it.originalPriceMinor) {
+          throw new DomainError({ code: 20001, message: "秒杀价必须低于原价" });
+        }
+      }
+      const sale = {
+        id: `fs_${flashSales.length + 1}`,
+        name: input.name.trim(),
+        status: "draft" as "draft" | "active" | "ended",
+        starts_at: input.startsAt.toISOString(),
+        ends_at: input.endsAt.toISOString(),
+        items: input.items.map((it, i) => ({
+          id: `fsi_${flashSales.length + 1}_${i}`,
+          flash_sale_id: `fs_${flashSales.length + 1}`,
+          variant_id: it.variantId,
+          title: it.title,
+          original_price_minor: it.originalPriceMinor,
+          flash_price_minor: it.flashPriceMinor,
+          stock: it.stock,
+          sold: 0,
+          remaining: it.stock,
+        })),
+      };
+      flashSales.push(sale);
+      return sale;
+    },
+    setFlashSaleStatus: async (id: string, status: "active" | "ended") => {
+      const sale = flashSales.find((s) => s.id === id);
+      if (!sale) throw new DomainError({ code: 30001, message: `秒杀活动不存在：${id}` });
+      const allowed =
+        (sale.status === "draft" && status === "active") ||
+        (sale.status === "active" && status === "ended");
+      if (sale.status !== status && !allowed) {
+        throw new DomainError({
+          code: 30002,
+          message: `当前状态（${sale.status}）不能变更为 ${status}`,
+        });
+      }
+      sale.status = status;
+      return sale;
+    },
+    listActiveFlashSales: async () => {
+      const now = Date.now();
+      return flashSales.filter(
+        (s) =>
+          s.status === "active" &&
+          new Date(s.starts_at).getTime() <= now &&
+          new Date(s.ends_at).getTime() > now &&
+          s.items.some((i) => i.remaining > 0),
+      );
+    },
+    consumeFlashStock: async () => {},
+    releaseFlashStock: async () => {},
     /** 退款退回积分（ADR-095）：扣回 earn、退回 spend，幂等。 */
     refundPointsForOrder: async (orderId: string) => {
       const entries = pointLedger.filter((l) => l.order_id === orderId);

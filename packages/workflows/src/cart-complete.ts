@@ -29,11 +29,16 @@ export interface CartCompleteInput {
   customerNote?: string | null;
   /** 命中的促销折扣明细（供 order 固化 order_discount 留痕）。 */
   discounts?: Array<{
-    type: "catalogue" | "order" | "voucher" | "gift_card" | "points";
+    type: "catalogue" | "order" | "voucher" | "gift_card" | "points" | "flash";
     promotionId: string;
     code: string | null;
     amountMinor: bigint;
   }>;
+  /**
+   * 秒杀行（ADR-099）：下单成功后按它扣活动库存。
+   * 只传「活动商品 id + 件数」，金额已在 discounts 的 flash 明细里留痕。
+   */
+  flashItems?: Array<{ flashSaleItemId: string; quantity: number }>;
   items: Array<{
     variantId: string;
     productId: string;
@@ -83,6 +88,10 @@ export interface PromotionPort {
   consumePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
   /** 补偿：退回积分。 */
   releasePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
+  /** 扣秒杀活动库存（ADR-099）：售罄抛错触发整单回滚。 */
+  consumeFlashStock(entries: Array<{ flashSaleItemId: string; quantity: number }>): Promise<void>;
+  /** 补偿：退回秒杀活动库存。 */
+  releaseFlashStock(entries: Array<{ flashSaleItemId: string; quantity: number }>): Promise<void>;
 }
 
 /** 从折扣留痕明细里提取命中的 voucher 券码（下单成功后要原子核销，防超用）。 */
@@ -220,6 +229,27 @@ export const consumePointsStep = defineStep({
   },
 });
 
+/**
+ * 秒杀活动库存扣减（ADR-099）：下单成功后扣，售罄抛错触发整单回滚。
+ *
+ * 与仓库库存是两道闸：这里扣的是「活动放了多少」，inventory 扣的是「仓库有多少」。
+ * 顺序放在库存预留之后：先保住实物，再扣活动额度 —— 反过来会出现
+ * 「活动额度扣了、仓库没货」，客服还得手工补回额度。
+ */
+export const consumeFlashStockStep = defineStep({
+  id: "cart-complete.consume-flash-stock",
+  compensationClass: "R",
+  async invoke(input: { entries: Array<{ flashSaleItemId: string; quantity: number }> }, ctx) {
+    if (input.entries.length === 0) return new StepResponse({}, { entries: [] });
+    await ctx.resolve<PromotionPort>("promotion").consumeFlashStock(input.entries);
+    return new StepResponse({}, { entries: input.entries });
+  },
+  async compensate(payload: { entries: Array<{ flashSaleItemId: string; quantity: number }> }, ctx) {
+    if (payload.entries.length === 0) return;
+    await ctx.resolve<PromotionPort>("promotion").releaseFlashStock(payload.entries);
+  },
+});
+
 export const cartCompleteWorkflow = defineWorkflow<CartCompleteInput, { orderId: string }>(
   { id: "cart-complete" },
   async (ctx, input) => {
@@ -237,6 +267,7 @@ export const cartCompleteWorkflow = defineWorkflow<CartCompleteInput, { orderId:
       });
     }
     await ctx.step(reserveInventoryStep, { orderId: order.orderId, items: input.items });
+    await ctx.step(consumeFlashStockStep, { entries: input.flashItems ?? [] });
     await ctx.step(createPaymentCollectionStep, {
       orderId: order.orderId,
       amountMinor: order.totalMinor,
@@ -254,5 +285,6 @@ export function registerCartComplete(registry: WorkflowRegistry): void {
   registry.registerStep(consumeVoucherCodesStep);
   registry.registerStep(consumeGiftCardsStep);
   registry.registerStep(consumePointsStep);
+  registry.registerStep(consumeFlashStockStep);
   registry.registerWorkflow(cartCompleteWorkflow);
 }

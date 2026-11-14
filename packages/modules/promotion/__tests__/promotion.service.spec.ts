@@ -10,6 +10,10 @@ import {
 import type {
   CollectedVoucherDTO,
   CreateGiftCardInput,
+  FlashSaleDTO,
+  FlashSaleItemDTO,
+  FlashSaleItemInput,
+  FlashSaleStatus,
   CreatePromotionInput,
   CreatePromotionRuleInput,
   CreateVoucherCodeInput,
@@ -493,7 +497,116 @@ class InMemoryPromotionRepository implements PromotionRepository {
   }
   async listPointLedgerByOrder(orderId: string): Promise<PointLedgerDTO[]> {
     return this.pointLedger.filter((l) => l.order_id === orderId);
+  }  // —— flash_sale（ADR-099）——
+  private flashSales = new Map<string, FlashSaleDTO>();
+  private flashItems = new Map<string, FlashSaleItemDTO>();
+
+  async insertFlashSale(row: {
+    id: string;
+    name: string;
+    startsAt: Date;
+    endsAt: Date;
+  }): Promise<FlashSaleDTO> {
+    const dto: FlashSaleDTO = {
+      id: row.id,
+      name: row.name,
+      status: "draft",
+      starts_at: row.startsAt.toISOString(),
+      ends_at: row.endsAt.toISOString(),
+      items: [],
+    };
+    this.flashSales.set(dto.id, dto);
+    return dto;
   }
+
+  async insertFlashSaleItems(
+    saleId: string,
+    items: Array<FlashSaleItemInput & { id: string }>,
+  ): Promise<void> {
+    for (const i of items) {
+      this.flashItems.set(i.id, {
+        id: i.id,
+        flash_sale_id: saleId,
+        variant_id: i.variantId,
+        title: i.title,
+        original_price_minor: i.originalPriceMinor,
+        flash_price_minor: i.flashPriceMinor,
+        stock: i.stock,
+        sold: 0,
+        remaining: i.stock,
+      });
+    }
+  }
+
+  async findFlashSale(id: string): Promise<FlashSaleDTO | null> {
+    const sale = this.flashSales.get(id);
+    if (!sale) return null;
+    return { ...sale, items: [...this.flashItems.values()].filter((i) => i.flash_sale_id === id) };
+  }
+
+  async listFlashSales(q: {
+    status?: FlashSaleStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: FlashSaleDTO[]; count: number }> {
+    const all = [...this.flashSales.values()]
+      .filter((s) => (q.status ? s.status === q.status : true))
+      .map((s) => ({
+        ...s,
+        items: [...this.flashItems.values()].filter((i) => i.flash_sale_id === s.id),
+      }));
+    return { items: all.slice(q.offset, q.offset + q.limit), count: all.length };
+  }
+
+  async listFlashItemsBySaleIds(saleIds: string[]): Promise<Record<string, FlashSaleItemDTO[]>> {
+    const out: Record<string, FlashSaleItemDTO[]> = {};
+    for (const item of this.flashItems.values()) {
+      if (!saleIds.includes(item.flash_sale_id)) continue;
+      (out[item.flash_sale_id] ??= []).push(item);
+    }
+    return out;
+  }
+
+  async updateFlashSaleStatus(id: string, status: FlashSaleStatus): Promise<FlashSaleDTO | null> {
+    const sale = this.flashSales.get(id);
+    if (!sale) return null;
+    sale.status = status;
+    return this.findFlashSale(id);
+  }
+
+  async listActiveFlashItemsByVariantIds(
+    variantIds: string[],
+    now: Date,
+  ): Promise<FlashSaleItemDTO[]> {
+    const out: FlashSaleItemDTO[] = [];
+    for (const item of this.flashItems.values()) {
+      if (!variantIds.includes(item.variant_id)) continue;
+      const sale = this.flashSales.get(item.flash_sale_id);
+      if (!sale || sale.status !== "active") continue;
+      if (new Date(sale.starts_at).getTime() > now.getTime()) continue;
+      if (new Date(sale.ends_at).getTime() <= now.getTime()) continue;
+      if (item.sold >= item.stock) continue;
+      out.push(item);
+    }
+    return out;
+  }
+
+  async incrementFlashSold(itemId: string, quantity: number): Promise<boolean> {
+    const item = this.flashItems.get(itemId);
+    if (!item) return false;
+    if (item.sold + quantity > item.stock) return false;
+    item.sold += quantity;
+    item.remaining = item.stock - item.sold;
+    return true;
+  }
+
+  async decrementFlashSold(itemId: string, quantity: number): Promise<void> {
+    const item = this.flashItems.get(itemId);
+    if (!item) return;
+    item.sold = Math.max(0, item.sold - quantity);
+    item.remaining = item.stock - item.sold;
+  }
+
 }
 
 describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
@@ -1765,5 +1878,189 @@ describe("退款退回积分（ADR-095）", () => {
     // 幂等：再退一次不重复
     await service.refundPointsForOrder("ord_1");
     expect(await service.getPointBalance("cust_1")).toBe(0n);
+  });
+});
+
+describe("限时秒杀（ADR-099）", () => {
+  /** 造一场进行中的秒杀：原价 100 元，秒杀 60 元，放 10 件。 */
+  async function seedSale(service: PromotionService): Promise<{ saleId: string; itemId: string }> {
+    const sale = await service.createFlashSale({
+      name: "限时秒杀",
+      startsAt: new Date(Date.now() - 3_600_000),
+      endsAt: new Date(Date.now() + 3_600_000),
+      items: [
+        {
+          variantId: "var_1",
+          title: "测试商品 · 黑色",
+          originalPriceMinor: 10000n,
+          flashPriceMinor: 6000n,
+          stock: 10,
+        },
+      ],
+    });
+    await service.setFlashSaleStatus(sale.id, "active");
+    return { saleId: sale.id, itemId: sale.items[0]!.id };
+  }
+
+  const ctxOf = (quantity = 1) => ({
+    currencyCode: "CNY",
+    items: [
+      {
+        id: "cli_1",
+        variantId: "var_1",
+        categoryIds: [],
+        quantity,
+        unitPriceMinor: 10000n,
+      },
+    ],
+    subtotalMinor: 10000n * BigInt(quantity),
+    shippingMinor: 0n,
+    voucherCodes: [],
+    giftCardCodes: [],
+  });
+
+  it("秒杀价替换原价：优惠 = (原价 − 秒杀价) × 件数", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    await seedSale(service);
+    // 开促销总开关（秒杀与目录促销同属 promotion 功能域）
+    await service.setFeatureEnabled("promotion", true);
+
+    const res = await service.computeDiscounts(ctxOf(2));
+    expect(res.flashDiscountMinor).toBe(8000n);
+    expect(res.flashAdjustments).toHaveLength(1);
+    expect(res.flashAdjustments[0]!.amountMinor).toBe(8000n);
+    expect(res.flashAdjustments[0]!.flashSaleItemId).toBeTruthy();
+  });
+
+  it("满减门槛按折后金额算：折后不到门槛就不减", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    await seedSale(service);
+    await service.setFeatureEnabled("promotion", true);
+    // 满 90 减 10：原价 100 够，折后 60 不够
+    const p = await service.createPromotion({
+      name: "满 90 减 10",
+      type: "order",
+      isAutomatic: true,
+      status: "active",
+    });
+    await service.addPromotionRule({
+      promotionId: p.id,
+      predicate: { kind: "subtotalGte", amountMinor: 9000n },
+      rewardType: "fixed",
+      rewardValue: 1000n,
+    });
+
+    const res = await service.computeDiscounts(ctxOf(1));
+    expect(res.flashDiscountMinor).toBe(4000n);
+    // 折后 60 元，未达 90 元门槛
+    expect(res.orderDiscountMinor).toBe(0n);
+  });
+
+  it("秒杀商品卖完 / 未上架 / 过窗口 → 一律按原价", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const { saleId, itemId } = await seedSale(service);
+    await service.setFeatureEnabled("promotion", true);
+
+    // 卖完
+    await service.consumeFlashStock([{ flashSaleItemId: itemId, quantity: 10 }]);
+    expect((await service.computeDiscounts(ctxOf(1))).flashDiscountMinor).toBe(0n);
+
+    // 结束活动（库存退回去也不再生效）
+    await service.releaseFlashStock([{ flashSaleItemId: itemId, quantity: 10 }]);
+    await service.setFlashSaleStatus(saleId, "ended");
+    expect((await service.computeDiscounts(ctxOf(1))).flashDiscountMinor).toBe(0n);
+  });
+
+  it("扣活动库存：售罄抛错，且本次已扣的部分回滚", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const sale = await service.createFlashSale({
+      name: "两件商品",
+      startsAt: new Date(Date.now() - 1000),
+      endsAt: new Date(Date.now() + 3_600_000),
+      items: [
+        {
+          variantId: "var_1",
+          title: "A",
+          originalPriceMinor: 10000n,
+          flashPriceMinor: 6000n,
+          stock: 5,
+        },
+        {
+          variantId: "var_2",
+          title: "B",
+          originalPriceMinor: 20000n,
+          flashPriceMinor: 12000n,
+          stock: 1,
+        },
+      ],
+    });
+    await service.setFlashSaleStatus(sale.id, "active");
+    const [a, b] = sale.items;
+
+    // B 只剩 1 件，要 2 件 → 整单失败
+    await expect(
+      service.consumeFlashStock([
+        { flashSaleItemId: a!.id, quantity: 3 },
+        { flashSaleItemId: b!.id, quantity: 2 },
+      ]),
+    ).rejects.toThrow();
+
+    // A 的 3 件必须回滚（否则库存被凭空吃掉）
+    const after = await service.listFlashSales({ limit: 10, offset: 0 });
+    const items = after.items[0]!.items;
+    expect(items.find((i) => i.id === a!.id)!.sold).toBe(0);
+    expect(items.find((i) => i.id === b!.id)!.sold).toBe(0);
+  });
+
+  it("状态机只允许 draft→active、active→ended", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const sale = await service.createFlashSale({
+      name: "状态机",
+      startsAt: new Date(Date.now() - 1000),
+      endsAt: new Date(Date.now() + 3_600_000),
+      items: [
+        { variantId: "var_1", title: "A", originalPriceMinor: 10000n, flashPriceMinor: 6000n, stock: 2 },
+      ],
+    });
+    expect(sale.status).toBe("draft");
+    await service.setFlashSaleStatus(sale.id, "active");
+    await service.setFlashSaleStatus(sale.id, "ended");
+    // 已结束不能再上架（重新上架应新建活动）
+    await expect(service.setFlashSaleStatus(sale.id, "active")).rejects.toThrow();
+  });
+
+  it("创建校验：秒杀价必须低于原价、库存为正、规格不重复", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const base = {
+      name: "校验",
+      startsAt: new Date(Date.now() - 1000),
+      endsAt: new Date(Date.now() + 3_600_000),
+    };
+    await expect(
+      service.createFlashSale({
+        ...base,
+        items: [
+          { variantId: "var_1", title: "A", originalPriceMinor: 10000n, flashPriceMinor: 10000n, stock: 2 },
+        ],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      service.createFlashSale({
+        ...base,
+        items: [
+          { variantId: "var_1", title: "A", originalPriceMinor: 10000n, flashPriceMinor: 6000n, stock: 0 },
+        ],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      service.createFlashSale({
+        ...base,
+        items: [
+          { variantId: "var_1", title: "A", originalPriceMinor: 10000n, flashPriceMinor: 6000n, stock: 2 },
+          { variantId: "var_1", title: "A2", originalPriceMinor: 10000n, flashPriceMinor: 5000n, stock: 2 },
+        ],
+      }),
+    ).rejects.toThrow();
   });
 });

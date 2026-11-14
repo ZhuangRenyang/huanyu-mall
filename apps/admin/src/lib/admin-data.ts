@@ -127,6 +127,31 @@ export interface AdminRefundRequest {
   exchangeTrackingNumber: string | null;
 }
 
+/** 秒杀活动商品（ADR-099）。 */
+export interface AdminFlashSaleItem {
+  id: string;
+  flashSaleId: string;
+  variantId: string;
+  /** 商品/规格快照。 */
+  title: string;
+  originalPriceMinor: number;
+  flashPriceMinor: number;
+  /** 活动库存（营销限量）。 */
+  stock: number;
+  sold: number;
+}
+
+/** 秒杀活动（ADR-099）。 */
+export interface AdminFlashSale {
+  id: string;
+  name: string;
+  status: 'draft' | 'active' | 'ended';
+  startsAt: string;
+  endsAt: string;
+  items: AdminFlashSaleItem[];
+  createdAt: string;
+}
+
 /**
  * 发票申请单（ADR-098，moc 存储用）。
  *

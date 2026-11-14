@@ -4,6 +4,7 @@ import {
   DEFAULT_THEME,
   SEED_ORDERS,
   SEED_PRODUCTS,
+  type AdminFlashSale,
   type AdminInvoice,
   type AdminOrder,
   type AdminRefundRequest,
@@ -19,6 +20,7 @@ const KEYS = {
   orders: 'admin:orders',
   refunds: 'admin:refund-requests',
   invoices: 'admin:invoices',
+  flashSales: 'admin:flash-sales',
   theme: 'admin:theme',
   providers: 'admin:providers',
   password: 'admin:password',
@@ -363,6 +365,102 @@ export function shipExchange(id: string, carrier: string, trackingNumber: string
 export function listRefunds(status?: string): AdminRefundRequest[] {
   const all = read<AdminRefundRequest[]>(KEYS.refunds, []);
   return status ? all.filter((r) => r.status === status) : all;
+}
+
+// ---- 限时秒杀（ADR-099）----
+
+/**
+ * mock：秒杀活动列表。
+ *
+ * 首次访问造一场「进行中」的活动，演示环境进去就能看到可操作的数据；
+ * 时间窗按访问时刻前后各一天，避免演示时活动已过期。
+ */
+export function listFlashSales(status?: string): AdminFlashSale[] {
+  const raw = read<AdminFlashSale[] | null>(KEYS.flashSales, null);
+  const all = raw ?? seedFlashSales();
+  return status ? all.filter((s) => s.status === status) : all;
+}
+
+function seedFlashSales(): AdminFlashSale[] {
+  const now = Date.now();
+  const products = read<Array<{ id: string; title: string; variants: Array<{ id: string; title: string; priceMinor: number }> }>>(
+    KEYS.products,
+    [],
+  );
+  const product = products[0];
+  const variant = product?.variants?.[0];
+  const seed: AdminFlashSale[] = [
+    {
+      id: 'fs_demo_1',
+      name: '限时秒杀 · 今日开抢',
+      status: 'active',
+      startsAt: new Date(now - 86_400_000).toISOString(),
+      endsAt: new Date(now + 86_400_000).toISOString(),
+      createdAt: new Date(now - 90_000_000).toISOString(),
+      items: variant
+        ? [
+            {
+              id: 'fsi_demo_1',
+              flashSaleId: 'fs_demo_1',
+              variantId: variant.id,
+              title: `${product.title} · ${variant.title}`,
+              originalPriceMinor: variant.priceMinor,
+              // 八折，且至少比原价低 1 分
+              flashPriceMinor: Math.max(1, Math.round(variant.priceMinor * 0.8)),
+              stock: 20,
+              sold: 3,
+            },
+          ]
+        : [],
+    },
+  ];
+  write(KEYS.flashSales, seed);
+  return seed;
+}
+
+/** mock：创建秒杀活动（草稿）。 */
+export function createFlashSale(input: {
+  name: string;
+  startsAt: string;
+  endsAt: string;
+  items: Array<{
+    variantId: string;
+    title: string;
+    originalPriceMinor: number;
+    flashPriceMinor: number;
+    stock: number;
+  }>;
+}): void {
+  const list = listFlashSales();
+  const id = `fs_${Date.now()}`;
+  list.unshift({
+    id,
+    name: input.name.trim(),
+    status: 'draft',
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    createdAt: new Date().toISOString(),
+    items: input.items.map((it, i) => ({
+      id: `${id}_${i}`,
+      flashSaleId: id,
+      variantId: it.variantId,
+      title: it.title,
+      originalPriceMinor: it.originalPriceMinor,
+      flashPriceMinor: it.flashPriceMinor,
+      stock: it.stock,
+      sold: 0,
+    })),
+  });
+  write(KEYS.flashSales, list);
+}
+
+/** mock：上架 / 结束。 */
+export function setFlashSaleStatus(id: string, status: 'active' | 'ended'): void {
+  const list = listFlashSales();
+  const sale = list.find((s) => s.id === id);
+  if (!sale) return;
+  sale.status = status;
+  write(KEYS.flashSales, list);
 }
 
 // ---- 发票（ADR-098）----

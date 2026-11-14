@@ -184,6 +184,48 @@ export const giftCard = pgTable(
   ],
 );
 
+/** 限时秒杀活动（ADR-099）。 */
+export const flashSale = pgTable(
+  "flash_sale",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /** draft = 草稿；active = 进行中；ended = 已结束。 */
+    status: text("status").notNull().default("draft"),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_flash_sale_window").on(t.status, t.startsAt, t.endsAt)],
+);
+
+/**
+ * 秒杀活动商品（ADR-099）。
+ *
+ * 活动库存（stock/sold）是**营销限量**，与仓库库存是两道独立的闸。
+ * sold 的扣减必须走条件 UPDATE（sold + n <= stock），DB 再加 CHECK 兜底。
+ */
+export const flashSaleItem = pgTable(
+  "flash_sale_item",
+  {
+    id: text("id").primaryKey(),
+    flashSaleId: text("flash_sale_id").notNull(),
+    variantId: text("variant_id").notNull(),
+    /** 商品/规格快照：商品改名或下架后仍可读。 */
+    title: text("title").notNull(),
+    originalPriceMinor: bigint("original_price_minor", { mode: "bigint" }).notNull(),
+    flashPriceMinor: bigint("flash_price_minor", { mode: "bigint" }).notNull(),
+    stock: integer("stock").notNull(),
+    sold: integer("sold").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_flash_item_variant").on(t.flashSaleId, t.variantId),
+    index("idx_flash_item_sale").on(t.flashSaleId),
+  ],
+);
+
 /** 积分余额（ADR-093）：顾客维度，整数点数。 */
 export const pointBalance = pgTable(
   "point_balance",

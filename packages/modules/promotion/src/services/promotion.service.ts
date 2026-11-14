@@ -1,4 +1,4 @@
-import { prefixedUlid } from "@mall/core";
+import { DomainError, prefixedUlid } from "@mall/core";
 import { randomBytes } from "node:crypto";
 import {
   giftCardInsufficientBalance,
@@ -14,6 +14,9 @@ import {
 import type {
   CollectedVoucherDTO,
   ComputeDiscountsInput,
+  CreateFlashSaleInput,
+  FlashSaleDTO,
+  FlashSaleStatus,
   PointLedgerDTO,
   ComputeDiscountsResult,
   CreateGiftCardInput,
@@ -607,6 +610,148 @@ export class PromotionService implements IPromotionModuleService {
     }
   }
 
+  // —— flash_sale（ADR-099）——
+
+  /**
+   * 创建秒杀活动（草稿态）。
+   *
+   * 上架要显式调 `setFlashSaleStatus('active')`：先建草稿、核对无误再上架，
+   * 避免「建完就开卖、价格填错了改不了」。
+   */
+  async createFlashSale(input: CreateFlashSaleInput): Promise<FlashSaleDTO> {
+    const name = input.name?.trim() ?? "";
+    if (name === "") {
+      throw new DomainError({ code: 20001, message: "请填写活动名称" });
+    }
+    if (!(input.endsAt.getTime() > input.startsAt.getTime())) {
+      throw new DomainError({ code: 20001, message: "结束时间必须晚于开始时间" });
+    }
+    if (!input.items || input.items.length === 0) {
+      throw new DomainError({ code: 20001, message: "请至少添加一个秒杀商品" });
+    }
+
+    const seen = new Set<string>();
+    for (const item of input.items) {
+      if (seen.has(item.variantId)) {
+        throw new DomainError({ code: 20001, message: `同一个规格不能重复添加：${item.title}` });
+      }
+      seen.add(item.variantId);
+      // 秒杀价必须低于原价：等于原价没意义，高于原价是坑顾客
+      if (item.flashPriceMinor <= 0n || item.flashPriceMinor >= item.originalPriceMinor) {
+        throw new DomainError({
+          code: 20001,
+          message: `秒杀价必须大于 0 且低于原价：${item.title}`,
+        });
+      }
+      if (!Number.isInteger(item.stock) || item.stock <= 0) {
+        throw new DomainError({ code: 20001, message: `活动库存必须是正整数：${item.title}` });
+      }
+    }
+
+    const sale = await this.repo.insertFlashSale({
+      id: prefixedUlid("fs"),
+      name,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+    });
+    await this.repo.insertFlashSaleItems(
+      sale.id,
+      input.items.map((item) => ({ ...item, id: prefixedUlid("fsi") })),
+    );
+    const created = await this.repo.findFlashSale(sale.id);
+    return created!;
+  }
+
+  async listFlashSales(q: {
+    status?: FlashSaleStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: FlashSaleDTO[]; count: number }> {
+    return this.repo.listFlashSales({
+      status: q.status,
+      limit: q.limit ?? 20,
+      offset: q.offset ?? 0,
+    });
+  }
+
+  /**
+   * 上架 / 结束。
+   *
+   * 只允许两个方向：draft→active（上架）、active→ended（提前结束）。
+   * 不支持「已结束再上架」：卖过的库存与订单已经发生，重新上架应该新建活动。
+   */
+  async setFlashSaleStatus(id: string, status: "active" | "ended"): Promise<FlashSaleDTO> {
+    const sale = await this.repo.findFlashSale(id);
+    if (!sale) throw new DomainError({ code: 30001, message: `秒杀活动不存在：${id}` });
+    if (sale.status === status) return sale; // 幂等：重复点击不报错
+
+    const allowed =
+      (sale.status === "draft" && status === "active") ||
+      (sale.status === "active" && status === "ended");
+    if (!allowed) {
+      throw new DomainError({
+        code: 30002,
+        message: `当前状态（${sale.status}）不能变更为 ${status}`,
+      });
+    }
+    const updated = await this.repo.updateFlashSaleStatus(id, status);
+    return updated!;
+  }
+
+  /**
+   * 店面：进行中的秒杀活动。
+   *
+   * 三重过滤：状态 active、在时间窗内、还有剩余可售商品。
+   * 一件都不剩的活动不展示 —— 顾客点进去只看到「已售罄」是坏体验。
+   */
+  async listActiveFlashSales(now: Date = new Date()): Promise<FlashSaleDTO[]> {
+    const res = await this.repo.listFlashSales({ status: "active", limit: 50, offset: 0 });
+    return res.items.filter((sale) => {
+      const starts = new Date(sale.starts_at).getTime();
+      const ends = new Date(sale.ends_at).getTime();
+      if (starts > now.getTime() || ends <= now.getTime()) return false;
+      return sale.items.some((item) => item.remaining > 0);
+    });
+  }
+
+  /**
+   * 下单成功后扣活动库存（ADR-099）。
+   *
+   * 任一商品售罄就整单失败：这是「不超卖」的最后一道闸。
+   * 本方法内已成功的扣减要自己回滚 —— workflow 的补偿只覆盖**已完成**的步骤，
+   * 步骤内部的部分写入不会被 engine 回退。
+   */
+  async consumeFlashStock(
+    entries: Array<{ flashSaleItemId: string; quantity: number }>,
+  ): Promise<void> {
+    const applied: Array<{ flashSaleItemId: string; quantity: number }> = [];
+    for (const entry of entries) {
+      if (entry.quantity <= 0) continue;
+      const ok = await this.repo.incrementFlashSold(entry.flashSaleItemId, entry.quantity);
+      if (!ok) {
+        // 售罄：把本次已扣的还回去，再抛错让整单回滚
+        for (const done of applied) {
+          await this.repo.decrementFlashSold(done.flashSaleItemId, done.quantity);
+        }
+        throw new DomainError({
+          code: 30002,
+          message: "秒杀商品已售完，请重新下单",
+        });
+      }
+      applied.push(entry);
+    }
+  }
+
+  /** workflow 补偿：退回活动库存（下限 0，重复补偿安全）。 */
+  async releaseFlashStock(
+    entries: Array<{ flashSaleItemId: string; quantity: number }>,
+  ): Promise<void> {
+    for (const entry of entries) {
+      if (entry.quantity <= 0) continue;
+      await this.repo.decrementFlashSold(entry.flashSaleItemId, entry.quantity);
+    }
+  }
+
   async computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
     const now = new Date();
     // 功能级总开关：关闭的功能整体不参与计算（默认全关，ADR-014）。
@@ -614,6 +759,46 @@ export class PromotionService implements IPromotionModuleService {
     const active = flags.promotion
       ? await this.repo.listActiveCataloguePromotionsWithRules(now)
       : [];
+
+    /*
+     * —— 秒杀（ADR-099）：先把秒杀价折下去 ——
+     *
+     * 秒杀价是「替换原价」，所以必须在所有促销之前算：后面的满减门槛、券的适用小计、
+     * 礼品卡与积分的剩余应付，都应该基于**折后**金额 —— 否则顾客能用秒杀价去凑满减。
+     * 时间窗与库存（sold < stock）在 SQL 里过滤：过期、未上架、售完的都不参与。
+     */
+    const flashItems =
+      flags.promotion && ctx.items.length > 0
+        ? await this.repo.listActiveFlashItemsByVariantIds(
+            ctx.items.map((i) => i.variantId),
+            now,
+          )
+        : [];
+    const flashByVariant = new Map(flashItems.map((f) => [f.variant_id, f]));
+    const flashAdjustments: ComputeDiscountsResult["flashAdjustments"] = [];
+    for (const item of ctx.items) {
+      const flash = flashByVariant.get(item.variantId);
+      if (!flash) continue;
+      // 秒杀价不低于原价（商家后来改价导致）→ 不生效，绝不倒贴
+      if (item.unitPriceMinor <= flash.flash_price_minor) continue;
+      const lineSubtotal = item.unitPriceMinor * BigInt(item.quantity);
+      const amount = (item.unitPriceMinor - flash.flash_price_minor) * BigInt(item.quantity);
+      flashAdjustments.push({
+        itemId: item.id,
+        variantId: item.variantId,
+        quantity: item.quantity,
+        // 封顶到行小计（硬约束 3：折扣不能为负、不能超过行金额）
+        amountMinor: amount > lineSubtotal ? lineSubtotal : amount,
+        flashSaleId: flash.flash_sale_id,
+        flashSaleItemId: flash.id,
+      });
+    }
+    const flashDiscountMinor = flashAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+    /** 折后小计：满减、整单券、剩余应付都按它算（与「秒杀价替换原价」同一口径）。 */
+    let effectiveSubtotal = ctx.subtotalMinor - flashDiscountMinor;
+    if (effectiveSubtotal < 0n) effectiveSubtotal = 0n;
+    /** 每行的秒杀优惠额（券的适用金额要按折后算）。 */
+    const flashAmountByItem = new Map(flashAdjustments.map((a) => [a.itemId, a.amountMinor]));
 
     const lineAdjustments: ComputeDiscountsResult["lineAdjustments"] = [];
 
@@ -662,12 +847,13 @@ export class PromotionService implements IPromotionModuleService {
           // 订单级条件（subtotalGte / currencyEq）不看具体行；variant/category 谓词在订单级恒不命中。
           variantId: "",
           categoryIds: [],
-          subtotalMinor: ctx.subtotalMinor,
+          // 门槛按折后小计算（ADR-099）：秒杀价不参与凑满减
+          subtotalMinor: effectiveSubtotal,
           currencyCode: ctx.currencyCode,
         });
         if (!matched) continue;
 
-        const amount = computeOrderRuleDiscount(rule, ctx.subtotalMinor);
+        const amount = computeOrderRuleDiscount(rule, effectiveSubtotal);
         if (bestOrder === null || amount > bestOrder.amountMinor) {
           bestOrder = { amountMinor: amount, promotionId: promotion.id, code: promotion.code ?? null };
         }
@@ -678,7 +864,8 @@ export class PromotionService implements IPromotionModuleService {
     let orderDiscountMinor = 0n;
     const orderDiscounts: ComputeDiscountsResult["orderDiscounts"] = [];
     if (bestOrder && bestOrder.amountMinor > 0n) {
-      orderDiscountMinor = bestOrder.amountMinor > ctx.subtotalMinor ? ctx.subtotalMinor : bestOrder.amountMinor;
+      orderDiscountMinor =
+        bestOrder.amountMinor > effectiveSubtotal ? effectiveSubtotal : bestOrder.amountMinor;
       orderDiscounts.push({
         promotionId: bestOrder.promotionId,
         code: bestOrder.code,
@@ -715,7 +902,13 @@ export class PromotionService implements IPromotionModuleService {
 
       let bestVoucher: { promotionId: string; code: string; amountMinor: bigint } | null = null;
       for (const { code: vc, voucher } of candidates) {
-        const baseMinor = eligibleVoucherBase(voucher, scopesByVoucher[voucher.id] ?? [], ctx);
+        const baseMinor = eligibleVoucherBase(
+          voucher,
+          scopesByVoucher[voucher.id] ?? [],
+          ctx,
+          effectiveSubtotal,
+          flashAmountByItem,
+        );
         // 指定商品券但车里没有一件适用商品 → 这张券用不了（不静默降级成整单）
         if (baseMinor <= 0n) continue;
         // 满减门槛按**适用小计**算：指定商品券的门槛只数命中的那些行
@@ -738,7 +931,8 @@ export class PromotionService implements IPromotionModuleService {
 
       // 封顶到小计（硬约束 3/7）。
       if (bestVoucher) {
-        const clamped = bestVoucher.amountMinor > ctx.subtotalMinor ? ctx.subtotalMinor : bestVoucher.amountMinor;
+        const clamped =
+          bestVoucher.amountMinor > effectiveSubtotal ? effectiveSubtotal : bestVoucher.amountMinor;
         voucherDiscountMinor = clamped;
         voucherDiscounts.push({ promotionId: bestVoucher.promotionId, code: bestVoucher.code, amountMinor: clamped });
       }
@@ -746,7 +940,8 @@ export class PromotionService implements IPromotionModuleService {
 
     // —— Gift Card（阶段 5）：余额抵扣，多卡按顺序累加，封顶到剩余应付（ADR-012 §6 / 硬约束 4）。——
     // 剩余应付 = 小计 + 运费 - (行级折扣 + 订单促销折扣 + voucher 折扣)；gift card 抵扣不能超过剩余应付。
-    const lineDiscountMinor = lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+    const lineDiscountMinor =
+      lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n) + flashDiscountMinor;
     let remainingMinor =
       ctx.subtotalMinor + ctx.shippingMinor - lineDiscountMinor - orderDiscountMinor - voucherDiscountMinor;
     if (remainingMinor < 0n) remainingMinor = 0n;
@@ -781,6 +976,8 @@ export class PromotionService implements IPromotionModuleService {
 
     return {
       lineAdjustments,
+      flashDiscountMinor,
+      flashAdjustments,
       orderDiscountMinor,
       orderDiscounts,
       voucherDiscountMinor,
@@ -866,12 +1063,17 @@ function eligibleVoucherBase(
   voucher: VoucherDTO,
   scopes: VoucherScopeDTO[],
   ctx: ComputeDiscountsInput,
+  /** 折后小计（ADR-099）：整单券的适用金额按秒杀后的金额算。 */
+  subtotalMinor: bigint,
+  /** 每行的秒杀优惠额：指定商品券按折后行金额算。 */
+  flashAmountByItem: Map<string, bigint>,
 ): bigint {
-  if (voucher.type !== "specific_product") return ctx.subtotalMinor;
+  if (voucher.type !== "specific_product") return subtotalMinor;
   let sum = 0n;
   for (const item of ctx.items) {
     if (voucherIncludesItem(voucher.type, voucher.scope_mode, scopes, item.productId, item.categoryIds)) {
-      sum += item.unitPriceMinor * BigInt(item.quantity);
+      const line = item.unitPriceMinor * BigInt(item.quantity) - (flashAmountByItem.get(item.id) ?? 0n);
+      if (line > 0n) sum += line;
     }
   }
   return sum;

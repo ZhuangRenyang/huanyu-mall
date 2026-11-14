@@ -77,9 +77,21 @@ export class CartService implements ICartModuleService {
       pointsToUse: cart.points_to_use,
     });
 
-    const discountByItem = new Map(discounts.lineAdjustments.map((a) => [a.itemId, a.amountMinor]));
+    /*
+     * 秒杀优惠（ADR-099）也是行级折扣：并入同一张「每行优惠」表，
+     * 计税基数才会按折后算（含税价里少收一份税，就是账对不上）。
+     */
+    const discountByItem = new Map<string, bigint>();
+    for (const a of discounts.lineAdjustments) {
+      discountByItem.set(a.itemId, (discountByItem.get(a.itemId) ?? 0n) + a.amountMinor);
+    }
+    for (const a of discounts.flashAdjustments) {
+      discountByItem.set(a.itemId, (discountByItem.get(a.itemId) ?? 0n) + a.amountMinor);
+    }
     // discount = 行级折扣合计 + 订单级折扣 + voucher 折扣（阶段 4）+ gift card 抵扣（阶段 5）。
-    const lineDiscountMinor = discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+    const lineDiscountMinor =
+      discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n) +
+      discounts.flashAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
     const discountMinor =
       lineDiscountMinor +
       discounts.orderDiscountMinor +
@@ -126,6 +138,12 @@ export class CartService implements ICartModuleService {
       items: enrichedItems,
       shipping_method: shipping,
       discounts: discountDetails,
+      // 秒杀行（ADR-099）：下单成功后由 workflow 扣活动库存，按 variant 累计数量
+      flash_items: discounts.flashAdjustments.map((a) => ({
+        flash_sale_item_id: a.flashSaleItemId,
+        variant_id: a.variantId,
+        quantity: a.quantity,
+      })),
       tax_included_in_price: tax.included_in_price,
     };
   }
@@ -363,6 +381,15 @@ function buildDiscountDetails(discounts: {
   orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
   voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
   giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+  flashDiscountMinor: bigint;
+  flashAdjustments: Array<{
+    itemId: string;
+    variantId: string;
+    quantity: number;
+    amountMinor: bigint;
+    flashSaleId: string;
+    flashSaleItemId: string;
+  }>;
   pointsAppliedMinor: bigint;
 }): CartDiscountDTO[] {
   const out: CartDiscountDTO[] = [];
@@ -376,6 +403,18 @@ function buildDiscountDetails(discounts: {
   }
   for (const [promotionId, v] of catalogueByPromo) {
     out.push({ type: "catalogue", promotion_id: promotionId, code: v.code, amount_minor: v.amountMinor });
+  }
+
+  /*
+   * 秒杀（ADR-099）：按活动聚合。promotion_id 存**活动商品 id** ——
+   * 下单时就是靠它去扣活动库存，存活动 id 反而对不上具体规格。
+   */
+  const flashByItem = new Map<string, bigint>();
+  for (const a of discounts.flashAdjustments) {
+    flashByItem.set(a.flashSaleItemId, (flashByItem.get(a.flashSaleItemId) ?? 0n) + a.amountMinor);
+  }
+  for (const [flashSaleItemId, amountMinor] of flashByItem) {
+    out.push({ type: "flash", promotion_id: flashSaleItemId, code: null, amount_minor: amountMinor });
   }
 
   for (const od of discounts.orderDiscounts) {

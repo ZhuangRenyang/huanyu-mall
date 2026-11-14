@@ -44,7 +44,7 @@ export interface CartShippingMethodDTO {
 
 /** 命中的促销折扣明细（读时动态算），供下单侧固化进 order_discount 留痕（ADR-012 §3）。 */
 export interface CartDiscountDTO {
-  type: "catalogue" | "order" | "voucher" | "gift_card" | "points";
+  type: "catalogue" | "order" | "voucher" | "gift_card" | "points" | "flash";
   promotion_id: string;
   code: string | null;
   amount_minor: bigint;
@@ -74,6 +74,12 @@ export interface CartDetailDTO extends CartDTO {
   shipping_method: CartShippingMethodDTO | null;
   /** 命中的促销折扣明细（目录行级 + 订单级），供下单固化 order_discount 留痕。 */
   discounts: CartDiscountDTO[];
+  /**
+   * 命中的秒杀行（ADR-099）：下单成功后按它扣活动库存。
+   *
+   * 只存「哪个活动商品、几件」，不存金额 —— 金额已经在 discounts 里作为 flash 折扣留痕。
+   */
+  flash_items: Array<{ flash_sale_item_id: string; variant_id: string; quantity: number }>;
   /** 税是否已含在价格里：true 时合计不再加税（ADR-018）。 */
   tax_included_in_price: boolean;
 }
@@ -182,6 +188,17 @@ export interface PromotionLookupPort {
     voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
     giftCardAppliedMinor: bigint;
     giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+    /** 秒杀优惠合计（ADR-099）。 */
+    flashDiscountMinor: bigint;
+    /** 命中的秒杀明细（含数量，供下单扣活动库存）。 */
+    flashAdjustments: Array<{
+      itemId: string;
+      variantId: string;
+      quantity: number;
+      amountMinor: bigint;
+      flashSaleId: string;
+      flashSaleItemId: string;
+    }>;
     /** 积分抵扣金额（ADR-094）。 */
     pointsAppliedMinor: bigint;
     pointsUsed: bigint;

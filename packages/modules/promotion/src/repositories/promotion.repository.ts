@@ -4,6 +4,10 @@ import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
 import type {
   CollectedVoucherDTO,
+  FlashSaleDTO,
+  FlashSaleItemDTO,
+  FlashSaleItemInput,
+  FlashSaleStatus,
   PointLedgerDTO,
   PointLedgerKind,
   CreateGiftCardInput,
@@ -743,6 +747,155 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     return rows.map(toGiftCardEventDTO);
   }
 
+  // —— flash_sale（ADR-099）——
+
+  async insertFlashSale(row: {
+    id: string;
+    name: string;
+    startsAt: Date;
+    endsAt: Date;
+  }): Promise<FlashSaleDTO> {
+    const rows = await this.db
+      .insert(schema.flashSale)
+      .values({
+        id: row.id,
+        name: row.name,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+      })
+      .returning();
+    const r = rows[0]!;
+    return {
+      id: r.id,
+      name: r.name,
+      status: r.status as FlashSaleStatus,
+      starts_at: r.startsAt.toISOString(),
+      ends_at: r.endsAt.toISOString(),
+      items: [],
+    };
+  }
+
+  async insertFlashSaleItems(
+    saleId: string,
+    items: Array<FlashSaleItemInput & { id: string }>,
+  ): Promise<void> {
+    if (items.length === 0) return;
+    await this.db.insert(schema.flashSaleItem).values(
+      items.map((i) => ({
+        id: i.id,
+        flashSaleId: saleId,
+        variantId: i.variantId,
+        title: i.title,
+        originalPriceMinor: i.originalPriceMinor,
+        flashPriceMinor: i.flashPriceMinor,
+        stock: i.stock,
+      })),
+    );
+  }
+
+  async findFlashSale(id: string): Promise<FlashSaleDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.flashSale)
+      .where(eq(schema.flashSale.id, id))
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    const items = await this.listFlashItemsBySaleIds([id]);
+    return toFlashSaleDTO(r, items[id] ?? []);
+  }
+
+  async listFlashSales(q: {
+    status?: FlashSaleStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: FlashSaleDTO[]; count: number }> {
+    const where = q.status ? eq(schema.flashSale.status, q.status) : undefined;
+    const rows = await this.db
+      .select()
+      .from(schema.flashSale)
+      .where(where)
+      .orderBy(desc(schema.flashSale.createdAt))
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.flashSale)
+      .where(where);
+    const itemsBySale = await this.listFlashItemsBySaleIds(rows.map((r) => r.id));
+    return {
+      items: rows.map((r) => toFlashSaleDTO(r, itemsBySale[r.id] ?? [])),
+      count: countRows[0]?.count ?? 0,
+    };
+  }
+
+  async listFlashItemsBySaleIds(saleIds: string[]): Promise<Record<string, FlashSaleItemDTO[]>> {
+    if (saleIds.length === 0) return {};
+    const rows = await this.db
+      .select()
+      .from(schema.flashSaleItem)
+      .where(inArray(schema.flashSaleItem.flashSaleId, saleIds));
+    const out: Record<string, FlashSaleItemDTO[]> = {};
+    for (const r of rows) {
+      const dto = toFlashSaleItemDTO(r);
+      (out[r.flashSaleId] ??= []).push(dto);
+    }
+    return out;
+  }
+
+  async updateFlashSaleStatus(id: string, status: FlashSaleStatus): Promise<FlashSaleDTO | null> {
+    await this.db
+      .update(schema.flashSale)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(schema.flashSale.id, id));
+    return this.findFlashSale(id);
+  }
+
+  async listActiveFlashItemsByVariantIds(
+    variantIds: string[],
+    now: Date,
+  ): Promise<FlashSaleItemDTO[]> {
+    if (variantIds.length === 0) return [];
+    const rows = await this.db
+      .select({ item: schema.flashSaleItem })
+      .from(schema.flashSaleItem)
+      .innerJoin(schema.flashSale, eq(schema.flashSale.id, schema.flashSaleItem.flashSaleId))
+      .where(
+        and(
+          inArray(schema.flashSaleItem.variantId, variantIds),
+          eq(schema.flashSale.status, "active"),
+          lte(schema.flashSale.startsAt, now),
+          // ends_at 是开区间：到点即失效
+          sql`${schema.flashSale.endsAt} > ${now}`,
+          // 卖完的不参与计算：顾客看到的是原价，不会「下单才发现没货」
+          sql`${schema.flashSaleItem.sold} < ${schema.flashSaleItem.stock}`,
+        ),
+      );
+    return rows.map((r) => toFlashSaleItemDTO(r.item));
+  }
+
+  async incrementFlashSold(itemId: string, quantity: number): Promise<boolean> {
+    // 条件更新是防超卖的**唯一**有效手段：先查后写必然在并发下超量
+    const rows = await this.db
+      .update(schema.flashSaleItem)
+      .set({ sold: sql`${schema.flashSaleItem.sold} + ${quantity}` })
+      .where(
+        and(
+          eq(schema.flashSaleItem.id, itemId),
+          sql`${schema.flashSaleItem.sold} + ${quantity} <= ${schema.flashSaleItem.stock}`,
+        ),
+      )
+      .returning({ id: schema.flashSaleItem.id });
+    return rows.length > 0;
+  }
+
+  async decrementFlashSold(itemId: string, quantity: number): Promise<void> {
+    await this.db
+      .update(schema.flashSaleItem)
+      .set({ sold: sql`GREATEST(${schema.flashSaleItem.sold} - ${quantity}, 0)` })
+      .where(eq(schema.flashSaleItem.id, itemId));
+  }
+
   // —— points（ADR-093）——
 
   async getPointBalance(customerId: string): Promise<bigint> {
@@ -816,6 +969,35 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .orderBy(asc(schema.pointLedger.createdAt));
     return rows.map(toPointLedgerDTO);
   }
+}
+
+function toFlashSaleItemDTO(r: typeof schema.flashSaleItem.$inferSelect): FlashSaleItemDTO {
+  const remaining = r.stock - r.sold;
+  return {
+    id: r.id,
+    flash_sale_id: r.flashSaleId,
+    variant_id: r.variantId,
+    title: r.title,
+    original_price_minor: r.originalPriceMinor,
+    flash_price_minor: r.flashPriceMinor,
+    stock: r.stock,
+    sold: r.sold,
+    remaining: remaining > 0 ? remaining : 0,
+  };
+}
+
+function toFlashSaleDTO(
+  r: typeof schema.flashSale.$inferSelect,
+  items: FlashSaleItemDTO[],
+): FlashSaleDTO {
+  return {
+    id: r.id,
+    name: r.name,
+    status: (r.status as FlashSaleStatus) ?? "draft",
+    starts_at: r.startsAt.toISOString(),
+    ends_at: r.endsAt.toISOString(),
+    items,
+  };
 }
 
 function toPointLedgerDTO(r: typeof schema.pointLedger.$inferSelect): PointLedgerDTO {

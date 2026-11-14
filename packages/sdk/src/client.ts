@@ -160,6 +160,8 @@ export function createStoreClient(opts: ClientOptions) {
       put(`/api/v1/store/carts/${cartId}/voucher-codes`, b),
     /** 输礼品卡码/清码：覆盖式设置（只传卡码凭证，抵扣金额由后端算，铁律 13）。 */
     getPromotionFeatures: () => get("/api/v1/store/promotions/features"),
+    /** 进行中的秒杀活动（ADR-099）：只含还有剩余的活动。 */
+    listFlashSales: () => get("/api/v1/store/flash-sales"),
     /** 我的积分（ADR-093）：余额 + 最近流水。 */
     getStorePoints: () => get("/api/v1/store/points"),
     /** 可领取的店铺券（匿名可读；登录后带 collected 标记）。 */
@@ -441,6 +443,22 @@ export function createAdminClient(opts: ClientOptions) {
     shipExchange: (id: string, b: { carrier: string; tracking_number: string }) =>
       post(`/api/v1/admin/refund-requests/${id}/ship-exchange`, b),
     // —— 发票管理（ADR-098）——
+    // —— 限时秒杀（ADR-099）——
+    listFlashSales: (q?: Query) => get("/api/v1/admin/flash-sales", q),
+    createFlashSale: (b: {
+      name: string;
+      starts_at: string;
+      ends_at: string;
+      items: Array<{
+        variant_id: string;
+        title: string;
+        original_price_minor: number;
+        flash_price_minor: number;
+        stock: number;
+      }>;
+    }) => post("/api/v1/admin/flash-sales", b),
+    setFlashSaleStatus: (id: string, status: "active" | "ended") =>
+      post(`/api/v1/admin/flash-sales/${id}/status`, { status }),
     listInvoices: (q?: Query) => get("/api/v1/admin/invoices", q),
     issueInvoice: (id: string, b: { invoice_no: string; note?: string }) =>
       post(`/api/v1/admin/invoices/${id}/issue`, b),

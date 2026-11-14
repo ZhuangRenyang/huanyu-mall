@@ -143,6 +143,11 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
         code: d.code,
         amountMinor: d.amount_minor,
       })),
+      // 秒杀行（ADR-099）：下单成功后按它扣活动库存（卖完即止，售罄整单回滚）
+      flashItems: (cart.flash_items ?? []).map((f) => ({
+        flashSaleItemId: f.flash_sale_item_id,
+        quantity: f.quantity,
+      })),
       // 顾客留言：可见范围是「顾客自己 + 商家」，与商家内部备注（仅后台）相反。
       customerNote: body?.customer_note ?? null,
       items: cart.items.map((li) => ({
