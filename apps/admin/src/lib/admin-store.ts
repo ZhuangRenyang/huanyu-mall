@@ -250,6 +250,9 @@ export function requestRefund(
     createdAt: new Date().toISOString(),
     refundId: null,
     orderStatusBefore: before,
+    exchangeLabel: null,
+    exchangeCarrier: null,
+    exchangeTrackingNumber: null,
   };
   const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
   write(KEYS.refunds, [req, ...list]);
@@ -321,6 +324,37 @@ export function rejectRefund(id: string, note: string): void {
   updateOrder(req.orderId, (o) => {
     o.orderStatus = req.orderStatusBefore ?? 'paid';
   });
+}
+
+/** mock：同意换货（ADR-090），不动钱。 */
+export function agreeExchange(id: string, note?: string): void {
+  const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  const req = list.find((r) => r.id === id);
+  if (!req || req.status !== 'pending' || req.resolution !== 'exchange') return;
+  req.status = 'awaiting_return';
+  req.reviewNote = note?.trim() ? note.trim() : req.reviewNote;
+  write(KEYS.refunds, list);
+}
+
+/** mock：确认收到换货退回（ADR-090），不动钱。 */
+export function receiveExchange(id: string, note?: string): void {
+  const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  const req = list.find((r) => r.id === id);
+  if (!req || req.status !== 'returned') return;
+  req.status = 'exchange_sending';
+  if (note?.trim()) req.reviewNote = note.trim();
+  write(KEYS.refunds, list);
+}
+
+/** mock：发出换货（ADR-090）。 */
+export function shipExchange(id: string, carrier: string, trackingNumber: string): void {
+  const list = read<AdminRefundRequest[]>(KEYS.refunds, []);
+  const req = list.find((r) => r.id === id);
+  if (!req || req.status !== 'exchange_sending') return;
+  req.status = 'completed';
+  req.exchangeCarrier = carrier.trim();
+  req.exchangeTrackingNumber = trackingNumber.trim();
+  write(KEYS.refunds, list);
 }
 
 /** mock：退款单列表（按状态过滤，倒序）。 */

@@ -103,11 +103,13 @@ export interface AdminRefundRequest {
     | 'pending'
     | 'awaiting_return'
     | 'returned'
+    | 'exchange_sending'
+    | 'completed'
     | 'approved'
     | 'rejected'
     | 'canceled';
-  /** 售后类型：仅退款 / 退货退款（ADR-051）。 */
-  resolution: 'refund_only' | 'return_refund';
+  /** 售后类型：仅退款 / 退货退款 / 换货（ADR-051 / ADR-090）。 */
+  resolution: 'refund_only' | 'return_refund' | 'exchange';
   /** 同意退货时快照的地址（ADR-061）；null = 当时店铺没配。 */
   returnAddress: string | null;
   /** 买家退货物流（退货退款才有）。 */
@@ -119,6 +121,10 @@ export interface AdminRefundRequest {
   refundId: string | null;
   /** 申请时的订单状态：拒绝/撤销后恢复用。 */
   orderStatusBefore: string | null;
+  /** 换货（ADR-090）：目标快照与换出物流。 */
+  exchangeLabel: string | null;
+  exchangeCarrier: string | null;
+  exchangeTrackingNumber: string | null;
 }
 
 /** 订单操作日志条目（来自审计流水）。 */

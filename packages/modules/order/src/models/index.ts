@@ -134,11 +134,21 @@ export const refundRequest = pgTable(
     resolution: text("resolution").notNull().default("refund_only"),
     /** 同意退货时快照的退货地址（ADR-061）；null = 当时未配置。 */
     returnAddress: text("return_address"),
-    /** 买家退货物流（退货退款才有）。 */
+    /** 买家退货物流（退货退款 / 换货寄回）。 */
     returnCarrier: text("return_carrier"),
     returnTrackingNumber: text("return_tracking_number"),
     returnShippedAt: timestamp("return_shipped_at", { withTimezone: true }),
     returnReceivedAt: timestamp("return_received_at", { withTimezone: true }),
+    /** 换货目标规格 id（ADR-090）。 */
+    exchangeVariantId: text("exchange_variant_id"),
+    /** 换货数量（ADR-090）。 */
+    exchangeQuantity: integer("exchange_quantity"),
+    /** 换货目标快照文案（商品名/规格，ADR-090）。 */
+    exchangeLabel: text("exchange_label"),
+    /** 商家换出物流（ADR-090）。 */
+    exchangeCarrier: text("exchange_carrier"),
+    exchangeTrackingNumber: text("exchange_tracking_number"),
+    exchangeShippedAt: timestamp("exchange_shipped_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

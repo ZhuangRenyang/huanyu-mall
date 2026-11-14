@@ -14,10 +14,13 @@ import {
 } from '@mall/ui';
 import { TextAreaField } from '../components/field';
 import {
+  agreeExchange,
   approveRefundRequest,
   listRefundRequests,
+  receiveExchange,
   receiveReturn,
   rejectRefundRequest,
+  shipExchange,
   type RefundCounts,
   type RefundRequestView,
   type RefundStatus,
@@ -47,6 +50,7 @@ const STATUS_TABS: { value: RefundStatus | 'all'; label: string }[] = [
   { value: 'pending', label: '待处理' },
   { value: 'awaiting_return', label: '待买家退货' },
   { value: 'returned', label: '待收货' },
+  { value: 'exchange_sending', label: '待发换货' },
   { value: 'approved', label: '已同意' },
   { value: 'rejected', label: '已拒绝' },
   { value: 'all', label: '全部' },
@@ -59,6 +63,8 @@ const STATUS_META: Record<
   pending: { label: '待处理', tone: 'warning' },
   awaiting_return: { label: '待买家退货', tone: 'info' },
   returned: { label: '待收货', tone: 'warning' },
+  exchange_sending: { label: '待发换货', tone: 'info' },
+  completed: { label: '换货完成', tone: 'success' },
   approved: { label: '已同意', tone: 'success' },
   rejected: { label: '已拒绝', tone: 'neutral' },
   canceled: { label: '已撤销', tone: 'neutral' },
@@ -71,6 +77,8 @@ export function RefundsPage() {
     pending: 0,
     awaiting_return: 0,
     returned: 0,
+    exchange_sending: 0,
+    completed: 0,
     approved: 0,
     rejected: 0,
     canceled: 0,
@@ -85,6 +93,10 @@ export function RefundsPage() {
   const [approving, setApproving] = useState<RefundRequestView | null>(null);
   /** 确认收货并退款：退货退款的打款关卡，单独一个确认框。 */
   const [receiving, setReceiving] = useState<RefundRequestView | null>(null);
+  /** 换货：同意换货 / 确认收货 / 发出换货（ADR-090）。 */
+  const [exchanging, setExchanging] = useState<RefundRequestView | null>(null);
+  const [exchangeCarrier, setExchangeCarrier] = useState('');
+  const [exchangeTracking, setExchangeTracking] = useState('');
   const [rejectNote, setRejectNote] = useState('');
   /**
    * 店铺当前配置的退货地址（ADR-061）。
@@ -179,6 +191,63 @@ export function RefundsPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '退款失败');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** 同意换货（ADR-090）：先预留换出商品，不动钱。 */
+  const agreeExchangeFlow = async () => {
+    if (!exchanging) return;
+    setBusyId(exchanging.id);
+    setError(null);
+    try {
+      await agreeExchange(exchanging.id);
+      setExchanging(null);
+      setFlash('已同意换货，等待买家寄回');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '操作失败');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** 确认收到换货退回（ADR-090）：不动钱。 */
+  const receiveExchangeFlow = async () => {
+    if (!exchanging) return;
+    setBusyId(exchanging.id);
+    setError(null);
+    try {
+      await receiveExchange(exchanging.id);
+      setExchanging(null);
+      setFlash('已确认收到退回，进入待发换货');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '操作失败');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** 发出换货（ADR-090）：落换出物流并完结，不动钱。 */
+  const shipExchangeFlow = async () => {
+    if (!exchanging) return;
+    if (exchangeCarrier.trim() === '' || exchangeTracking.trim() === '') {
+      setError('请填写换出物流公司与单号');
+      return;
+    }
+    setBusyId(exchanging.id);
+    setError(null);
+    try {
+      await shipExchange(exchanging.id, exchangeCarrier.trim(), exchangeTracking.trim());
+      setExchanging(null);
+      setExchangeCarrier('');
+      setExchangeTracking('');
+      setFlash('换货已发出，售后完结');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '操作失败');
     } finally {
       setBusyId(null);
     }
@@ -286,12 +355,16 @@ export function RefundsPage() {
                         {' · '}
                         <span
                           className={
-                            item.resolution === 'return_refund'
+                            item.resolution !== 'refund_only'
                               ? 'font-medium text-foreground'
                               : undefined
                           }
                         >
-                          {item.resolution === 'return_refund' ? '退货退款' : '仅退款'}
+                          {item.resolution === 'return_refund'
+                            ? '退货退款'
+                            : item.resolution === 'exchange'
+                              ? '换货'
+                              : '仅退款'}
                         </span>
                       </span>
                       {/* 退货单号是商家收货时的对账依据，直接显示在行里 */}
@@ -304,6 +377,16 @@ export function RefundsPage() {
                         同意退货时给出的地址（ADR-061）。收货时要对「这包是不是寄给这单的」，
                         所以只取首行（收件人/地址），完整内容放 title。
                       */}
+                      {item.exchangeLabel && (
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          换出：{item.exchangeLabel}
+                        </span>
+                      )}
+                      {item.exchangeTrackingNumber && (
+                        <span className="mt-0.5 block font-mono text-xs text-muted-foreground">
+                          换出物流：{item.exchangeCarrier} {item.exchangeTrackingNumber}
+                        </span>
+                      )}
                       {item.returnAddress && (
                         <span
                           className="mt-0.5 block text-xs text-muted-foreground"
@@ -340,15 +423,26 @@ export function RefundsPage() {
                     <td className="px-4 py-3 align-top">
                       {item.status === 'pending' ? (
                         <div className="flex justify-end gap-1">
-                          <Button
-                            size="sm"
-                            disabled={busyId === item.id}
-                            onClick={() => setApproving(item)}
-                          >
-                            <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            {/* 退货退款这一步只是同意退货，不打款，按钮文案必须说实话 */}
-                            {item.resolution === 'return_refund' ? '同意退货' : '同意退款'}
-                          </Button>
+                          {item.resolution === 'exchange' ? (
+                            <Button
+                              size="sm"
+                              disabled={busyId === item.id}
+                              onClick={() => setExchanging(item)}
+                            >
+                              <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              同意换货
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              disabled={busyId === item.id}
+                              onClick={() => setApproving(item)}
+                            >
+                              <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                              {/* 退货退款这一步只是同意退货，不打款，按钮文案必须说实话 */}
+                              {item.resolution === 'return_refund' ? '同意退货' : '同意退款'}
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="ghost"
@@ -364,9 +458,21 @@ export function RefundsPage() {
                         </div>
                       ) : item.status === 'returned' ? (
                         <div className="flex justify-end">
-                          <Button size="sm" disabled={busyId === item.id} onClick={() => setReceiving(item)}>
+                          <Button
+                            size="sm"
+                            disabled={busyId === item.id}
+                            onClick={() =>
+                              item.resolution === 'exchange' ? setExchanging(item) : setReceiving(item)
+                            }
+                          >
                             <Check className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                            确认收货并退款
+                            {item.resolution === 'exchange' ? '确认收货（换货）' : '确认收货并退款'}
+                          </Button>
+                        </div>
+                      ) : item.status === 'exchange_sending' ? (
+                        <div className="flex justify-end">
+                          <Button size="sm" disabled={busyId === item.id} onClick={() => setExchanging(item)}>
+                            发出换货
                           </Button>
                         </div>
                       ) : (
@@ -377,7 +483,9 @@ export function RefundsPage() {
                               : '已同意（无资金流水，请核对）'
                             : item.status === 'awaiting_return'
                               ? '等买家寄回'
-                              : '已处理'}
+                              : item.status === 'completed'
+                                ? '换货已发出'
+                                : '已处理'}
                         </span>
                       )}
                     </td>
@@ -506,6 +614,86 @@ export function RefundsPage() {
             </Button>
             <Button disabled={busyId === receiving?.id} onClick={() => void receive()}>
               {busyId === receiving?.id ? '退款中…' : '确认已收到货并退款'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 换货（ADR-090）：一个对话框按单据状态分三段，全程不动钱 */}
+      <Dialog open={exchanging !== null} onOpenChange={(open) => !open && setExchanging(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {exchanging?.status === 'pending'
+                ? '同意换货'
+                : exchanging?.status === 'returned'
+                  ? '确认收到换货退回'
+                  : '发出换货'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              订单 <span className="font-mono text-foreground">{exchanging?.orderId}</span>
+              {exchanging?.exchangeLabel ? ` · 换出：${exchanging.exchangeLabel}` : ''}
+            </p>
+            {exchanging?.status === 'pending' ? (
+              <p className="text-sm text-foreground">
+                <strong className="font-medium">换货不退钱</strong>
+                。同意后会先为你预留换出商品，买家寄回并填写单号后，你再确认收货、发出换货。
+              </p>
+            ) : exchanging?.status === 'returned' ? (
+              <p className="text-sm text-foreground">
+                确认已收到买家寄回的货后，单据进入「待发换货」。
+                <strong className="font-medium">这一步不打款</strong>。
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-foreground">
+                  填写换出物流，发出后售后即完结。
+                  <strong className="font-medium">这一步不打款</strong>。
+                </p>
+                <label className="block text-xs font-medium text-muted-foreground">
+                  物流公司
+                  <input
+                    value={exchangeCarrier}
+                    onChange={(e) => setExchangeCarrier(e.target.value)}
+                    placeholder="如：中通"
+                    className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm text-foreground"
+                  />
+                </label>
+                <label className="block text-xs font-medium text-muted-foreground">
+                  物流单号
+                  <input
+                    value={exchangeTracking}
+                    onChange={(e) => setExchangeTracking(e.target.value)}
+                    placeholder="换出物流单号"
+                    className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm text-foreground"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setExchanging(null)}>
+              取消
+            </Button>
+            <Button
+              disabled={busyId === exchanging?.id}
+              onClick={() =>
+                exchanging?.status === 'pending'
+                  ? void agreeExchangeFlow()
+                  : exchanging?.status === 'returned'
+                    ? void receiveExchangeFlow()
+                    : void shipExchangeFlow()
+              }
+            >
+              {busyId === exchanging?.id
+                ? '处理中…'
+                : exchanging?.status === 'pending'
+                  ? '确认同意换货'
+                  : exchanging?.status === 'returned'
+                    ? '确认收到退回'
+                    : '确认发出换货'}
             </Button>
           </DialogFooter>
         </DialogContent>

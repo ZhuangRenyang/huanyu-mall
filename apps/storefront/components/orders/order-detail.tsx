@@ -35,6 +35,7 @@ function RefundPanel({
   currencyCode,
   returnAddress,
   autoOpen = false,
+  exchangeVariantId,
 }: {
   orderId: string;
   status: OrderView['status'];
@@ -44,6 +45,8 @@ function RefundPanel({
   returnAddress?: string | null;
   /** 从订单列表点「申请售后」进来时，直接展开退款表单（ADR-065）。 */
   autoOpen?: boolean;
+  /** 换货目标规格（ADR-090）：先只支持换同规格，取订单第一个行项的变体。 */
+  exchangeVariantId?: string;
 }) {
   const refundable = status === 'to_ship' || status === 'to_receive' || status === 'completed';
   const [refunds, setRefunds] = useState<StoreRefundView[]>([]);
@@ -226,7 +229,12 @@ function RefundPanel({
                 [
                   { value: 'refund_only' as const, label: '仅退款', hint: '货不用寄回' },
                   ...(canReturn
-                    ? [{ value: 'return_refund' as const, label: '退货退款', hint: '需寄回商品' }]
+                    ? [
+                        { value: 'return_refund' as const, label: '退货退款', hint: '需寄回商品' },
+                        ...(exchangeVariantId
+                          ? [{ value: 'exchange' as const, label: '换货', hint: '换一件同款同规格' }]
+                          : []),
+                      ]
                     : []),
                 ]
               ).map((opt) => (
@@ -266,7 +274,9 @@ function RefundPanel({
           <p className="text-xs text-muted-foreground">
             {resolution === 'return_refund'
               ? `将全额退回 ${formatMoney(amountMinor, currencyCode)}：商家同意后请把商品寄回，确认收到货后原路退款。`
-              : `将全额退回 ${formatMoney(amountMinor, currencyCode)}，商家同意后原路退回。`}
+              : resolution === 'exchange'
+                ? '换货不退钱：商家同意后请把商品寄回，会重新发一件同款同规格给你。'
+                : `将全额退回 ${formatMoney(amountMinor, currencyCode)}，商家同意后原路退回。`}
           </p>
           {error && (
             <p className="text-xs text-destructive" role="alert">
@@ -280,7 +290,7 @@ function RefundPanel({
               onClick={() => {
                 setBusy(true);
                 setError(null);
-                void requestOrderRefund(orderId, reason.trim(), resolution)
+                void requestOrderRefund(orderId, reason.trim(), resolution, exchangeVariantId)
                   .then(() => {
                     setOpen(false);
                     setDone(true);
@@ -563,6 +573,7 @@ export function OrderDetail({
           currencyCode={order.currencyCode}
           returnAddress={returnAddress}
           autoOpen={autoOpenRefund}
+          exchangeVariantId={order.items[0]?.variantId}
         />
       </div>
 

@@ -47,6 +47,11 @@ export function refundResolutionMismatch(reason: string): DomainError {
   return new DomainError({ code: 30002, message: `售后类型不匹配：${reason}` });
 }
 
+/** 换货缺少目标规格（ADR-090）。 */
+export function exchangeTargetRequired(reason: string): DomainError {
+  return new DomainError({ code: 20001, message: reason });
+}
+
 /** 退货物流信息不完整（公司或单号为空）。 */
 export function returnShipmentInvalid(reason: string): DomainError {
   return new DomainError({ code: 20001, message: reason });

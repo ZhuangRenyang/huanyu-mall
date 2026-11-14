@@ -13,6 +13,9 @@ import {
   listRefunds as mockListRefunds,
   receiveReturn as mockReceiveReturn,
   rejectRefund as mockRejectRefund,
+  agreeExchange as mockAgreeExchange,
+  receiveExchange as mockReceiveExchange,
+  shipExchange as mockShipExchange,
 } from './admin-store';
 import type { AdminRefundRequest } from './admin-data';
 
@@ -22,6 +25,8 @@ export type RefundStatus =
   | 'awaiting_return'
   /** 买家已寄回，等商家确认收货（此时才允许打款）。 */
   | 'returned'
+  | 'exchange_sending'
+  | 'completed'
   | 'approved'
   | 'rejected'
   | 'canceled';
@@ -33,6 +38,8 @@ export interface RefundCounts {
   pending: number;
   awaiting_return: number;
   returned: number;
+  exchange_sending: number;
+  completed: number;
   approved: number;
   rejected: number;
   canceled: number;
@@ -53,6 +60,8 @@ const EMPTY: RefundListResult = {
     pending: 0,
     awaiting_return: 0,
     returned: 0,
+    exchange_sending: 0,
+    completed: 0,
     approved: 0,
     rejected: 0,
     canceled: 0,
@@ -70,7 +79,12 @@ function mapRefund(r: Record<string, unknown>): RefundRequestView {
     reason: String(r.reason ?? ''),
     source: r.source === 'merchant' ? 'merchant' : 'customer',
     status: (r.status as RefundStatus) ?? 'pending',
-    resolution: r.resolution === 'return_refund' ? 'return_refund' : 'refund_only',
+    resolution:
+      r.resolution === 'return_refund'
+        ? 'return_refund'
+        : r.resolution === 'exchange'
+          ? 'exchange'
+          : 'refund_only',
     returnAddress: (r.return_address as string | null) ?? null,
     returnCarrier: (r.return_carrier as string | null) ?? null,
     returnTrackingNumber: (r.return_tracking_number as string | null) ?? null,
@@ -78,6 +92,9 @@ function mapRefund(r: Record<string, unknown>): RefundRequestView {
     createdAt: String(r.created_at ?? ''),
     refundId: (r.refund_id as string | null) ?? null,
     orderStatusBefore: (r.order_status_before as string | null) ?? null,
+    exchangeLabel: (r.exchange_label as string | null) ?? null,
+    exchangeCarrier: (r.exchange_carrier as string | null) ?? null,
+    exchangeTrackingNumber: (r.exchange_tracking_number as string | null) ?? null,
   };
 }
 
@@ -98,6 +115,8 @@ export async function listRefundRequests(q: {
         pending: count('pending'),
         awaiting_return: count('awaiting_return'),
         returned: count('returned'),
+        exchange_sending: count('exchange_sending'),
+        completed: count('completed'),
         approved: count('approved'),
         rejected: count('rejected'),
         canceled: count('canceled'),
@@ -150,4 +169,31 @@ export async function rejectRefundRequest(id: string, note: string): Promise<voi
     return;
   }
   await adminClient().rejectRefundRequest(id, { note });
+}
+
+/** 换货（ADR-090）：同意换货，先预留换出商品，不动钱。 */
+export async function agreeExchange(id: string, note?: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    mockAgreeExchange(id, note);
+    return;
+  }
+  await adminClient().agreeExchange(id, note ? { note } : {});
+}
+
+/** 换货（ADR-090）：确认收到退回，不动钱。 */
+export async function receiveExchange(id: string, note?: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    mockReceiveExchange(id, note);
+    return;
+  }
+  await adminClient().receiveExchange(id, note ? { note } : {});
+}
+
+/** 换货（ADR-090）：发出换出商品，落物流并完结。 */
+export async function shipExchange(id: string, carrier: string, trackingNumber: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    mockShipExchange(id, carrier, trackingNumber);
+    return;
+  }
+  await adminClient().shipExchange(id, { carrier, tracking_number: trackingNumber });
 }

@@ -4,6 +4,7 @@ import { refundOrderWorkflow } from "@mall/workflows";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { auditEntry } from "../audit-context.js";
+import { approveExchange, releaseExchangeReservation, shipExchange } from "../../lib/exchange.js";
 
 /**
  * 退款管理（对齐淘宝「交易 → 退款管理」）。
@@ -17,7 +18,7 @@ import { auditEntry } from "../audit-context.js";
  */
 const listQuery = z.object({
   status: z
-    .enum(["pending", "awaiting_return", "returned", "approved", "rejected", "canceled"])
+    .enum(["pending", "awaiting_return", "returned", "exchange_sending", "completed", "approved", "rejected", "canceled"])
     .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).max(10000).default(0),
@@ -92,6 +93,8 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
         pending: res.counts.pending ?? 0,
         awaiting_return: res.counts.awaiting_return ?? 0,
         returned: res.counts.returned ?? 0,
+        exchange_sending: res.counts.exchange_sending ?? 0,
+        completed: res.counts.completed ?? 0,
         approved: res.counts.approved ?? 0,
         rejected: res.counts.rejected ?? 0,
         canceled: res.counts.canceled ?? 0,
@@ -175,6 +178,16 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
         return;
       }
 
+      // 换货全程不动钱：不能让它掉进下面的打款 workflow（ADR-090）
+      if (request.resolution === "exchange") {
+        return reply.code(409).send({
+          code: 30002,
+          data: null,
+          message: "换货申请请走「同意换货」，不打款",
+          requestId: req.id,
+        });
+      }
+
       const { result } = await deps.workflow.run(
         refundOrderWorkflow,
         {
@@ -239,6 +252,15 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
           requestId: req.id,
         });
       }
+      // 换货不走打款：这条是退货退款的打款关卡（ADR-090）
+      if (request.resolution !== "return_refund") {
+        return reply.code(409).send({
+          code: 30002,
+          data: null,
+          message: "该申请不是退货退款，请走对应流程",
+          requestId: req.id,
+        });
+      }
 
       const { result } = await deps.workflow.run(
         refundOrderWorkflow,
@@ -285,6 +307,10 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
       const body = req.body as z.infer<typeof rejectBody>;
       const before = await deps.services.order.findRefundRequest(id);
       const after = await deps.services.order.rejectRefundRequest(id, body.note);
+      // 换货被拒：把为换出商品预留的库存还回去（ADR-090）
+      if (before && before.resolution === "exchange") {
+        await releaseExchangeReservation(deps, id);
+      }
       if (before) {
         await notifyRefundUpdate(deps, req, {
           request: before,
@@ -298,6 +324,162 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
           entityType: "refund_request",
           entityId: id,
           before,
+          after,
+        }),
+      );
+      reply.ok(after);
+    },
+  );
+
+  /** 换出物流：公司 + 单号都必填。 */
+  const exchangeShipBody = z.object({
+    carrier: z.string().min(1).max(60),
+    tracking_number: z.string().min(4).max(60),
+  });
+
+  /**
+   * 同意换货（ADR-090）：先预留换出商品，再推进单据，**不打款**。
+   *
+   * 换货全程没有资金动作：预留失败（换出商品已售罄）直接报错，
+   * 商家不会落进「同意了、却无货可发」的坑。
+   */
+  app.post(
+    "/api/v1/admin/refund-requests/:id/agree-exchange",
+    { preHandler: guard, schema: { body: approveBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = req.body as z.infer<typeof approveBody>;
+      const request = await deps.services.order.findRefundRequest(id);
+      if (!request) {
+        return reply.code(404).send({
+          code: 30001,
+          data: null,
+          message: `退款申请不存在：${id}`,
+          requestId: req.id,
+        });
+      }
+      if (request.status !== "pending") {
+        return reply.code(409).send({
+          code: 30002,
+          data: null,
+          message: `该退款申请已处理（当前状态：${request.status}）`,
+          requestId: req.id,
+        });
+      }
+      if (request.resolution !== "exchange") {
+        return reply.code(409).send({
+          code: 30002,
+          data: null,
+          message: "该申请不是换货",
+          requestId: req.id,
+        });
+      }
+
+      await approveExchange(deps, request);
+      const after = await deps.services.order.findRefundRequest(id);
+      const theme = await deps.services.theme.getSettings();
+      await notifyRefundUpdate(deps, req, {
+        request,
+        status: "return_agreed",
+        note: body.note ?? null,
+        returnAddress: theme.return_address,
+      });
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "refund.agree_exchange",
+          entityType: "refund_request",
+          entityId: id,
+          before: request,
+          after,
+        }),
+      );
+      reply.ok(after);
+    },
+  );
+
+  /**
+   * 确认收到换货退回（ADR-090）：returned → exchange_sending，**不打款**。
+   *
+   * 这是换货与退货退款的分叉点：退货退款在这里打款，换货在这里什么都不做，
+   * 只把单据推进到「待发出换货」。
+   */
+  app.post(
+    "/api/v1/admin/refund-requests/:id/receive-exchange",
+    { preHandler: guard, schema: { body: approveBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = req.body as z.infer<typeof approveBody>;
+      const request = await deps.services.order.findRefundRequest(id);
+      if (!request) {
+        return reply.code(404).send({
+          code: 30001,
+          data: null,
+          message: `退款申请不存在：${id}`,
+          requestId: req.id,
+        });
+      }
+      if (request.status !== "returned") {
+        return reply.code(409).send({
+          code: 30002,
+          data: null,
+          message: `当前状态（${request.status}）不能确认收货，需要买家先寄回`,
+          requestId: req.id,
+        });
+      }
+      const after = await deps.services.order.confirmExchangeReturn(id, body.note ?? null);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "refund.receive_exchange",
+          entityType: "refund_request",
+          entityId: id,
+          before: request,
+          after,
+        }),
+      );
+      reply.ok(after);
+    },
+  );
+
+  /**
+   * 发出换货（ADR-090）：落换出物流 + 完结，并 commit 预留库存。
+   *
+   * 顺序先落单据、后 commit：单据先到终态，最坏情况是「货没扣掉」可重试；
+   * 反过来先扣货、单据没落成，会出现「库存少了、系统还说在等发货」。
+   */
+  app.post(
+    "/api/v1/admin/refund-requests/:id/ship-exchange",
+    { preHandler: guard, schema: { body: exchangeShipBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = req.body as z.infer<typeof exchangeShipBody>;
+      const request = await deps.services.order.findRefundRequest(id);
+      if (!request) {
+        return reply.code(404).send({
+          code: 30001,
+          data: null,
+          message: `退款申请不存在：${id}`,
+          requestId: req.id,
+        });
+      }
+      if (request.status !== "exchange_sending") {
+        return reply.code(409).send({
+          code: 30002,
+          data: null,
+          message: `当前状态（${request.status}）不能发出换货`,
+          requestId: req.id,
+        });
+      }
+      await shipExchange(deps, request, {
+        carrier: body.carrier,
+        trackingNumber: body.tracking_number,
+      });
+      const after = await deps.services.order.findRefundRequest(id);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "refund.ship_exchange",
+          entityType: "refund_request",
+          entityId: id,
+          before: request,
           after,
         }),
       );

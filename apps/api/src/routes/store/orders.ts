@@ -14,7 +14,11 @@ const refundRequestBody = z.object({
    * 售后类型（ADR-051）：仅退款 / 退货退款。
    * 缺省 refund_only —— 老客户端不带这个字段时保持原行为，不会突然进「等寄回」。
    */
-  resolution: z.enum(["refund_only", "return_refund"]).default("refund_only"),
+  resolution: z.enum(["refund_only", "return_refund", "exchange"]).default("refund_only"),
+  /** 换货目标规格（ADR-090）：resolution=exchange 时必填。 */
+  exchange_variant_id: z.string().max(40).optional(),
+  /** 换货数量（ADR-090）：默认 1。 */
+  exchange_quantity: z.number().int().min(1).max(999).optional(),
 });
 
 /** 退货物流：公司 + 单号都必填（没有单号，「已寄出」无从对账）。 */
@@ -226,12 +230,39 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
       const order = await deps.services.order.retrieveOrder(id);
       assertOrderAccess(order, req.auth);
 
+      /*
+       * 换货（ADR-090）：目标规格必须是**同一商品**的另一个规格，且要能查到。
+       * 跨商品换货、或给一个不存在的规格，商家同意后都不知道发什么。
+       * 标签在此快照进单据：规格后来下架/删除，这张单仍可读。
+       */
+      let exchangeVariantId: string | undefined;
+      let exchangeQuantity: number | undefined;
+      let exchangeLabel: string | null = null;
+      if (body.resolution === "exchange") {
+        if (!body.exchange_variant_id) {
+          throw errors.validation("换货必须指定目标规格");
+        }
+        const variants = await deps.services.product.listVariantsByIds([body.exchange_variant_id]);
+        const variant = variants[0];
+        if (!variant) throw errors.validation("换货目标规格不存在");
+        const orderProductIds = new Set((order.items ?? []).map((li) => li.product_id));
+        if (!orderProductIds.has(variant.product_id)) {
+          throw errors.validation("换货只能换成同一商品的其它规格");
+        }
+        exchangeVariantId = variant.id;
+        exchangeQuantity = body.exchange_quantity ?? 1;
+        exchangeLabel = variant.title || variant.sku;
+      }
+
       const request = await deps.services.order.createRefundRequest(id, {
         amountMinor: order.total_minor,
         reason: body.reason,
         source: "customer",
         customerId: order.customer_id,
         resolution: body.resolution,
+        exchangeVariantId,
+        exchangeQuantity,
+        exchangeLabel,
       });
       reply.code(201).ok(request);
     },

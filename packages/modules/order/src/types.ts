@@ -152,7 +152,11 @@ export type RefundRequestStatus =
   /** 商家已同意退货，等买家寄回（**不动钱**）。 */
   | "awaiting_return"
   /** 买家已寄回，等商家确认收货（此时才允许打款）。 */
-  | "returned";
+  | "returned"
+  /** 换货：商家已收到退回的货，待发出换出商品（ADR-090，不动钱）。 */
+  | "exchange_sending"
+  /** 换货：换出商品已发出，售后完结（ADR-090）。 */
+  | "completed";
 export type RefundRequestSource = "customer" | "merchant";
 
 /**
@@ -164,7 +168,7 @@ export type RefundRequestSource = "customer" | "merchant";
  *
  * 两者混用就是资金风险：把已发货的订单按「仅退款」处理，等于钱退货不还。
  */
-export type RefundResolution = "refund_only" | "return_refund";
+export type RefundResolution = "refund_only" | "return_refund" | "exchange";
 
 /** 退款申请单（售后单据）。真正打款记录在 payment.refund，这里只记业务处理。 */
 /** 订单列表上的「售后进度」角标（ADR-073）：只看还在走流程的三档。 */
@@ -172,7 +176,7 @@ export interface ActiveRefundDTO {
   /** 售后单 id。 */
   id: string;
   /** pending = 待商家审核；awaiting_return = 等买家寄回；returned = 已寄回待收货。 */
-  status: "pending" | "awaiting_return" | "returned";
+  status: "pending" | "awaiting_return" | "returned" | "exchange_sending";
   resolution: RefundResolution;
 }
 
@@ -197,6 +201,16 @@ export interface RefundRequestDTO {
   /** 买家退货物流（退货退款才有）。 */
   return_carrier: string | null;
   return_tracking_number: string | null;
+  /** 换货目标规格 id（ADR-090）。 */
+  exchange_variant_id: string | null;
+  /** 换货数量（ADR-090）。 */
+  exchange_quantity: number;
+  /** 换货目标快照文案（ADR-090）。 */
+  exchange_label: string | null;
+  /** 商家换出物流（ADR-090）。 */
+  exchange_carrier: string | null;
+  exchange_tracking_number: string | null;
+  exchange_shipped_at: string | null;
   /** 买家提交退货物流的时间。 */
   return_shipped_at: string | null;
   /** 商家确认收到退货的时间。 */
@@ -272,6 +286,9 @@ export interface OrderRepository {
     source: RefundRequestSource;
     orderStatusBefore: OrderStatus;
     resolution: RefundResolution;
+    exchangeVariantId?: string | null;
+    exchangeQuantity?: number;
+    exchangeLabel?: string | null;
   }): Promise<RefundRequestDTO>;
   findRefundRequest(id: string): Promise<RefundRequestDTO | null>;
   /**
@@ -308,6 +325,11 @@ export interface OrderRepository {
    * —— 那是商家处理时间，买家寄件不算商家处理。
    */
   setReturnShipment(
+    id: string,
+    input: { carrier: string; trackingNumber: string; shippedAt: Date },
+  ): Promise<RefundRequestDTO | null>;
+  /** 换货发出（ADR-090）：写换出物流并把单据推进到 completed。 */
+  setExchangeShipment(
     id: string,
     input: { carrier: string; trackingNumber: string; shippedAt: Date },
   ): Promise<RefundRequestDTO | null>;
@@ -429,6 +451,10 @@ export interface IOrderModuleService {
       customerId?: string | null;
       /** 售后类型，缺省「仅退款」（老客户端不带这个字段）。 */
       resolution?: RefundResolution;
+      /** 换货目标（ADR-090）：resolution=exchange 时必填。 */
+      exchangeVariantId?: string;
+      exchangeQuantity?: number;
+      exchangeLabel?: string | null;
     },
   ): Promise<RefundRequestDTO>;
   /** 后台退款列表（按状态筛选，分页），附各状态计数供页签角标使用。 */
@@ -474,6 +500,15 @@ export interface IOrderModuleService {
     refundId: string,
     reviewNote?: string | null,
   ): Promise<RefundRequestDTO>;
+  /** 同意换货（ADR-090）：只推进单据，不动钱。 */
+  agreeExchangeRequest(
+    id: string,
+    opts?: { reviewNote?: string | null; returnAddress?: string | null },
+  ): Promise<RefundRequestDTO>;
+  /** 商家确认收到换货退回（ADR-090）：returned → exchange_sending，不动钱。 */
+  confirmExchangeReturn(id: string, reviewNote?: string | null): Promise<RefundRequestDTO>;
+  /** 商家发出换出商品（ADR-090）：exchange_sending → completed，不动钱。 */
+  shipExchange(id: string, input: { carrier: string; trackingNumber: string }): Promise<RefundRequestDTO>;
   /** 拒绝退款：理由必填。只有 pending 可拒（已同意退货的不在此列）。 */
   rejectRefundRequest(id: string, reviewNote: string): Promise<RefundRequestDTO>;
   /** 买家撤销（pending / awaiting_return 可撤）。 */

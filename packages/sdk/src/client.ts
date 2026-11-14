@@ -273,8 +273,15 @@ export function createStoreClient(opts: ClientOptions) {
      * 顾客申请退款：只传原因与售后类型，金额由服务端按订单实付取。
      * resolution 缺省 refund_only（仅退款）；return_refund 需订单已发货。
      */
-    requestOrderRefund: (id: string, b: { reason: string; resolution?: "refund_only" | "return_refund" }) =>
-      post(`/api/v1/store/orders/${id}/refund-requests`, b),
+    requestOrderRefund: (
+      id: string,
+      b: {
+        reason: string;
+        resolution?: "refund_only" | "return_refund" | "exchange";
+        exchange_variant_id?: string;
+        exchange_quantity?: number;
+      },
+    ) => post(`/api/v1/store/orders/${id}/refund-requests`, b),
     listOrderRefunds: (id: string) => get(`/api/v1/store/orders/${id}/refund-requests`),
     /** 买家提交退货物流（商家同意退货后，ADR-051）。 */
     submitReturnShipment: (refundId: string, b: { carrier: string; tracking_number: string }) =>
@@ -405,6 +412,13 @@ export function createAdminClient(opts: ClientOptions) {
     /** 确认收到退货并退款（退货退款的打款关卡，ADR-051）。 */
     receiveReturn: (id: string, b: { note?: string }) =>
       post(`/api/v1/admin/refund-requests/${id}/receive-return`, b),
+    /** 换货（ADR-090）：同意/确认收货/发出，全程不打款。 */
+    agreeExchange: (id: string, b: { note?: string }) =>
+      post(`/api/v1/admin/refund-requests/${id}/agree-exchange`, b),
+    receiveExchange: (id: string, b: { note?: string }) =>
+      post(`/api/v1/admin/refund-requests/${id}/receive-exchange`, b),
+    shipExchange: (id: string, b: { carrier: string; tracking_number: string }) =>
+      post(`/api/v1/admin/refund-requests/${id}/ship-exchange`, b),
     /** 该订单的操作日志（审计流水，orders 权限即可查）。 */
     listOrderLogs: (id: string) => get(`/api/v1/admin/orders/${id}/logs`),
     cancelOrder: (id: string) => post(`/api/v1/admin/orders/${id}/cancel`),

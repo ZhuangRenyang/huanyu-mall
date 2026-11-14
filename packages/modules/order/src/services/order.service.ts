@@ -1,5 +1,6 @@
 import { prefixedUlid } from "@mall/core";
 import {
+  exchangeTargetRequired,
   orderNotFound,
   partialRefundNotSupported,
   refundAlreadyPending,
@@ -234,6 +235,9 @@ export class OrderService implements IOrderModuleService {
       source: RefundRequestSource;
       customerId?: string | null;
       resolution?: RefundResolution;
+      exchangeVariantId?: string;
+      exchangeQuantity?: number;
+      exchangeLabel?: string | null;
     },
   ): Promise<RefundRequestDTO> {
     const order = await this.repo.findById(orderId);
@@ -251,6 +255,21 @@ export class OrderService implements IOrderModuleService {
         `订单当前状态（${order.status}）尚未发货，只能申请仅退款`,
       );
     }
+    /*
+     * 换货（ADR-090）：同样要求已发货 —— 买家手里得有货才能寄回。
+     * 且必须给出目标规格：换货的本质是「换一件同款不同规格 / 同规格的新货」，
+     * 没有目标规格，商家同意后不知道发什么。
+     */
+    if (resolution === "exchange") {
+      if (!supportsReturnRefund(order.status)) {
+        throw refundResolutionMismatch(
+          `订单当前状态（${order.status}）尚未发货，不能申请换货`,
+        );
+      }
+      if (!input.exchangeVariantId) {
+        throw exchangeTargetRequired("换货必须指定目标规格");
+      }
+    }
     if (await this.repo.findActiveRefundRequest(orderId)) throw refundAlreadyPending(orderId);
 
     /*
@@ -267,6 +286,9 @@ export class OrderService implements IOrderModuleService {
       source: input.source,
       orderStatusBefore: order.status,
       resolution,
+      exchangeVariantId: input.exchangeVariantId ?? null,
+      exchangeQuantity: input.exchangeQuantity ?? 1,
+      exchangeLabel: input.exchangeLabel ?? null,
     });
 
     try {
@@ -417,11 +439,89 @@ export class OrderService implements IOrderModuleService {
     const req = await this.repo.findRefundRequest(id);
     if (!req) throw refundRequestNotFound(id);
     if (req.status !== "returned") throw refundAlreadyReviewed(req.status);
+    // 只有退货退款有「确认收货即打款」这一步；换货确认收货走 confirmExchangeReturn（ADR-090）
+    if (req.resolution !== "return_refund") {
+      throw refundResolutionMismatch("该申请不是退货退款，不能走确认收货打款");
+    }
     const updated = await this.repo.updateRefundRequest(id, {
       status: "approved",
       refundId,
       reviewNote: reviewNote ?? null,
       returnReceivedAt: new Date(),
+    });
+    return updated!;
+  }
+
+  /**
+   * 同意换货（ADR-090）：只推进单据到「待买家寄回」，**不动钱**。
+   *
+   * 换货与退货退款共用「寄回」这一段：商家给出退货地址、等买家寄回。
+   * 库存预留在 API 层做（order 模块不依赖 inventory），这里只落单据。
+   */
+  async agreeExchangeRequest(
+    id: string,
+    opts?: { reviewNote?: string | null; returnAddress?: string | null },
+  ): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "pending") throw refundAlreadyReviewed(req.status);
+    if (req.resolution !== "exchange") {
+      throw refundResolutionMismatch("该申请不是换货，不能按换货处理");
+    }
+    const updated = await this.repo.updateRefundRequest(id, {
+      status: "awaiting_return",
+      reviewNote: opts?.reviewNote ?? null,
+      returnAddress: opts?.returnAddress?.trim() ? opts.returnAddress.trim() : null,
+    });
+    return updated!;
+  }
+
+  /**
+   * 商家确认收到换货退回（ADR-090）：returned → exchange_sending，**不动钱**。
+   *
+   * 与退货退款的 confirmReturnReceived 是两条路：
+   * 那条要打款（传 refundId），这条只有换货、没有任何资金动作。
+   * 绝不能让换货走打款关卡。
+   */
+  async confirmExchangeReturn(id: string, reviewNote?: string | null): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "returned") throw refundAlreadyReviewed(req.status);
+    if (req.resolution !== "exchange") {
+      throw refundResolutionMismatch("该申请不是换货");
+    }
+    const updated = await this.repo.updateRefundRequest(id, {
+      status: "exchange_sending",
+      reviewNote: reviewNote ?? null,
+      returnReceivedAt: new Date(),
+    });
+    return updated!;
+  }
+
+  /**
+   * 商家发出换出商品（ADR-090）：exchange_sending → completed，售后完结。
+   *
+   * 换出物流必填：没有单号，「已发出」就无从追踪，与退货寄回同一纪律。
+   * 库存 commit 在 API 层做（把「同意换货」时预留的货真正扣掉）。
+   */
+  async shipExchange(
+    id: string,
+    input: { carrier: string; trackingNumber: string },
+  ): Promise<RefundRequestDTO> {
+    const req = await this.repo.findRefundRequest(id);
+    if (!req) throw refundRequestNotFound(id);
+    if (req.status !== "exchange_sending") {
+      throw refundAlreadyReviewed(req.status);
+    }
+    const carrier = input.carrier?.trim() ?? "";
+    const trackingNumber = input.trackingNumber?.trim() ?? "";
+    if (carrier === "" || trackingNumber === "") {
+      throw returnShipmentInvalid("请填写换出物流公司与单号");
+    }
+    const updated = await this.repo.setExchangeShipment(id, {
+      carrier,
+      trackingNumber,
+      shippedAt: new Date(),
     });
     return updated!;
   }

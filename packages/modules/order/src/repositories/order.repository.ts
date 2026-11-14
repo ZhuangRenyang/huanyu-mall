@@ -198,6 +198,9 @@ export class DrizzleOrderRepository implements OrderRepository {
     source: RefundRequestSource;
     orderStatusBefore: OrderStatus;
     resolution: RefundResolution;
+    exchangeVariantId?: string | null;
+    exchangeQuantity?: number;
+    exchangeLabel?: string | null;
   }): Promise<RefundRequestDTO> {
     const rows = await this.db
       .insert(schema.refundRequest)
@@ -211,6 +214,9 @@ export class DrizzleOrderRepository implements OrderRepository {
         source: input.source,
         orderStatusBefore: input.orderStatusBefore,
         resolution: input.resolution,
+        exchangeVariantId: input.exchangeVariantId ?? null,
+        exchangeQuantity: input.exchangeQuantity ?? 1,
+        exchangeLabel: input.exchangeLabel ?? null,
       })
       .returning();
     return toRefundRequestDTO(rows[0]!);
@@ -352,6 +358,24 @@ export class DrizzleOrderRepository implements OrderRepository {
         returnCarrier: input.carrier,
         returnTrackingNumber: input.trackingNumber,
         returnShippedAt: input.shippedAt,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.refundRequest.id, id))
+      .returning();
+    return rows[0] ? toRefundRequestDTO(rows[0]) : null;
+  }
+
+  async setExchangeShipment(
+    id: string,
+    input: { carrier: string; trackingNumber: string; shippedAt: Date },
+  ): Promise<RefundRequestDTO | null> {
+    const rows = await this.db
+      .update(schema.refundRequest)
+      .set({
+        status: "completed",
+        exchangeCarrier: input.carrier,
+        exchangeTrackingNumber: input.trackingNumber,
+        exchangeShippedAt: input.shippedAt,
         updatedAt: new Date(),
       })
       .where(eq(schema.refundRequest.id, id))
@@ -560,6 +584,12 @@ function toRefundRequestDTO(
     return_tracking_number: r.returnTrackingNumber ?? null,
     return_shipped_at: r.returnShippedAt ? r.returnShippedAt.toISOString() : null,
     return_received_at: r.returnReceivedAt ? r.returnReceivedAt.toISOString() : null,
+    exchange_variant_id: r.exchangeVariantId ?? null,
+    exchange_quantity: r.exchangeQuantity ?? 1,
+    exchange_label: r.exchangeLabel ?? null,
+    exchange_carrier: r.exchangeCarrier ?? null,
+    exchange_tracking_number: r.exchangeTrackingNumber ?? null,
+    exchange_shipped_at: r.exchangeShippedAt ? r.exchangeShippedAt.toISOString() : null,
     review_note: r.reviewNote ?? null,
     reviewed_at: r.reviewedAt ? r.reviewedAt.toISOString() : null,
     refund_id: r.refundId ?? null,

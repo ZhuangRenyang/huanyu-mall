@@ -780,6 +780,8 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         })),
       }),
       releaseReservation: async () => {},
+      // 换货发出（ADR-090）：commit 预留，把货真正扣掉
+      commitReservation: async () => {},
       listInventoryItems: async () => ({
         items: [{ id: "invitem_1", sku: "SKU-1", title: "T恤", requires_shipping: true }],
         count: 1,
@@ -1114,7 +1116,10 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           reason: string;
           source?: string;
           customerId?: string | null;
-          resolution?: "refund_only" | "return_refund";
+          resolution?: "refund_only" | "return_refund" | "exchange";
+          exchangeVariantId?: string;
+          exchangeQuantity?: number;
+          exchangeLabel?: string | null;
         },
       ) => {
         const req = {
@@ -1126,7 +1131,13 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           reason: input.reason,
           source: (input.source ?? "customer") as "customer" | "merchant",
           status: "pending" as const,
-          resolution: (input.resolution ?? "refund_only") as "refund_only" | "return_refund",
+          resolution: (input.resolution ?? "refund_only") as "refund_only" | "return_refund" | "exchange",
+          exchange_variant_id: input.exchangeVariantId ?? null,
+          exchange_quantity: input.exchangeQuantity ?? 1,
+          exchange_label: input.exchangeLabel ?? null,
+          exchange_carrier: null,
+          exchange_tracking_number: null,
+          exchange_shipped_at: null,
           return_address: null,
           return_carrier: null,
           return_tracking_number: null,
@@ -1233,6 +1244,36 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         req.return_received_at = new Date().toISOString();
         if (note) req.review_note = note;
         order.status = "refunded";
+        return req;
+      },
+      /** 换货（ADR-090）：同意只改单据不动钱；确认收货不动钱；发出写物流完结。 */
+      agreeExchangeRequest: async (
+        id: string,
+        opts?: { reviewNote?: string | null; returnAddress?: string | null },
+      ) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        if (req.resolution !== "exchange") throw new Error("售后类型不匹配：该申请不是换货");
+        req.status = "awaiting_return";
+        req.review_note = opts?.reviewNote ?? null;
+        req.return_address = opts?.returnAddress?.trim() ? opts.returnAddress.trim() : null;
+        return req;
+      },
+      confirmExchangeReturn: async (id: string, note?: string | null) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        req.status = "exchange_sending";
+        req.return_received_at = new Date().toISOString();
+        if (note) req.review_note = note;
+        return req;
+      },
+      shipExchange: async (id: string, input: { carrier: string; trackingNumber: string }) => {
+        const req = refundRequests.find((r) => r.id === id)!;
+        if (!input.carrier.trim() || !input.trackingNumber.trim()) {
+          throw new Error("请填写换出物流公司与单号");
+        }
+        req.status = "completed";
+        req.exchange_carrier = input.carrier.trim();
+        req.exchange_tracking_number = input.trackingNumber.trim();
+        req.exchange_shipped_at = new Date().toISOString();
         return req;
       },
       rejectRefundRequest: async (id: string, note: string) => {

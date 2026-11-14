@@ -15,10 +15,14 @@ export type StoreRefundStatus =
   /** 商家已同意退货，等买家寄回（ADR-051）。 */
   | 'awaiting_return'
   /** 买家已寄回，等商家确认收货。 */
-  | 'returned';
+  | 'returned'
+  /** 换货：商家已收到退回，待发出换货（ADR-090）。 */
+  | 'exchange_sending'
+  /** 换货：换出商品已发出，售后完结（ADR-090）。 */
+  | 'completed';
 
 /** 售后类型：仅退款 / 退货退款（淘宝同一组选项）。 */
-export type StoreRefundResolution = 'refund_only' | 'return_refund';
+export type StoreRefundResolution = 'refund_only' | 'return_refund' | 'exchange';
 
 export interface StoreRefundView {
   id: string;
@@ -33,6 +37,10 @@ export interface StoreRefundView {
   returnAddress: string | null;
   returnCarrier: string | null;
   returnTrackingNumber: string | null;
+  /** 换货（ADR-090）：目标快照与换出物流。 */
+  exchangeLabel: string | null;
+  exchangeCarrier: string | null;
+  exchangeTrackingNumber: string | null;
   createdAt: string;
 }
 
@@ -46,6 +54,9 @@ interface RawRefund {
   return_address?: string | null;
   return_carrier?: string | null;
   return_tracking_number?: string | null;
+  exchange_label?: string | null;
+  exchange_carrier?: string | null;
+  exchange_tracking_number?: string | null;
   created_at?: string;
 }
 
@@ -53,11 +64,19 @@ function mapRefund(r: RawRefund): StoreRefundView {
   return {
     id: r.id,
     status: (r.status as StoreRefundStatus) ?? 'pending',
-    resolution: r.resolution === 'return_refund' ? 'return_refund' : 'refund_only',
+    resolution:
+      r.resolution === 'return_refund'
+        ? 'return_refund'
+        : r.resolution === 'exchange'
+          ? 'exchange'
+          : 'refund_only',
     amountMinor: Number(r.amount_minor ?? 0),
     reason: r.reason ?? '',
     reviewNote: r.review_note ?? null,
     returnAddress: r.return_address ?? null,
+    exchangeLabel: r.exchange_label ?? null,
+    exchangeCarrier: r.exchange_carrier ?? null,
+    exchangeTrackingNumber: r.exchange_tracking_number ?? null,
     returnCarrier: r.return_carrier ?? null,
     returnTrackingNumber: r.return_tracking_number ?? null,
     createdAt: r.created_at ?? '',
@@ -80,11 +99,18 @@ export async function requestOrderRefund(
   orderId: string,
   reason: string,
   resolution: StoreRefundResolution = 'refund_only',
+  exchangeVariantId?: string,
 ): Promise<void> {
   if (getApiMode() !== 'live') {
     throw new Error('演示模式无法提交退款申请，请在正式环境操作');
   }
-  await getStoreClient().requestOrderRefund(orderId, { reason, resolution });
+  await getStoreClient().requestOrderRefund(orderId, {
+    reason,
+    resolution,
+    ...(resolution === 'exchange' && exchangeVariantId
+      ? { exchange_variant_id: exchangeVariantId, exchange_quantity: 1 }
+      : {}),
+  });
 }
 
 /**
