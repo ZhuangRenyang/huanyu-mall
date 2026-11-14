@@ -33,7 +33,7 @@ export function AppsPage() {
       </div>
 
       {status && (
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatusCard
             label="收款"
             value={`${status.payments.enabled}/${status.payments.total} 家已启用`}
@@ -45,6 +45,12 @@ export function AppsPage() {
             value={status.mail.enabled && status.mail.smtpConfigured ? '已配置' : '未配置'}
             ok={status.mail.enabled && status.mail.smtpConfigured}
             hint="下单、发货、退款通知依赖它"
+          />
+          <StatusCard
+            label="存储"
+            value="本地磁盘"
+            ok
+            hint="上传文件存服务器 /uploads，换对象存储属部署配置"
           />
           <StatusCard
             label="渠道"
