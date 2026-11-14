@@ -28,6 +28,7 @@ import { adminPromotionRoutes } from "./admin/promotions.js";
 import { adminNotificationRoutes } from "./admin/notifications.js";
 import { adminSystemRoutes } from "./admin/system.js";
 import { adminMaintenanceRoutes } from "./admin/maintenance.js";
+import { adminAppsRoutes } from "./admin/apps.js";
 import { adminTaxRoutes } from "./admin/tax.js";
 import { adminShippingRoutes } from "./admin/shipping.js";
 import { adminRefundRoutes } from "./admin/refunds.js";
@@ -66,6 +67,7 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   adminNotificationRoutes(app, deps);
   adminSystemRoutes(app, deps);
   adminMaintenanceRoutes(app, deps);
+  adminAppsRoutes(app, deps);
   adminTaxRoutes(app, deps);
   adminShippingRoutes(app, deps);
   adminRefundRoutes(app, deps);
