@@ -90,6 +90,13 @@ const PAYMENT_STATUS_LABEL: Record<string, string> = {
 };
 
 /** 导出表头：按对账顺序排（钱与收货信息在前，物流在后）。 */
+/** 售后进度文案（与订单列表角标同名）。 */
+const REFUND_STAGE_LABEL: Record<string, string> = {
+  pending: "待审退款",
+  awaiting_return: "等买家寄回",
+  returned: "退货待收货",
+};
+
 const ORDER_EXPORT_HEADER = [
   "订单号",
   "下单时间",
@@ -105,6 +112,7 @@ const ORDER_EXPORT_HEADER = [
   "邮编",
   "商品",
   "件数",
+  "售后进度",
   "商品小计",
   "运费",
   "税费",
@@ -226,6 +234,10 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
         res.items.map((o) => o.id),
       );
       const trackingByOrder = new Map(tracking.map((t) => [t.orderId, t]));
+      // 售后进度（ADR-073 遗留）：导出与列表同口径，避免「界面上有、表里没有」
+      const activeRefunds = await deps.services.order.listActiveRefundsByOrderIds(
+        res.items.map((o) => o.id),
+      );
 
       const rows: unknown[][] = [ORDER_EXPORT_HEADER];
       for (const o of res.items) {
@@ -247,6 +259,7 @@ export function adminOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
           // 商品合并成一格：一行一单才对得上账，一行一商品会让「实付」重复出现
           o.items.map((li) => `${li.title} ×${li.quantity}`).join("；"),
           o.items.reduce((n, li) => n + li.quantity, 0),
+          REFUND_STAGE_LABEL[activeRefunds[o.id]?.status ?? ""] ?? "",
           moneyCell(o.subtotal_minor, o.currency_code),
           moneyCell(o.shipping_minor, o.currency_code),
           moneyCell(o.tax_minor, o.currency_code),

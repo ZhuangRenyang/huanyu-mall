@@ -43,7 +43,7 @@ describe("订单导出", () => {
     });
   });
 
-  it("返回 CSV：带 BOM、附件头、表头 23 列，且含订单号与金额", async () => {
+  it("返回 CSV：带 BOM、附件头、表头 24 列，且含订单号与金额", async () => {
     await withApp(async (app) => {
       const res = await app.inject({ method: "GET", url: "/api/v1/admin/orders/export", headers: admin });
       expect(res.statusCode, res.body).toBe(200);
@@ -53,7 +53,7 @@ describe("订单导出", () => {
       // BOM：Excel 认它才不乱码
       expect(res.body.startsWith("\uFEFF")).toBe(true);
       const lines = csvLines(res.body);
-      expect(lines[0]?.split(",")).toHaveLength(23);
+      expect(lines[0]?.split(",")).toHaveLength(24);
       expect(lines[0]).toContain("订单号");
       expect(lines[0]).toContain("运单号");
 
@@ -73,8 +73,8 @@ describe("订单导出", () => {
       const res = await app.inject({ method: "GET", url: "/api/v1/admin/orders/export", headers: admin });
       const row = csvLines(res.body)[1] ?? "";
       expect(row).toContain('"送货前打电话，别放""快递柜"""');
-      // 转义正确时该行仍是 23 列（简单计数：未闭合引号内的逗号不算）
-      expect(countColumns(row)).toBe(23);
+      // 转义正确时该行仍是 24 列（简单计数：未闭合引号内的逗号不算）
+      expect(countColumns(row)).toBe(24);
     });
   });
 
