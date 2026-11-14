@@ -127,6 +127,25 @@ export interface AdminRefundRequest {
   exchangeTrackingNumber: string | null;
 }
 
+/** 拼团活动（ADR-100）：参团免费、成团领券。 */
+export interface AdminGroupBuy {
+  id: string;
+  name: string;
+  variantId: string;
+  productId: string;
+  /** 商品/规格快照。 */
+  title: string;
+  originalPriceMinor: number;
+  groupPriceMinor: number;
+  teamSize: number;
+  status: 'draft' | 'active' | 'ended';
+  startsAt: string;
+  endsAt: string;
+  /** 成团后发放的专享券。 */
+  voucherId: string;
+  createdAt: string;
+}
+
 /** 秒杀活动商品（ADR-099）。 */
 export interface AdminFlashSaleItem {
   id: string;

@@ -25,6 +25,7 @@ export default Module("promotion", {
     "migrations/0012_voucher_scope_mode.sql",
     "migrations/0013_points.sql",
     "migrations/0014_flash_sale.sql",
+    "migrations/0015_group_buy.sql",
   ],
   linkable,
 });

@@ -6,6 +6,10 @@ import type {
   CollectedVoucherDTO,
   FlashSaleDTO,
   FlashSaleItemDTO,
+  GroupBuyDTO,
+  GroupBuyStatus,
+  GroupBuyTeamDTO,
+  GroupBuyTeamStatus,
   FlashSaleItemInput,
   FlashSaleStatus,
   PointLedgerDTO,
@@ -747,6 +751,215 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     return rows.map(toGiftCardEventDTO);
   }
 
+  // —— group_buy（ADR-100）——
+
+  async insertGroupBuy(row: {
+    id: string;
+    name: string;
+    variantId: string;
+    productId: string;
+    title: string;
+    originalPriceMinor: bigint;
+    groupPriceMinor: bigint;
+    teamSize: number;
+    startsAt: Date;
+    endsAt: Date;
+    voucherId: string;
+  }): Promise<GroupBuyDTO> {
+    const rows = await this.db
+      .insert(schema.groupBuy)
+      .values({
+        id: row.id,
+        name: row.name,
+        variantId: row.variantId,
+        productId: row.productId,
+        title: row.title,
+        originalPriceMinor: row.originalPriceMinor,
+        groupPriceMinor: row.groupPriceMinor,
+        teamSize: row.teamSize,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+        voucherId: row.voucherId,
+      })
+      .returning();
+    return toGroupBuyDTO(rows[0]!);
+  }
+
+  async findGroupBuy(id: string): Promise<GroupBuyDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.groupBuy)
+      .where(eq(schema.groupBuy.id, id))
+      .limit(1);
+    return rows[0] ? toGroupBuyDTO(rows[0]) : null;
+  }
+
+  async listGroupBuys(q: {
+    status?: GroupBuyStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: GroupBuyDTO[]; count: number }> {
+    const where = q.status ? eq(schema.groupBuy.status, q.status) : undefined;
+    const rows = await this.db
+      .select()
+      .from(schema.groupBuy)
+      .where(where)
+      .orderBy(desc(schema.groupBuy.createdAt))
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.groupBuy)
+      .where(where);
+    return { items: rows.map(toGroupBuyDTO), count: countRows[0]?.count ?? 0 };
+  }
+
+  async updateGroupBuyStatus(id: string, status: GroupBuyStatus): Promise<GroupBuyDTO | null> {
+    const rows = await this.db
+      .update(schema.groupBuy)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(schema.groupBuy.id, id))
+      .returning();
+    return rows[0] ? toGroupBuyDTO(rows[0]) : null;
+  }
+
+  async insertTeam(row: {
+    id: string;
+    groupBuyId: string;
+    leaderCustomerId: string;
+    teamSize: number;
+    expiresAt: Date;
+  }): Promise<GroupBuyTeamDTO> {
+    const rows = await this.db
+      .insert(schema.groupBuyTeam)
+      .values({
+        id: row.id,
+        groupBuyId: row.groupBuyId,
+        leaderCustomerId: row.leaderCustomerId,
+        // 团长算第一个成员：开团即 1 人
+        memberCount: 1,
+        teamSize: row.teamSize,
+        expiresAt: row.expiresAt,
+      })
+      .returning();
+    return toGroupBuyTeamDTO(rows[0]!, []);
+  }
+
+  async addTeamMemberSlot(
+    teamId: string,
+  ): Promise<{ joined: boolean; status: GroupBuyTeamStatus }> {
+    /*
+     * 条件更新占名额：`member_count + 1 <= team_size`。
+     * 先查后写会在并发下超员（两个人在同一瞬间看到「还剩 1 位」），
+     * 唯一可靠的做法是让数据库在一条语句里判断与自增。
+     */
+    const rows = await this.db
+      .update(schema.groupBuyTeam)
+      .set({
+        memberCount: sql`${schema.groupBuyTeam.memberCount} + 1`,
+        status: sql`CASE WHEN ${schema.groupBuyTeam.memberCount} + 1 >= ${schema.groupBuyTeam.teamSize} THEN 'success' ELSE ${schema.groupBuyTeam.status} END`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(schema.groupBuyTeam.id, teamId),
+          eq(schema.groupBuyTeam.status, "forming"),
+          sql`${schema.groupBuyTeam.memberCount} < ${schema.groupBuyTeam.teamSize}`,
+        ),
+      )
+      .returning();
+    const row = rows[0];
+    return {
+      joined: row !== undefined,
+      status: (row?.status as GroupBuyTeamStatus) ?? "forming",
+    };
+  }
+
+  async insertTeamMember(row: { id: string; teamId: string; customerId: string }): Promise<void> {
+    await this.db.insert(schema.groupBuyMember).values({
+      id: row.id,
+      teamId: row.teamId,
+      customerId: row.customerId,
+    });
+  }
+
+  async findTeam(id: string): Promise<GroupBuyTeamDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.groupBuyTeam)
+      .where(eq(schema.groupBuyTeam.id, id))
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    const members = await this.db
+      .select()
+      .from(schema.groupBuyMember)
+      .where(eq(schema.groupBuyMember.teamId, id));
+    return toGroupBuyTeamDTO(
+      r,
+      members.map((m) => ({ customer_id: m.customerId, joined_at: m.joinedAt.toISOString() })),
+    );
+  }
+
+  async listFormingTeams(groupBuyId: string, now: Date): Promise<GroupBuyTeamDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.groupBuyTeam)
+      .where(
+        and(
+          eq(schema.groupBuyTeam.groupBuyId, groupBuyId),
+          eq(schema.groupBuyTeam.status, "forming"),
+          sql`${schema.groupBuyTeam.expiresAt} > ${now}`,
+          sql`${schema.groupBuyTeam.memberCount} < ${schema.groupBuyTeam.teamSize}`,
+        ),
+      )
+      // 先开的团先成：让最早一批人尽快凑齐
+      .orderBy(schema.groupBuyTeam.createdAt);
+    return rows.map((r) => toGroupBuyTeamDTO(r, []));
+  }
+
+  async findTeamByCustomer(
+    groupBuyId: string,
+    customerId: string,
+  ): Promise<GroupBuyTeamDTO | null> {
+    const rows = await this.db
+      .select({ team: schema.groupBuyTeam })
+      .from(schema.groupBuyMember)
+      .innerJoin(schema.groupBuyTeam, eq(schema.groupBuyTeam.id, schema.groupBuyMember.teamId))
+      .where(
+        and(
+          eq(schema.groupBuyMember.customerId, customerId),
+          eq(schema.groupBuyTeam.groupBuyId, groupBuyId),
+        ),
+      )
+      .limit(1);
+    const r = rows[0];
+    if (!r) return null;
+    return this.findTeam(r.team.id);
+  }
+
+  async listTeamsByCustomer(customerId: string): Promise<GroupBuyTeamDTO[]> {
+    const rows = await this.db
+      .select({ team: schema.groupBuyTeam })
+      .from(schema.groupBuyMember)
+      .innerJoin(schema.groupBuyTeam, eq(schema.groupBuyTeam.id, schema.groupBuyMember.teamId))
+      .where(eq(schema.groupBuyMember.customerId, customerId))
+      .orderBy(desc(schema.groupBuyTeam.createdAt));
+    const out: GroupBuyTeamDTO[] = [];
+    for (const r of rows) {
+      const team = await this.findTeam(r.team.id);
+      if (team) out.push(team);
+    }
+    return out;
+  }
+
+  async expireTeam(id: string): Promise<void> {
+    await this.db
+      .update(schema.groupBuyTeam)
+      .set({ status: "expired", updatedAt: new Date() })
+      .where(and(eq(schema.groupBuyTeam.id, id), eq(schema.groupBuyTeam.status, "forming")));
+  }
+
   // —— flash_sale（ADR-099）——
 
   async insertFlashSale(row: {
@@ -969,6 +1182,39 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .orderBy(asc(schema.pointLedger.createdAt));
     return rows.map(toPointLedgerDTO);
   }
+}
+
+function toGroupBuyDTO(r: typeof schema.groupBuy.$inferSelect): GroupBuyDTO {
+  return {
+    id: r.id,
+    name: r.name,
+    variant_id: r.variantId,
+    product_id: r.productId,
+    title: r.title,
+    original_price_minor: r.originalPriceMinor,
+    group_price_minor: r.groupPriceMinor,
+    team_size: r.teamSize,
+    status: (r.status as GroupBuyStatus) ?? "draft",
+    starts_at: r.startsAt.toISOString(),
+    ends_at: r.endsAt.toISOString(),
+    voucher_id: r.voucherId,
+  };
+}
+
+function toGroupBuyTeamDTO(
+  r: typeof schema.groupBuyTeam.$inferSelect,
+  members: Array<{ customer_id: string; joined_at: string }>,
+): GroupBuyTeamDTO {
+  return {
+    id: r.id,
+    group_buy_id: r.groupBuyId,
+    leader_customer_id: r.leaderCustomerId,
+    status: (r.status as GroupBuyTeamStatus) ?? "forming",
+    member_count: r.memberCount,
+    team_size: r.teamSize,
+    expires_at: r.expiresAt.toISOString(),
+    members,
+  };
 }
 
 function toFlashSaleItemDTO(r: typeof schema.flashSaleItem.$inferSelect): FlashSaleItemDTO {

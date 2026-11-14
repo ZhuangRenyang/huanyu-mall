@@ -55,6 +55,9 @@ export function Header({
           <a href={`${base}/flash-sales`} className="text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground">
             限时秒杀
           </a>
+          <a href={`${base}/group-buys`} className="text-sm text-muted-foreground transition-colors duration-150 hover:text-foreground">
+            拼团
+          </a>
         </nav>
 
         <div className="ml-auto flex items-center gap-1">

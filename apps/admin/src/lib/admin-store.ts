@@ -5,6 +5,7 @@ import {
   SEED_ORDERS,
   SEED_PRODUCTS,
   type AdminFlashSale,
+  type AdminGroupBuy,
   type AdminInvoice,
   type AdminOrder,
   type AdminRefundRequest,
@@ -21,6 +22,7 @@ const KEYS = {
   refunds: 'admin:refund-requests',
   invoices: 'admin:invoices',
   flashSales: 'admin:flash-sales',
+  groupBuys: 'admin:group-buys',
   theme: 'admin:theme',
   providers: 'admin:providers',
   password: 'admin:password',
@@ -365,6 +367,90 @@ export function shipExchange(id: string, carrier: string, trackingNumber: string
 export function listRefunds(status?: string): AdminRefundRequest[] {
   const all = read<AdminRefundRequest[]>(KEYS.refunds, []);
   return status ? all.filter((r) => r.status === status) : all;
+}
+
+// ---- 拼团（ADR-100）----
+
+/**
+ * mock：拼团活动列表。
+ *
+ * 首次访问按第一个商品的第一个规格造一场「进行中」的两人团，
+ * 演示环境可以直接参团看到成团流程。
+ */
+export function listGroupBuys(status?: string): AdminGroupBuy[] {
+  const raw = read<AdminGroupBuy[] | null>(KEYS.groupBuys, null);
+  const all = raw ?? seedGroupBuys();
+  return status ? all.filter((g) => g.status === status) : all;
+}
+
+function seedGroupBuys(): AdminGroupBuy[] {
+  const now = Date.now();
+  const products = read<Array<{ id: string; title: string; variants: Array<{ id: string; title: string; priceMinor: number }> }>>(
+    KEYS.products,
+    [],
+  );
+  const product = products[0];
+  const variant = product?.variants?.[0];
+  const seed: AdminGroupBuy[] = [
+    {
+      id: 'gb_demo_1',
+      name: '两人成团 · 立减 30',
+      variantId: variant?.id ?? 'v5',
+      productId: product?.id ?? 'prod_1',
+      title: variant ? `${product?.title} · ${variant.title}` : '演示商品',
+      originalPriceMinor: variant?.priceMinor ?? 89900,
+      groupPriceMinor: Math.max(1, Math.round((variant?.priceMinor ?? 89900) * 0.85)),
+      teamSize: 2,
+      status: 'active',
+      startsAt: new Date(now - 86_400_000).toISOString(),
+      endsAt: new Date(now + 7 * 86_400_000).toISOString(),
+      voucherId: 'vouch_gb_demo',
+      createdAt: new Date(now - 90_000_000).toISOString(),
+    },
+  ];
+  write(KEYS.groupBuys, seed);
+  return seed;
+}
+
+/** mock：创建拼团活动（草稿）。 */
+export function createGroupBuy(input: {
+  name: string;
+  variantId: string;
+  productId: string;
+  title: string;
+  originalPriceMinor: number;
+  groupPriceMinor: number;
+  teamSize: number;
+  startsAt: string;
+  endsAt: string;
+}): void {
+  const list = listGroupBuys();
+  const id = `gb_${Date.now()}`;
+  list.unshift({
+    id,
+    name: input.name.trim(),
+    variantId: input.variantId,
+    productId: input.productId,
+    title: input.title,
+    originalPriceMinor: input.originalPriceMinor,
+    groupPriceMinor: input.groupPriceMinor,
+    teamSize: input.teamSize,
+    status: 'draft',
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    voucherId: `vouch_${id}`,
+    createdAt: new Date().toISOString(),
+  });
+  write(KEYS.groupBuys, list);
+}
+
+/** mock：上架 / 结束。 */
+export function setGroupBuyStatus(id: string, status: 'active' | 'ended'): void {
+  const list = listGroupBuys();
+  const activity = list.find((g) => g.id === id);
+  if (!activity) return;
+  activity.status = status;
+  write(KEYS.groupBuys, list);
 }
 
 // ---- 限时秒杀（ADR-099）----

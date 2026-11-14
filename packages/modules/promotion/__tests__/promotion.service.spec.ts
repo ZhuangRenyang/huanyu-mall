@@ -14,6 +14,10 @@ import type {
   FlashSaleItemDTO,
   FlashSaleItemInput,
   FlashSaleStatus,
+  GroupBuyDTO,
+  GroupBuyStatus,
+  GroupBuyTeamDTO,
+  GroupBuyTeamStatus,
   CreatePromotionInput,
   CreatePromotionRuleInput,
   CreateVoucherCodeInput,
@@ -497,7 +501,149 @@ class InMemoryPromotionRepository implements PromotionRepository {
   }
   async listPointLedgerByOrder(orderId: string): Promise<PointLedgerDTO[]> {
     return this.pointLedger.filter((l) => l.order_id === orderId);
-  }  // —— flash_sale（ADR-099）——
+  }  // —— group_buy（ADR-100）——
+  private groupBuys = new Map<string, GroupBuyDTO>();
+  private gbTeams = new Map<string, GroupBuyTeamDTO>();
+  private gbMembers = new Map<string, Array<{ customer_id: string; joined_at: string }>>();
+
+  async insertGroupBuy(row: {
+    id: string;
+    name: string;
+    variantId: string;
+    productId: string;
+    title: string;
+    originalPriceMinor: bigint;
+    groupPriceMinor: bigint;
+    teamSize: number;
+    startsAt: Date;
+    endsAt: Date;
+    voucherId: string;
+  }): Promise<GroupBuyDTO> {
+    const dto: GroupBuyDTO = {
+      id: row.id,
+      name: row.name,
+      variant_id: row.variantId,
+      product_id: row.productId,
+      title: row.title,
+      original_price_minor: row.originalPriceMinor,
+      group_price_minor: row.groupPriceMinor,
+      team_size: row.teamSize,
+      status: "draft",
+      starts_at: row.startsAt.toISOString(),
+      ends_at: row.endsAt.toISOString(),
+      voucher_id: row.voucherId,
+    };
+    this.groupBuys.set(dto.id, dto);
+    return dto;
+  }
+
+  async findGroupBuy(id: string): Promise<GroupBuyDTO | null> {
+    return this.groupBuys.get(id) ?? null;
+  }
+
+  async listGroupBuys(q: {
+    status?: GroupBuyStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: GroupBuyDTO[]; count: number }> {
+    const all = [...this.groupBuys.values()].filter((a) => (q.status ? a.status === q.status : true));
+    return { items: all.slice(q.offset, q.offset + q.limit), count: all.length };
+  }
+
+  async updateGroupBuyStatus(id: string, status: GroupBuyStatus): Promise<GroupBuyDTO | null> {
+    const a = this.groupBuys.get(id);
+    if (!a) return null;
+    a.status = status;
+    return a;
+  }
+
+  async insertTeam(row: {
+    id: string;
+    groupBuyId: string;
+    leaderCustomerId: string;
+    teamSize: number;
+    expiresAt: Date;
+  }): Promise<GroupBuyTeamDTO> {
+    const dto: GroupBuyTeamDTO = {
+      id: row.id,
+      group_buy_id: row.groupBuyId,
+      leader_customer_id: row.leaderCustomerId,
+      status: "forming",
+      member_count: 1,
+      team_size: row.teamSize,
+      expires_at: row.expiresAt.toISOString(),
+      members: [],
+    };
+    this.gbTeams.set(dto.id, dto);
+    this.gbMembers.set(dto.id, []);
+    return dto;
+  }
+
+  async addTeamMemberSlot(
+    teamId: string,
+  ): Promise<{ joined: boolean; status: GroupBuyTeamStatus }> {
+    const team = this.gbTeams.get(teamId);
+    if (!team || team.status !== "forming" || team.member_count >= team.team_size) {
+      return { joined: false, status: team?.status ?? "forming" };
+    }
+    team.member_count += 1;
+    if (team.member_count >= team.team_size) team.status = "success";
+    return { joined: true, status: team.status };
+  }
+
+  async insertTeamMember(row: { id: string; teamId: string; customerId: string }): Promise<void> {
+    const list = this.gbMembers.get(row.teamId) ?? [];
+    list.push({ customer_id: row.customerId, joined_at: new Date().toISOString() });
+    this.gbMembers.set(row.teamId, list);
+  }
+
+  async findTeam(id: string): Promise<GroupBuyTeamDTO | null> {
+    const team = this.gbTeams.get(id);
+    if (!team) return null;
+    return { ...team, members: this.gbMembers.get(id) ?? [] };
+  }
+
+  async listFormingTeams(groupBuyId: string, now: Date): Promise<GroupBuyTeamDTO[]> {
+    return [...this.gbTeams.values()].filter(
+      (t) =>
+        t.group_buy_id === groupBuyId &&
+        t.status === "forming" &&
+        new Date(t.expires_at).getTime() > now.getTime() &&
+        t.member_count < t.team_size,
+    );
+  }
+
+  async findTeamByCustomer(
+    groupBuyId: string,
+    customerId: string,
+  ): Promise<GroupBuyTeamDTO | null> {
+    for (const [teamId, team] of this.gbTeams) {
+      if (team.group_buy_id !== groupBuyId) continue;
+      const members = this.gbMembers.get(teamId) ?? [];
+      if (members.some((m) => m.customer_id === customerId)) {
+        return { ...team, members };
+      }
+    }
+    return null;
+  }
+
+  async listTeamsByCustomer(customerId: string): Promise<GroupBuyTeamDTO[]> {
+    const out: GroupBuyTeamDTO[] = [];
+    for (const [teamId, team] of this.gbTeams) {
+      const members = this.gbMembers.get(teamId) ?? [];
+      if (members.some((m) => m.customer_id === customerId)) {
+        out.push({ ...team, members });
+      }
+    }
+    return out;
+  }
+
+  async expireTeam(id: string): Promise<void> {
+    const team = this.gbTeams.get(id);
+    if (team && team.status === "forming") team.status = "expired";
+  }
+
+  // —— flash_sale（ADR-099）——
   private flashSales = new Map<string, FlashSaleDTO>();
   private flashItems = new Map<string, FlashSaleItemDTO>();
 
@@ -2062,5 +2208,127 @@ describe("限时秒杀（ADR-099）", () => {
         ],
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("拼团（ADR-100）", () => {
+  const base = () => ({
+    name: "三人成团",
+    variantId: "var_1",
+    productId: "prod_1",
+    title: "测试商品 · 黑色",
+    originalPriceMinor: 10000n,
+    groupPriceMinor: 7000n,
+    teamSize: 2,
+    startsAt: new Date(Date.now() - 60_000),
+    endsAt: new Date(Date.now() + 3_600_000),
+  });
+
+  it("创建活动自动建一张拼团专享券：面额=差价、范围=该商品、不公开", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const activity = await service.createGroupBuy({ ...base(), name: "双人成团" });
+    expect(activity.status).toBe("draft");
+
+    const voucher = await service.retrieveVoucher(activity.voucher_id);
+    expect(voucher.discount_type).toBe("fixed");
+    expect(voucher.discount_value).toBe(3000n); // 100 − 70
+    expect(voucher.min_spent).toBe(10000n); // 满原价才减，买 2 件不重复抵
+    expect(voucher.is_public).toBe(false);
+    expect(voucher.collect_limit).toBe(1);
+    const scopes = await service.listVoucherScopes(activity.voucher_id);
+    expect(scopes.map((sc) => ({ type: sc.scope_type, id: sc.scope_id }))).toEqual([
+      { type: "product", id: "prod_1" },
+    ]);
+  });
+
+  it("参团：第一人开团、第二人补进同一个团，满员即成团", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const activity = await service.createGroupBuy(base());
+    await service.setGroupBuyStatus(activity.id, "active");
+
+    const first = await service.joinGroupBuy(activity.id, "cust_1");
+    expect(first.joined).toBe(true);
+    expect(first.team.member_count).toBe(1);
+    expect(first.team.leader_customer_id).toBe("cust_1");
+    expect(first.team.status).toBe("forming");
+
+    const second = await service.joinGroupBuy(activity.id, "cust_2");
+    expect(second.joined).toBe(true);
+    // 补进已有的团，而不是另开一个
+    expect(second.team.id).toBe(first.team.id);
+    expect(second.team.member_count).toBe(2);
+    expect(second.team.status).toBe("success");
+  });
+
+  it("重复参团幂等：返回原团，不重复占名额", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const activity = await service.createGroupBuy(base());
+    await service.setGroupBuyStatus(activity.id, "active");
+
+    const first = await service.joinGroupBuy(activity.id, "cust_1");
+    const again = await service.joinGroupBuy(activity.id, "cust_1");
+    expect(again.joined).toBe(false);
+    expect(again.team.id).toBe(first.team.id);
+    expect(again.team.member_count).toBe(1);
+  });
+
+  it("领券：没成团不能领；成团后可领且幂等", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const activity = await service.createGroupBuy(base());
+    await service.setGroupBuyStatus(activity.id, "active");
+    await service.joinGroupBuy(activity.id, "cust_1");
+
+    // 还没满员
+    await expect(service.claimGroupBuyVoucher(activity.id, "cust_1")).rejects.toThrow();
+    // 没参团的人不能领
+    await expect(service.claimGroupBuyVoucher(activity.id, "cust_9")).rejects.toThrow();
+
+    await service.joinGroupBuy(activity.id, "cust_2");
+    const claimed = await service.claimGroupBuyVoucher(activity.id, "cust_1");
+    expect(claimed.code).toBeTruthy();
+    expect(claimed.already_collected).toBe(false);
+
+    const twice = await service.claimGroupBuyVoucher(activity.id, "cust_1");
+    expect(twice.code).toBe(claimed.code);
+    expect(twice.already_collected).toBe(true);
+  });
+
+  it("活动结束后，未成团的团惰性置为 expired", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    // 50ms 后就结束：参团时还在窗口内，读「我的拼团」时已过期
+    const activity = await service.createGroupBuy({
+      ...base(),
+      teamSize: 3,
+      endsAt: new Date(Date.now() + 50),
+    });
+    await service.setGroupBuyStatus(activity.id, "active");
+    await service.joinGroupBuy(activity.id, "cust_1");
+
+    await new Promise((r) => setTimeout(r, 80));
+
+    const mine = await service.listMyGroupBuys("cust_1");
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.team.status).toBe("expired");
+    // 过期团不能再领券
+    await expect(service.claimGroupBuyVoucher(activity.id, "cust_1")).rejects.toThrow();
+  });
+
+  it("创建校验：人数 2–10、拼团价低于原价", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    await expect(service.createGroupBuy({ ...base(), teamSize: 1 })).rejects.toThrow();
+    await expect(
+      service.createGroupBuy({ ...base(), groupPriceMinor: 10000n }),
+    ).rejects.toThrow();
+    await expect(service.createGroupBuy({ ...base(), name: "  " })).rejects.toThrow();
+  });
+
+  it("状态机只允许 draft→active、active→ended", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const activity = await service.createGroupBuy(base());
+    await service.setGroupBuyStatus(activity.id, "active");
+    await service.setGroupBuyStatus(activity.id, "ended");
+    await expect(service.setGroupBuyStatus(activity.id, "active")).rejects.toThrow();
+    // 结束的活动不能再参团
+    await expect(service.joinGroupBuy(activity.id, "cust_1")).rejects.toThrow();
   });
 });

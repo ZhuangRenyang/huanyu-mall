@@ -184,6 +184,67 @@ export const giftCard = pgTable(
   ],
 );
 
+/** 拼团活动（ADR-100）：参团免费、成团领券。 */
+export const groupBuy = pgTable(
+  "group_buy",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /** 活动只针对一个规格：一个活动一个价，规则才解释得清。 */
+    variantId: text("variant_id").notNull(),
+    productId: text("product_id").notNull(),
+    /** 商品/规格快照。 */
+    title: text("title").notNull(),
+    originalPriceMinor: bigint("original_price_minor", { mode: "bigint" }).notNull(),
+    groupPriceMinor: bigint("group_price_minor", { mode: "bigint" }).notNull(),
+    /** 成团人数（含团长）。 */
+    teamSize: integer("team_size").notNull(),
+    status: text("status").notNull().default("draft"),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    /** 成团后发放的专享券（自动创建，is_public = false）。 */
+    voucherId: text("voucher_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_group_buy_window").on(t.status, t.startsAt, t.endsAt)],
+);
+
+/** 拼团团（ADR-100）。 */
+export const groupBuyTeam = pgTable(
+  "group_buy_team",
+  {
+    id: text("id").primaryKey(),
+    groupBuyId: text("group_buy_id").notNull(),
+    leaderCustomerId: text("leader_customer_id").notNull(),
+    /** forming = 等人；success = 已成团；expired = 到期未满。 */
+    status: text("status").notNull().default("forming"),
+    /** 已参团人数：条件 UPDATE 加减，防并发超员。 */
+    memberCount: integer("member_count").notNull().default(0),
+    /** 成团人数快照：活动后来改人数，已开的团仍按当时规则走。 */
+    teamSize: integer("team_size").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("idx_group_team_activity").on(t.groupBuyId, t.status)],
+);
+
+/** 拼团成员（ADR-100）。 */
+export const groupBuyMember = pgTable(
+  "group_buy_member",
+  {
+    id: text("id").primaryKey(),
+    teamId: text("team_id").notNull(),
+    customerId: text("customer_id").notNull(),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_group_member_team_customer").on(t.teamId, t.customerId),
+    index("idx_group_member_customer").on(t.customerId),
+  ],
+);
+
 /** 限时秒杀活动（ADR-099）。 */
 export const flashSale = pgTable(
   "flash_sale",

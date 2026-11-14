@@ -92,6 +92,30 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   };
   // —— 领券（ADR-029）：内存版，够驱动路由层契约测试 ——
   const collections = new Map<string, { voucherId: string; customerId: string; code: string }>();
+  // 拼团（ADR-100）：内存活动 / 团 / 已领券，跨请求保留
+  const groupBuys: Array<{
+    id: string;
+    name: string;
+    variant_id: string;
+    product_id: string;
+    title: string;
+    original_price_minor: bigint;
+    group_price_minor: bigint;
+    team_size: number;
+    status: "draft" | "active" | "ended";
+    starts_at: string;
+    ends_at: string;
+    voucher_id: string;
+  }> = [];
+  const gbTeams: Array<{
+    id: string;
+    group_buy_id: string;
+    leader_customer_id: string;
+    status: "forming" | "success" | "expired";
+    members: string[];
+    expires_at: string;
+  }> = [];
+  const claimedGroupVouchers = new Map<string, string>();
   // 秒杀活动（ADR-099）：内存表，跨请求保留
   const flashSales: Array<{
     id: string;
@@ -145,6 +169,135 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
      * 秒杀（ADR-099）：内存活动表。跨请求保留 —— 创建与上架是两次请求，
      * 每次新建数组的话第二次就查不到了。
      */
+    /*
+     * 拼团（ADR-100）：内存活动 + 团 + 成员。
+     * 语义与真实服务对齐：一人一活动只能在一个团、满员成团、成团才能领券。
+     */
+    listGroupBuys: async (q: { status?: string; limit?: number; offset?: number }) => {
+      const all = q.status ? groupBuys.filter((g) => g.status === q.status) : groupBuys;
+      return { items: all.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 20)), count: all.length };
+    },
+    createGroupBuy: async (input: {
+      name: string;
+      variantId: string;
+      productId: string;
+      title: string;
+      originalPriceMinor: bigint;
+      groupPriceMinor: bigint;
+      teamSize: number;
+      startsAt: Date;
+      endsAt: Date;
+    }) => {
+      if (input.groupPriceMinor >= input.originalPriceMinor) {
+        throw new DomainError({ code: 20001, message: "拼团价必须低于原价" });
+      }
+      if (input.teamSize < 2 || input.teamSize > 10) {
+        throw new DomainError({ code: 20001, message: "成团人数需在 2–10 人之间" });
+      }
+      const activity = {
+        id: `gb_${groupBuys.length + 1}`,
+        name: input.name.trim(),
+        variant_id: input.variantId,
+        product_id: input.productId,
+        title: input.title,
+        original_price_minor: input.originalPriceMinor,
+        group_price_minor: input.groupPriceMinor,
+        team_size: input.teamSize,
+        status: "draft" as "draft" | "active" | "ended",
+        starts_at: input.startsAt.toISOString(),
+        ends_at: input.endsAt.toISOString(),
+        voucher_id: `vouch_gb_${groupBuys.length + 1}`,
+      };
+      groupBuys.push(activity);
+      return activity;
+    },
+    setGroupBuyStatus: async (id: string, status: "active" | "ended") => {
+      const a = groupBuys.find((g) => g.id === id);
+      if (!a) throw new DomainError({ code: 30001, message: `拼团活动不存在：${id}` });
+      const allowed =
+        (a.status === "draft" && status === "active") || (a.status === "active" && status === "ended");
+      if (a.status !== status && !allowed) {
+        throw new DomainError({ code: 30002, message: `当前状态（${a.status}）不能变更为 ${status}` });
+      }
+      a.status = status;
+      return a;
+    },
+    listActiveGroupBuys: async () => {
+      const now = Date.now();
+      return groupBuys.filter(
+        (g) =>
+          g.status === "active" &&
+          new Date(g.starts_at).getTime() <= now &&
+          new Date(g.ends_at).getTime() > now,
+      );
+    },
+    joinGroupBuy: async (groupBuyId: string, customerId: string) => {
+      const a = groupBuys.find((g) => g.id === groupBuyId);
+      if (!a) throw new DomainError({ code: 30001, message: `拼团活动不存在：${groupBuyId}` });
+      if (a.status !== "active") throw new DomainError({ code: 30002, message: "该拼团活动未上架或已结束" });
+
+      const mine = gbTeams.find(
+        (t) => t.group_buy_id === groupBuyId && t.members.includes(customerId),
+      );
+      if (mine) return { team: { ...mine, member_count: mine.members.length, team_size: a.team_size }, joined: false };
+
+      const forming = gbTeams.find(
+        (t) =>
+          t.group_buy_id === groupBuyId &&
+          t.status === "forming" &&
+          t.members.length < a.team_size,
+      );
+      if (forming) {
+        forming.members.push(customerId);
+        if (forming.members.length >= a.team_size) forming.status = "success";
+        return {
+          team: { ...forming, member_count: forming.members.length, team_size: a.team_size },
+          joined: true,
+        };
+      }
+      const team = {
+        id: `gbt_${gbTeams.length + 1}`,
+        group_buy_id: groupBuyId,
+        leader_customer_id: customerId,
+        status: "forming" as "forming" | "success" | "expired",
+        members: [customerId],
+        expires_at: a.ends_at,
+      };
+      gbTeams.push(team);
+      return {
+        team: { ...team, member_count: 1, team_size: a.team_size },
+        joined: true,
+      };
+    },
+    listMyGroupBuys: async (customerId: string) => {
+      const out = [];
+      for (const t of gbTeams) {
+        if (!t.members.includes(customerId)) continue;
+        const a = groupBuys.find((g) => g.id === t.group_buy_id);
+        if (!a) continue;
+        out.push({
+          group_buy: a,
+          team: { ...t, member_count: t.members.length, team_size: a.team_size },
+        });
+      }
+      return out;
+    },
+    claimGroupBuyVoucher: async (groupBuyId: string, customerId: string) => {
+      const team = gbTeams.find(
+        (t) => t.group_buy_id === groupBuyId && t.members.includes(customerId),
+      );
+      if (!team) throw new DomainError({ code: 30002, message: "你还没有参加这个拼团" });
+      if (team.status !== "success") {
+        throw new DomainError({ code: 30002, message: "还没成团，凑齐人数后就能领券" });
+      }
+      const key = `${groupBuyId}:${customerId}`;
+      if (claimedGroupVouchers.has(key)) {
+        return { code: claimedGroupVouchers.get(key)!, already_collected: true };
+      }
+      const code = `GB${claimedGroupVouchers.size + 1}0001`;
+      claimedGroupVouchers.set(key, code);
+      return { code, already_collected: false };
+    },
     listFlashSales: async (q: { status?: string; limit?: number; offset?: number }) => {
       const all = q.status ? flashSales.filter((s) => s.status === q.status) : flashSales;
       return { items: all.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 20)), count: all.length };
@@ -781,12 +934,16 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
             permissions: "all",
           };
         }
-        // 顾客 token：sub 是 identity id，customerId 才是订单归属（两者不能混用）
-        if (token === "customer") {
+        /*
+         * 顾客 token：sub 是 identity id，customerId 才是订单归属（两者不能混用）。
+         * 支持 customer / customer2 / customer3 …，多人协作场景（拼团成团）需要多个顾客。
+         */
+        if (token === "customer" || /^customer\d+$/.test(token)) {
+          const n = token === "customer" ? "1" : token.slice("customer".length);
           return {
-            sub: "ident_cust_1",
+            sub: `ident_cust_${n}`,
             scope: "customer",
-            customerId: "cust_1",
+            customerId: `cust_${n}`,
             roles: [],
             permissions: [],
           };

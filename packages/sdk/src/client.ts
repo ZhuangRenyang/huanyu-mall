@@ -162,6 +162,11 @@ export function createStoreClient(opts: ClientOptions) {
     getPromotionFeatures: () => get("/api/v1/store/promotions/features"),
     /** 进行中的秒杀活动（ADR-099）：只含还有剩余的活动。 */
     listFlashSales: () => get("/api/v1/store/flash-sales"),
+    /** 拼团（ADR-100）：进行中的活动 / 参团 / 我的拼团 / 成团领券。 */
+    listGroupBuys: () => get("/api/v1/store/group-buys"),
+    joinGroupBuy: (id: string) => post(`/api/v1/store/group-buys/${id}/join`),
+    listMyGroupBuys: () => get("/api/v1/store/group-buys/mine"),
+    claimGroupBuyVoucher: (id: string) => post(`/api/v1/store/group-buys/${id}/voucher`),
     /** 我的积分（ADR-093）：余额 + 最近流水。 */
     getStorePoints: () => get("/api/v1/store/points"),
     /** 可领取的店铺券（匿名可读；登录后带 collected 标记）。 */
@@ -444,6 +449,20 @@ export function createAdminClient(opts: ClientOptions) {
       post(`/api/v1/admin/refund-requests/${id}/ship-exchange`, b),
     // —— 发票管理（ADR-098）——
     // —— 限时秒杀（ADR-099）——
+    // —— 拼团（ADR-100）——
+    listGroupBuys: (q?: Query) => get("/api/v1/admin/group-buys", q),
+    createGroupBuy: (b: {
+      name: string;
+      variant_id: string;
+      title: string;
+      original_price_minor: number;
+      group_price_minor: number;
+      team_size: number;
+      starts_at: string;
+      ends_at: string;
+    }) => post("/api/v1/admin/group-buys", b),
+    setGroupBuyStatus: (id: string, status: "active" | "ended") =>
+      post(`/api/v1/admin/group-buys/${id}/status`, { status }),
     listFlashSales: (q?: Query) => get("/api/v1/admin/flash-sales", q),
     createFlashSale: (b: {
       name: string;

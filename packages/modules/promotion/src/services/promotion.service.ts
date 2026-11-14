@@ -15,8 +15,12 @@ import type {
   CollectedVoucherDTO,
   ComputeDiscountsInput,
   CreateFlashSaleInput,
+  CreateGroupBuyInput,
   FlashSaleDTO,
   FlashSaleStatus,
+  GroupBuyDTO,
+  GroupBuyStatus,
+  GroupBuyTeamDTO,
   PointLedgerDTO,
   ComputeDiscountsResult,
   CreateGiftCardInput,
@@ -218,9 +222,26 @@ export class PromotionService implements IPromotionModuleService {
   ): Promise<{ code: string; alreadyCollected: boolean }> {
     const voucher = await this.repo.findVoucherById(voucherId);
     if (!voucher) throw voucherNotFound(voucherId);
+    // 顾客自助领取：券必须是「公开可领」的店铺券
+    if (!voucher.is_public) throw voucherNotCollectable(voucher.name);
+    return this.issueVoucherToCustomer(voucherId, customerId);
+  }
+
+  /**
+   * 系统发放（不要求 is_public）：拼团成团后给成员发专享券（ADR-100）。
+   *
+   * 与「顾客自助领取」共用同一套发码与限领逻辑，只是不检查公开性 ——
+   * 这类券本来就不该出现在店铺券列表里。
+   */
+  private async issueVoucherToCustomer(
+    voucherId: string,
+    customerId: string,
+  ): Promise<{ code: string; alreadyCollected: boolean }> {
+    const voucher = await this.repo.findVoucherById(voucherId);
+    if (!voucher) throw voucherNotFound(voucherId);
     const flags = await this.getFeatureFlags();
     if (!flags.voucher) throw voucherNotCollectable(voucher.name);
-    if (!voucher.is_public || voucher.status !== "active" || !inWindow(voucher.starts_at, voucher.ends_at, new Date())) {
+    if (voucher.status !== "active" || !inWindow(voucher.starts_at, voucher.ends_at, new Date())) {
       throw voucherNotCollectable(voucher.name);
     }
 
@@ -608,6 +629,221 @@ export class PromotionService implements IPromotionModuleService {
         });
       }
     }
+  }
+
+  // —— group_buy（ADR-100）——
+
+  /**
+   * 创建拼团活动（草稿），同时自动建一张「拼团专享券」。
+   *
+   * 券是拼团价的**承载物**：成团后每个成员领一张，拿券正常下单。
+   * 这样做的好处是拼团不产生自己的订单与支付链路 —— 未成团什么都没发生，
+   * 也就不需要「自动退款」，与 ADR-023 不冲突。
+   *
+   * 券的 `min_spent` 设成原价：买 2 件时只减 1 份差价，不会变成「每件都打折」。
+   */
+  async createGroupBuy(input: CreateGroupBuyInput): Promise<GroupBuyDTO> {
+    const name = input.name?.trim() ?? "";
+    if (name === "") throw new DomainError({ code: 20001, message: "请填写活动名称" });
+    if (!(input.endsAt.getTime() > input.startsAt.getTime())) {
+      throw new DomainError({ code: 20001, message: "结束时间必须晚于开始时间" });
+    }
+    if (!Number.isInteger(input.teamSize) || input.teamSize < 2 || input.teamSize > 10) {
+      throw new DomainError({ code: 20001, message: "成团人数需在 2–10 人之间" });
+    }
+    if (input.groupPriceMinor <= 0n || input.groupPriceMinor >= input.originalPriceMinor) {
+      throw new DomainError({ code: 20001, message: "拼团价必须大于 0 且低于原价" });
+    }
+
+    const voucher = await this.createVoucher({
+      name: `拼团专享 · ${name}`,
+      type: "specific_product",
+      discountType: "fixed",
+      // 差价 = 原价 − 拼团价：领券后按拼团价成交
+      discountValue: input.originalPriceMinor - input.groupPriceMinor,
+      // 满原价才减：买多件时只抵扣一份差价
+      minSpent: input.originalPriceMinor,
+      status: "active",
+      // 不公开领取：只有成团的成员能领（走 claimGroupBuyVoucher）
+      isPublic: false,
+      collectLimit: 1,
+      startsAt: input.startsAt,
+      // 成团可能在活动最后一刻发生，留 7 天用券窗口
+      endsAt: new Date(input.endsAt.getTime() + 7 * 86_400_000),
+      scopes: [{ scopeType: "product", scopeId: input.productId }],
+    });
+
+    return this.repo.insertGroupBuy({
+      id: prefixedUlid("gb"),
+      name,
+      variantId: input.variantId,
+      productId: input.productId,
+      title: input.title.trim(),
+      originalPriceMinor: input.originalPriceMinor,
+      groupPriceMinor: input.groupPriceMinor,
+      teamSize: input.teamSize,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      voucherId: voucher.id,
+    });
+  }
+
+  async listGroupBuys(q: {
+    status?: GroupBuyStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: GroupBuyDTO[]; count: number }> {
+    return this.repo.listGroupBuys({
+      status: q.status,
+      limit: q.limit ?? 20,
+      offset: q.offset ?? 0,
+    });
+  }
+
+  /** 上架 / 结束：只改活动状态，已开的团按自己的 expires_at 走。 */
+  async setGroupBuyStatus(id: string, status: "active" | "ended"): Promise<GroupBuyDTO> {
+    const activity = await this.repo.findGroupBuy(id);
+    if (!activity) throw new DomainError({ code: 30001, message: `拼团活动不存在：${id}` });
+    if (activity.status === status) return activity;
+
+    const allowed =
+      (activity.status === "draft" && status === "active") ||
+      (activity.status === "active" && status === "ended");
+    if (!allowed) {
+      throw new DomainError({
+        code: 30002,
+        message: `当前状态（${activity.status}）不能变更为 ${status}`,
+      });
+    }
+    const updated = await this.repo.updateGroupBuyStatus(id, status);
+    return updated!;
+  }
+
+  /** 店面：进行中的拼团（时间窗内；团是否还有空位由参团时判定）。 */
+  async listActiveGroupBuys(now: Date = new Date()): Promise<GroupBuyDTO[]> {
+    const res = await this.repo.listGroupBuys({ status: "active", limit: 50, offset: 0 });
+    return res.items.filter((a) => {
+      const starts = new Date(a.starts_at).getTime();
+      const ends = new Date(a.ends_at).getTime();
+      return starts <= now.getTime() && ends > now.getTime();
+    });
+  }
+
+  /**
+   * 参团：已在本活动 → 返回原团；否则优先补进未满的团，没有就自己开团。
+   *
+   * 不收款、不建订单、不占库存 —— 这是「参团免费」的全部含义。
+   */
+  async joinGroupBuy(
+    groupBuyId: string,
+    customerId: string,
+  ): Promise<{ team: GroupBuyTeamDTO; joined: boolean }> {
+    const now = new Date();
+    const activity = await this.repo.findGroupBuy(groupBuyId);
+    if (!activity) throw new DomainError({ code: 30001, message: `拼团活动不存在：${groupBuyId}` });
+    if (activity.status !== "active") {
+      throw new DomainError({ code: 30002, message: "该拼团活动未上架或已结束" });
+    }
+    if (new Date(activity.starts_at).getTime() > now.getTime()) {
+      throw new DomainError({ code: 30002, message: "该拼团活动还没开始" });
+    }
+    if (new Date(activity.ends_at).getTime() <= now.getTime()) {
+      throw new DomainError({ code: 30002, message: "该拼团活动已结束" });
+    }
+
+    // 一个人在同一活动里只能在一个团：重复点「参团」返回原团，不报错
+    const existing = await this.repo.findTeamByCustomer(groupBuyId, customerId);
+    if (existing) {
+      const team = await this.expireTeamIfNeeded(existing, now);
+      return { team, joined: false };
+    }
+
+    // 先补现有的团：让最早开的那批尽快凑齐
+    const forming = await this.repo.listFormingTeams(groupBuyId, now);
+    for (const candidate of forming) {
+      const slot = await this.repo.addTeamMemberSlot(candidate.id);
+      if (!slot.joined) continue; // 被并发抢满 → 换下一个
+      await this.repo.insertTeamMember({
+        id: prefixedUlid("gbm"),
+        teamId: candidate.id,
+        customerId,
+      });
+      const team = await this.repo.findTeam(candidate.id);
+      return { team: team!, joined: true };
+    }
+
+    // 没有可加入的团：自己开一个（团长算第一个成员）
+    const created = await this.repo.insertTeam({
+      id: prefixedUlid("gbt"),
+      groupBuyId,
+      leaderCustomerId: customerId,
+      teamSize: activity.team_size,
+      expiresAt: new Date(activity.ends_at),
+    });
+    await this.repo.insertTeamMember({
+      id: prefixedUlid("gbm"),
+      teamId: created.id,
+      customerId,
+    });
+    const team = await this.repo.findTeam(created.id);
+    return { team: team!, joined: true };
+  }
+
+  /**
+   * 我的拼团。
+   *
+   * 读到过期未满的团就地改状态（惰性判定）：没有后台定时任务，
+   * 状态只在被访问时收敛 —— 与秒杀的活动时间窗同一套思路。
+   */
+  async listMyGroupBuys(
+    customerId: string,
+  ): Promise<Array<{ group_buy: GroupBuyDTO; team: GroupBuyTeamDTO }>> {
+    const now = new Date();
+    const teams = await this.repo.listTeamsByCustomer(customerId);
+    const out: Array<{ group_buy: GroupBuyDTO; team: GroupBuyTeamDTO }> = [];
+    for (const team of teams) {
+      const activity = await this.repo.findGroupBuy(team.group_buy_id);
+      if (!activity) continue;
+      out.push({ group_buy: activity, team: await this.expireTeamIfNeeded(team, now) });
+    }
+    return out;
+  }
+
+  /**
+   * 成团后领拼团专享券（幂等）。
+   *
+   * 资格只认「我在这个活动里、且我的团已成团」—— 没成团不能领，
+   * 否则拼团就退化成「谁都能领的券」。
+   */
+  async claimGroupBuyVoucher(
+    groupBuyId: string,
+    customerId: string,
+  ): Promise<{ code: string; already_collected: boolean }> {
+    const now = new Date();
+    const activity = await this.repo.findGroupBuy(groupBuyId);
+    if (!activity) throw new DomainError({ code: 30001, message: `拼团活动不存在：${groupBuyId}` });
+
+    const team = await this.repo.findTeamByCustomer(groupBuyId, customerId);
+    if (!team) throw new DomainError({ code: 30002, message: "你还没有参加这个拼团" });
+    const settled = await this.expireTeamIfNeeded(team, now);
+    if (settled.status !== "success") {
+      throw new DomainError({
+        code: 30002,
+        message: settled.status === "expired" ? "这个团已过期，重新参团吧" : "还没成团，凑齐人数后就能领券",
+      });
+    }
+
+    // 系统发放，不走「自助领取」的公开性校验：这张券本来就不该出现在券列表里
+    const res = await this.issueVoucherToCustomer(activity.voucher_id, customerId);
+    return { code: res.code, already_collected: res.alreadyCollected };
+  }
+
+  /** 过期未满的团就地置为 expired（不靠定时任务）。 */
+  private async expireTeamIfNeeded(team: GroupBuyTeamDTO, now: Date): Promise<GroupBuyTeamDTO> {
+    if (team.status !== "forming") return team;
+    if (new Date(team.expires_at).getTime() > now.getTime()) return team;
+    await this.repo.expireTeam(team.id);
+    return { ...team, status: "expired" };
   }
 
   // —— flash_sale（ADR-099）——

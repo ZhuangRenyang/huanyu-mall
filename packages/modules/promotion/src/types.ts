@@ -311,6 +311,55 @@ export interface ComputeDiscountsResult {
 }
 
 // —— Repository（drizzle 实现 + InMemory 测试桩）——
+/** 拼团活动状态（ADR-100）：draft → active → ended。 */
+export type GroupBuyStatus = "draft" | "active" | "ended";
+/** 团状态：等人 / 已成团 / 到期未满。 */
+export type GroupBuyTeamStatus = "forming" | "success" | "expired";
+
+/** 拼团活动（ADR-100）。 */
+export interface GroupBuyDTO {
+  id: string;
+  name: string;
+  variant_id: string;
+  product_id: string;
+  /** 商品/规格快照。 */
+  title: string;
+  original_price_minor: bigint;
+  group_price_minor: bigint;
+  /** 成团人数（含团长）。 */
+  team_size: number;
+  status: GroupBuyStatus;
+  starts_at: string;
+  ends_at: string;
+  /** 成团后发放的专享券（自动创建，不公开领取）。 */
+  voucher_id: string;
+}
+
+/** 拼团团（ADR-100）。 */
+export interface GroupBuyTeamDTO {
+  id: string;
+  group_buy_id: string;
+  leader_customer_id: string;
+  status: GroupBuyTeamStatus;
+  member_count: number;
+  team_size: number;
+  expires_at: string;
+  members: Array<{ customer_id: string; joined_at: string }>;
+}
+
+export interface CreateGroupBuyInput {
+  name: string;
+  variantId: string;
+  /** 商品 id：拼团券按商品设范围，需要它。 */
+  productId: string;
+  title: string;
+  originalPriceMinor: bigint;
+  groupPriceMinor: bigint;
+  teamSize: number;
+  startsAt: Date;
+  endsAt: Date;
+}
+
 /**
  * 秒杀活动状态（ADR-099）。
  *
@@ -475,6 +524,49 @@ export interface PromotionRepository {
   }): Promise<GiftCardEventDTO>;
   listEventsByGiftCard(giftCardId: string): Promise<GiftCardEventDTO[]>;
 
+  // group_buy（ADR-100）
+  insertGroupBuy(row: {
+    id: string;
+    name: string;
+    variantId: string;
+    productId: string;
+    title: string;
+    originalPriceMinor: bigint;
+    groupPriceMinor: bigint;
+    teamSize: number;
+    startsAt: Date;
+    endsAt: Date;
+    voucherId: string;
+  }): Promise<GroupBuyDTO>;
+  findGroupBuy(id: string): Promise<GroupBuyDTO | null>;
+  listGroupBuys(q: {
+    status?: GroupBuyStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: GroupBuyDTO[]; count: number }>;
+  updateGroupBuyStatus(id: string, status: GroupBuyStatus): Promise<GroupBuyDTO | null>;
+  insertTeam(row: {
+    id: string;
+    groupBuyId: string;
+    leaderCustomerId: string;
+    teamSize: number;
+    expiresAt: Date;
+  }): Promise<GroupBuyTeamDTO>;
+  /**
+   * 原子占一个名额：`member_count + 1 <= team_size` 才成功（条件 UPDATE）。
+   * 满员自动置 success；返回 joined=false 表示这个团已满，调用侧换下一个团。
+   */
+  addTeamMemberSlot(teamId: string): Promise<{ joined: boolean; status: GroupBuyTeamStatus }>;
+  insertTeamMember(row: { id: string; teamId: string; customerId: string }): Promise<void>;
+  findTeam(id: string): Promise<GroupBuyTeamDTO | null>;
+  /** 正在等人、未过期的团（按开团先后，先满先成）。 */
+  listFormingTeams(groupBuyId: string, now: Date): Promise<GroupBuyTeamDTO[]>;
+  /** 该顾客在某活动下的团（一个人一个活动只能在一个团里）。 */
+  findTeamByCustomer(groupBuyId: string, customerId: string): Promise<GroupBuyTeamDTO | null>;
+  listTeamsByCustomer(customerId: string): Promise<GroupBuyTeamDTO[]>;
+  /** 到期未满 → expired（惰性判定，不靠后台任务）。 */
+  expireTeam(id: string): Promise<void>;
+
   // flash_sale（ADR-099）
   insertFlashSale(row: { id: string; name: string; startsAt: Date; endsAt: Date }): Promise<FlashSaleDTO>;
   insertFlashSaleItems(
@@ -602,6 +694,35 @@ export interface IPromotionModuleService {
 
   // gift_card_event
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;
+
+  // group_buy（ADR-100）
+  /** 创建拼团活动（草稿），同时自动建一张「拼团专享券」。 */
+  createGroupBuy(input: CreateGroupBuyInput): Promise<GroupBuyDTO>;
+  listGroupBuys(q: {
+    status?: GroupBuyStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: GroupBuyDTO[]; count: number }>;
+  setGroupBuyStatus(id: string, status: "active" | "ended"): Promise<GroupBuyDTO>;
+  /** 店面：进行中的拼团（时间窗内 + 还有空位）。 */
+  listActiveGroupBuys(now?: Date): Promise<GroupBuyDTO[]>;
+  /**
+   * 参团：已在本活动里 → 返回原团；否则优先加入未满的团，没有就自己开团。
+   * 不收款、不建订单、不占库存。
+   */
+  joinGroupBuy(
+    groupBuyId: string,
+    customerId: string,
+  ): Promise<{ team: GroupBuyTeamDTO; joined: boolean }>;
+  /** 我的拼团（含活动信息与团状态）。 */
+  listMyGroupBuys(
+    customerId: string,
+  ): Promise<Array<{ group_buy: GroupBuyDTO; team: GroupBuyTeamDTO }>>;
+  /** 成团后领拼团专享券：只能在已成团的队伍里领，幂等。 */
+  claimGroupBuyVoucher(
+    groupBuyId: string,
+    customerId: string,
+  ): Promise<{ code: string; already_collected: boolean }>;
 
   // flash_sale（ADR-099）
   createFlashSale(input: CreateFlashSaleInput): Promise<FlashSaleDTO>;
