@@ -388,6 +388,12 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
+  /** 通道列表（ADR-083）：修掉后台支付页 live 下静默退回默认值的缺陷。 */
+  app.get("/api/v1/admin/settings/payment-providers", { preHandler: guard }, async (_req, reply) => {
+    const items = await deps.services.payment.listProviderConfigs();
+    reply.ok({ items, count: items.length });
+  });
+
   app.get("/api/v1/admin/settings/payment-providers/:id", { preHandler: guard }, async (req, reply) => {
     const { id } = req.params as { id: string };
     const view = await deps.services.payment.getProviderConfig(id);

@@ -82,6 +82,10 @@ export function makeFakePaymentServices(state: FakeServicesState) {
           options_masked: masked,
         };
       },
+      listProviderConfigs: async () => [
+        { identifier: "alipay", label: "支付宝", is_enabled: true, options_masked: { app_id: "****1234" } },
+        { identifier: "wechat", label: "微信支付", is_enabled: false, options_masked: {} },
+      ],
       getProviderConfig: async (identifier: string) => {
         const masked = providerConfig.get(identifier) ?? {};
         return {

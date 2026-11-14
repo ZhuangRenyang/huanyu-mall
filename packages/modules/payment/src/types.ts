@@ -154,6 +154,13 @@ export interface PaymentRepository {
     optionsEncrypted: string | null;
     isEnabled: boolean;
   } | null>;
+  /** 全部通道配置（后台列表；不含明文密钥）。 */
+  listProviderConfigs(): Promise<Array<{
+    identifier: string;
+    label: string;
+    optionsEncrypted: string | null;
+    isEnabled: boolean;
+  }>>;
   upsertProviderConfig(input: {
     identifier: string;
     label: string;
@@ -193,4 +200,6 @@ export interface IPaymentModuleService {
     enabledChannels?: string[];
   }): Promise<ProviderConfigView>;
   getProviderConfig(identifier: string): Promise<ProviderConfigView | null>;
+  /** 后台通道列表：四家都列出来，未配置的也要显示（否则商家以为只剩一家）。 */
+  listProviderConfigs(): Promise<ProviderConfigView[]>;
 }

@@ -403,6 +403,26 @@ export class PaymentService implements IPaymentModuleService {
   }
 
   /** 回显只返回掩码（末 4 位），绝不回明文。 */
+  async listProviderConfigs(): Promise<ProviderConfigView[]> {
+    const rows = await this.deps.repo.listProviderConfigs();
+    return rows.map((cfg) => {
+      let options: Record<string, unknown> = {};
+      if (cfg.optionsEncrypted) {
+        try {
+          options = decryptOptions(cfg.optionsEncrypted);
+        } catch {
+          options = {};
+        }
+      }
+      return {
+        identifier: cfg.identifier,
+        label: cfg.label,
+        is_enabled: cfg.isEnabled,
+        options_masked: maskOptions(options),
+      };
+    });
+  }
+
   async getProviderConfig(identifier: string): Promise<ProviderConfigView | null> {
     const cfg = await this.deps.repo.findProviderConfig(identifier);
     if (!cfg) return null;
@@ -421,6 +441,10 @@ export class PaymentService implements IPaymentModuleService {
       options_masked: maskOptions(options),
     };
   }
+}
+
+export function maskConfigOptions(options: Record<string, unknown>): Record<string, string> {
+  return maskOptions(options);
 }
 
 function maskOptions(options: Record<string, unknown>): Record<string, string> {

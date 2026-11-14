@@ -277,6 +277,21 @@ export class DrizzlePaymentRepository implements PaymentRepository {
       );
   }
 
+  async listProviderConfigs(): Promise<
+    Array<{ identifier: string; label: string; optionsEncrypted: string | null; isEnabled: boolean }>
+  > {
+    const rows = await this.db
+      .select()
+      .from(schema.paymentProviderConfig)
+      .where(isNull(schema.paymentProviderConfig.deletedAt));
+    return rows.map((r) => ({
+      identifier: r.identifier,
+      label: r.label,
+      optionsEncrypted: r.optionsEncrypted ?? null,
+      isEnabled: r.isEnabled,
+    }));
+  }
+
   async findProviderConfig(identifier: string): Promise<{
     identifier: string;
     label: string;
