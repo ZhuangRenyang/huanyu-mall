@@ -69,6 +69,8 @@ export interface VoucherDTO {
   valid_days: number | null;
   /** 阶梯满减（ADR-086）；空 = 单档。 */
   tiers: Array<{ min_spent_minor: number; discount_minor: number }> | null;
+  /** 适用范围模式（ADR-092）：include = 指定可用；exclude = 指定不可用。 */
+  scope_mode: "include" | "exclude";
 }
 
 /** 券适用范围（ADR-064）：product=指定商品，category=指定分类。 */
@@ -185,6 +187,8 @@ export interface CreateVoucherInput {
   validDays?: number | null;
   /** 阶梯满减（ADR-086）。 */
   tiers?: Array<{ min_spent_minor: number; discount_minor: number }> | null;
+  /** 适用范围模式（ADR-092）：include（默认）= 指定可用；exclude = 指定不可用。 */
+  scopeMode?: "include" | "exclude";
   /**
    * 适用范围（ADR-064）：仅 type='specific_product' 时生效。
    * 创建时 type 为 specific_product 必须给至少一条；更新时不给 = 不改变范围。

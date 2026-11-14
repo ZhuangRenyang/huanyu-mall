@@ -86,6 +86,8 @@ export const voucher = pgTable("voucher", {
   validDays: integer("valid_days"),
   /** 阶梯满减（ADR-086）：[{min_spent_minor, discount_minor}]；空 = 单档。 */
   tiers: jsonb("tiers"),
+  /** 适用范围模式（ADR-092）：include = 指定可用；exclude = 指定不可用。 */
+  scopeMode: text("scope_mode").notNull().default("include"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),

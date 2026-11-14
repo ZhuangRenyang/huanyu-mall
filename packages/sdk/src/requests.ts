@@ -262,6 +262,8 @@ export interface CreateVoucherRequest {
   tiers?: Array<{ min_spent_minor: number; discount_minor: number }> | null;
   /** 适用范围（ADR-064）：指定商品/分类。 */
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
+  /** 适用范围模式（ADR-092）：include = 指定可用；exclude = 指定不可用。 */
+  scope_mode?: 'include' | 'exclude';
 }
 
 /** 更新优惠券。 */
@@ -279,6 +281,7 @@ export interface UpdateVoucherRequest {
   valid_days?: number | null;
   tiers?: Array<{ min_spent_minor: number; discount_minor: number }> | null;
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
+  scope_mode?: 'include' | 'exclude';
 }
 
 /** 追加券码（一券多码）。 */

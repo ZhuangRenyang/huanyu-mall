@@ -268,6 +268,7 @@ export class DrizzlePromotionRepository implements PromotionRepository {
         collectLimit: input.collectLimit ?? 1,
         validDays: input.validDays ?? null,
         tiers: input.tiers ?? null,
+        scopeMode: input.scopeMode ?? "include",
       })
       .returning();
     return toVoucherDTO(rows[0]!);
@@ -315,6 +316,7 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     if (patch.collectLimit !== undefined) set.collectLimit = patch.collectLimit;
     if (patch.validDays !== undefined) set.validDays = patch.validDays;
     if (patch.tiers !== undefined) set.tiers = patch.tiers;
+    if (patch.scopeMode !== undefined) set.scopeMode = patch.scopeMode;
     const rows = await this.db
       .update(schema.voucher)
       .set(set)
@@ -784,6 +786,7 @@ function toVoucherDTO(r: typeof schema.voucher.$inferSelect): VoucherDTO {
     collect_limit: r.collectLimit,
     valid_days: r.validDays,
     tiers: r.tiers as VoucherDTO["tiers"],
+    scope_mode: (r.scopeMode as VoucherDTO["scope_mode"]) ?? "include",
   };
 }
 

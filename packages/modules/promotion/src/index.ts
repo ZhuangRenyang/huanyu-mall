@@ -19,6 +19,10 @@ export default Module("promotion", {
     "migrations/0002_features.sql",
     "migrations/0003_voucher_collection.sql",
     "migrations/0004_voucher_scope.sql",
+    // 0005/0006 此前建了文件却漏注册（ADR-085/ADR-086 的存量缺陷），一并补上
+    "migrations/0005_voucher_valid_days.sql",
+    "migrations/0006_voucher_tiers.sql",
+    "migrations/0012_voucher_scope_mode.sql",
   ],
   linkable,
 });

@@ -72,15 +72,17 @@ const createVoucherBody = z
       .optional(),
     /** 适用范围：仅 type='specific_product' 时需要。 */
     scopes: z.array(voucherScopeSchema).min(1).max(200).optional(),
+    /** 适用范围模式（ADR-092）：include = 指定可用；exclude = 指定不可用。 */
+    scope_mode: z.enum(["include", "exclude"]).optional(),
   })
   .refine(
     (b) => b.discount_type !== "percentage" || b.discount_value <= MAX_PERCENTAGE_BPS,
     { path: ["discount_value"], message: "百分比折扣不得超过 100%（10000 bps）" },
   )
   .refine(
-    // 指定商品券必须说清楚「哪些商品/分类」，否则范围为空会变成一张永远用不了的券
+    // 指定商品券必须说清楚范围：include 没范围 = 永远用不了；exclude 没范围 = 退化成全场券，语义不明
     (b) => b.type !== "specific_product" || (b.scopes !== undefined && b.scopes.length > 0),
-    { path: ["scopes"], message: "指定商品券必须至少选择一个商品或分类" },
+    { path: ["scopes"], message: "指定商品券必须说明范围（可用或不可用的商品/分类）" },
   );
 
 const updateVoucherBody = z.object({
@@ -106,6 +108,7 @@ const updateVoucherBody = z.object({
     .nullable()
     .optional(),
   scopes: z.array(voucherScopeSchema).min(1).max(200).optional(),
+  scope_mode: z.enum(["include", "exclude"]).optional(),
 });
 
 const addCodesBody = z.object({ codes: z.array(z.string().min(1)).min(1).max(100) });
@@ -130,6 +133,7 @@ function mapVoucher(v: VoucherDTO) {
     status: v.status,
     is_public: v.is_public,
     collect_limit: v.collect_limit,
+    scope_mode: v.scope_mode,
   };
 }
 
@@ -577,6 +581,7 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         collectLimit: b.collect_limit,
         validDays: b.valid_days ?? null,
         tiers: b.tiers ?? null,
+        scopeMode: b.scope_mode,
         ...(b.scopes ? { scopes: b.scopes.map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })) } : {}),
       });
       const codes = b.codes && b.codes.length > 0 ? b.codes : [generateVoucherCode()];
@@ -645,6 +650,7 @@ export function adminPromotionRoutes(app: FastifyInstance, deps: AppDeps): void 
         collectLimit: b.collect_limit,
         validDays: b.valid_days ?? null,
         tiers: b.tiers ?? null,
+        scopeMode: b.scope_mode,
         ...(b.scopes !== undefined
           ? { scopes: b.scopes.map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })) }
           : {}),

@@ -211,6 +211,8 @@ export interface AdminVoucher {
   tiers?: Array<{ min_spent_minor: number; discount_minor: number }> | null;
   /** 适用范围（ADR-064）：type='specific_product' 时返回。 */
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
+  /** 适用范围模式（ADR-092）：include = 指定可用；exclude = 指定不可用。 */
+  scope_mode?: 'include' | 'exclude';
 }
 
 /** 券码（一券多码）。 */

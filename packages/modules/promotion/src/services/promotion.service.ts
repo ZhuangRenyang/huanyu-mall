@@ -36,6 +36,7 @@ import type {
   VoucherDTO,
   VoucherScopeDTO,
   VoucherScopeInput,
+  VoucherType,
 } from "../types.js";
 import { evalPredicate } from "./predicate.js";
 
@@ -188,16 +189,9 @@ export class PromotionService implements IPromotionModuleService {
     customerId?: string | null;
   }): Promise<PublicVoucherDTO[]> {
     const all = await this.listPublicVouchers(input.customerId);
-    const categories = new Set(input.categoryIds ?? []);
-    return all.filter((v) => {
-      if (v.type !== "specific_product") return true;
-      const scopes = v.scopes ?? [];
-      return scopes.some((sc) =>
-        sc.scope_type === "product"
-          ? sc.scope_id === input.productId
-          : categories.has(sc.scope_id),
-      );
-    });
+    return all.filter((v) =>
+      voucherIncludesItem(v.type, v.scope_mode, v.scopes ?? [], input.productId, input.categoryIds ?? []),
+    );
   }
 
   /**
@@ -721,16 +715,41 @@ function eligibleVoucherBase(
   ctx: ComputeDiscountsInput,
 ): bigint {
   if (voucher.type !== "specific_product") return ctx.subtotalMinor;
-  if (scopes.length === 0) return 0n;
-  const productIds = new Set(scopes.filter((s) => s.scope_type === "product").map((s) => s.scope_id));
-  const categoryIds = new Set(scopes.filter((s) => s.scope_type === "category").map((s) => s.scope_id));
   let sum = 0n;
   for (const item of ctx.items) {
-    const hitProduct = item.productId !== undefined && productIds.has(item.productId);
-    const hitCategory = item.categoryIds.some((c) => categoryIds.has(c));
-    if (hitProduct || hitCategory) sum += item.unitPriceMinor * BigInt(item.quantity);
+    if (voucherIncludesItem(voucher.type, voucher.scope_mode, scopes, item.productId, item.categoryIds)) {
+      sum += item.unitPriceMinor * BigInt(item.quantity);
+    }
   }
   return sum;
+}
+
+/**
+ * 券是否覆盖某个商品（ADR-092）。
+ *
+ * 商品页「可用券」与结账「适用小计」必须用**同一个**判定，否则会出现
+ * 「商品页说能用、结账却用不了」的不一致（ADR-071 的同款教训）。
+ *
+ * - 非 specific_product：全场/运费券，覆盖所有商品；
+ * - include：白名单，命中商品/分类才覆盖；
+ * - exclude：黑名单，不在排除列表即覆盖（空列表 = 全场）。
+ */
+export function voucherIncludesItem(
+  type: VoucherType,
+  scopeMode: "include" | "exclude" | null | undefined,
+  scopes: Array<{ scope_type: "product" | "category"; scope_id: string }>,
+  productId: string | undefined,
+  categoryIds: string[],
+): boolean {
+  if (type !== "specific_product") return true;
+  const mode = scopeMode ?? "include";
+  const hitProduct =
+    productId !== undefined &&
+    scopes.some((s) => s.scope_type === "product" && s.scope_id === productId);
+  const hitCategory = scopes.some(
+    (s) => s.scope_type === "category" && categoryIds.includes(s.scope_id),
+  );
+  return mode === "exclude" ? !(hitProduct || hitCategory) : hitProduct || hitCategory;
 }
 
 /** 券是否在有效期内（起止都可空，空 = 不限）。 */

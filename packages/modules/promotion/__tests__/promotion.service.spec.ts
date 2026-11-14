@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { giftCardNotFound, voucherCodeNotFound } from "../src/errors.js";
-import { PromotionService, voucherCodeExpiry } from "../src/services/promotion.service.js";
+import { PromotionService, voucherCodeExpiry, voucherIncludesItem } from "../src/services/promotion.service.js";
 import type {
   CollectedVoucherDTO,
   CreateGiftCardInput,
@@ -169,6 +169,7 @@ class InMemoryPromotionRepository implements PromotionRepository {
       collect_limit: input.collectLimit ?? 1,
       valid_days: input.validDays ?? null,
       tiers: input.tiers ?? null,
+      scope_mode: input.scopeMode ?? "include",
     };
     this.vouchers.set(dto.id, dto);
     return dto;
@@ -198,6 +199,7 @@ class InMemoryPromotionRepository implements PromotionRepository {
       collect_limit: patch.collectLimit !== undefined ? patch.collectLimit : cur.collect_limit,
       valid_days: patch.validDays !== undefined ? patch.validDays : cur.valid_days,
       tiers: patch.tiers !== undefined ? patch.tiers : cur.tiers,
+      scope_mode: patch.scopeMode !== undefined ? patch.scopeMode : cur.scope_mode,
     };
     this.vouchers.set(id, next);
     return next;
@@ -1560,5 +1562,65 @@ describe("领取后 N 天有效（ADR-085）", () => {
     const now = new Date("2026-11-14T10:00:00.000Z");
     expect(voucherCodeExpiry(1, now)?.toISOString()).toBe("2026-11-15T10:00:00.000Z");
     expect(voucherCodeExpiry(30, now)?.toISOString()).toBe("2026-12-14T10:00:00.000Z");
+  });
+});
+
+describe("券排除范围（ADR-092）", () => {
+  it("voucherIncludesItem：include 白名单 / exclude 黑名单", () => {
+    const scopes = [{ scope_type: "product" as const, scope_id: "p2" }];
+    // 非指定商品券覆盖所有
+    expect(voucherIncludesItem("entire_order", "include", [], "p1", [])).toBe(true);
+    // include：命中才 true
+    expect(voucherIncludesItem("specific_product", "include", scopes, "p2", [])).toBe(true);
+    expect(voucherIncludesItem("specific_product", "include", scopes, "p1", [])).toBe(false);
+    // exclude：不在排除列表才 true
+    expect(voucherIncludesItem("specific_product", "exclude", scopes, "p2", [])).toBe(false);
+    expect(voucherIncludesItem("specific_product", "exclude", scopes, "p1", [])).toBe(true);
+    // exclude + 空列表 = 全场
+    expect(voucherIncludesItem("specific_product", "exclude", [], "p1", [])).toBe(true);
+    // scope_mode 缺省按 include（老数据）
+    expect(voucherIncludesItem("specific_product", null, scopes, "p1", [])).toBe(false);
+  });
+
+  it("computeDiscounts：exclude 券的适用小计 = 整单 - 排除项", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({
+      name: "除清仓外满 100 减 20",
+      type: "specific_product",
+      discountType: "fixed",
+      discountValue: 2000n,
+      minSpent: 10000n,
+      scopeMode: "exclude",
+      scopes: [{ scopeType: "product", scopeId: "p_clearance" }],
+    });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "EXCL" });
+
+    // p1 常规商品 200 元 + p_clearance 清仓商品 50 元：排除后适用小计 = 200，满足满 100
+    const res = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [
+        { id: "cli_1", variantId: "var_1", productId: "p1", categoryIds: [], quantity: 1, unitPriceMinor: 20000n },
+        { id: "cli_2", variantId: "var_2", productId: "p_clearance", categoryIds: [], quantity: 1, unitPriceMinor: 5000n },
+      ],
+      subtotalMinor: 25000n,
+      shippingMinor: 0n,
+      voucherCodes: ["EXCL"],
+      giftCardCodes: [],
+    });
+    expect(res.voucherDiscountMinor).toBe(2000n);
+
+    // 反过来：车里只有清仓商品，排除后适用小计 = 0，这张券用不了
+    const resOnlyClearance = await service.computeDiscounts({
+      currencyCode: "CNY",
+      items: [
+        { id: "cli_2", variantId: "var_2", productId: "p_clearance", categoryIds: [], quantity: 1, unitPriceMinor: 5000n },
+      ],
+      subtotalMinor: 5000n,
+      shippingMinor: 0n,
+      voucherCodes: ["EXCL"],
+      giftCardCodes: [],
+    });
+    expect(resOnlyClearance.voucherDiscountMinor).toBe(0n);
   });
 });

@@ -255,7 +255,8 @@ function VoucherEditor({
   const [validDays, setValidDays] = useState('');
   /** 阶梯满减（ADR-086）：每行「满 199 减 20」，留空 = 单档。 */
   const [tiersText, setTiersText] = useState('');
-  /* 适用范围（ADR-064）：只有 type='specific_product' 时显示与提交 */
+  /* 适用范围（ADR-064 / ADR-092）：只有 type='specific_product' 时显示与提交 */
+  const [scopeMode, setScopeMode] = useState<'include' | 'exclude'>('include');
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
   const [productIds, setProductIds] = useState<string[]>([]);
   const [productTitles, setProductTitles] = useState<Record<string, string>>({});
@@ -309,7 +310,8 @@ function VoucherEditor({
         .map((t) => `满 ${minorToYuan(t.minSpentMinor)} 减 ${minorToYuan(t.discountMinor)}`)
         .join('\n'),
     );
-    // 范围回填（ADR-064）
+    // 范围回填（ADR-064 / ADR-092）
+    setScopeMode(voucher?.scopeMode ?? 'include');
     const scopes = voucher?.scopes ?? [];
     setCategoryIds(scopes.filter((sc) => sc.scopeType === 'category').map((sc) => sc.scopeId));
     setProductIds(scopes.filter((sc) => sc.scopeType === 'product').map((sc) => sc.scopeId));
@@ -341,7 +343,7 @@ function VoucherEditor({
       ...productIds.map((id) => ({ scopeType: 'product' as const, scopeId: id })),
     ];
     if (type === 'specific_product' && scopes.length === 0) {
-      setError('指定商品券必须至少选择一个分类或商品');
+      setError(scopeMode === 'exclude' ? '请选择要排除的分类或商品' : '指定商品券必须至少选择一个分类或商品');
       return;
     }
     const input: VoucherInput = {
@@ -357,6 +359,7 @@ function VoucherEditor({
       collectLimit: collectLimit.trim() ? Math.max(1, Math.round(Number(collectLimit))) : 1,
       validDays: validDays.trim() ? Math.max(1, Math.round(Number(validDays))) : null,
       tiers: parseTiers(tiersText),
+      scopeMode,
       ...(voucher ? {} : { codes: parseCodes() }),
       ...(type === 'specific_product' ? { scopes } : {}),
     };
@@ -418,8 +421,33 @@ function VoucherEditor({
           {type === 'specific_product' && (
             <div className="space-y-3 rounded-md border border-border p-3">
               <p className="text-sm font-medium text-foreground">适用范围</p>
+              {/* 适用范围方式（ADR-092）：指定可用 / 指定不可用 */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">方式：</span>
+                {(
+                  [
+                    { value: 'include' as const, label: '指定商品可用' },
+                    { value: 'exclude' as const, label: '指定商品不可用' },
+                  ]
+                ).map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => setScopeMode(m.value)}
+                    className={
+                      scopeMode === m.value
+                        ? 'rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground'
+                        : 'rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted'
+                    }
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
               <p className="text-xs text-muted-foreground">
-                只有勾选的商品或分类参与满减门槛与折扣计算；不选任何范围这张券用不了。
+                {scopeMode === 'exclude'
+                  ? '除下面勾选的商品或分类外，全场可用；适合「除清仓外通用」这类券。'
+                  : '只有勾选的商品或分类参与满减门槛与折扣计算；不选任何范围这张券用不了。'}
               </p>
 
               {/* 分类勾选 */}

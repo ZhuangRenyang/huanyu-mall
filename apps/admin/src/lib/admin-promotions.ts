@@ -48,6 +48,8 @@ export interface VoucherView {
   tiers: Array<{ minSpentMinor: number; discountMinor: number }> | null;
   /** 适用范围（ADR-064）：type='specific_product' 时非空。 */
   scopes: VoucherScopeView[];
+  /** 适用范围模式（ADR-092）：include = 指定可用；exclude = 指定不可用。 */
+  scopeMode: 'include' | 'exclude';
 }
 
 export interface VoucherCodeView {
@@ -103,6 +105,8 @@ export interface VoucherInput {
   tiers: Array<{ minSpentMinor: number; discountMinor: number }> | null;
   /** 适用范围（ADR-064）：仅 type='specific_product' 时传。 */
   scopes?: VoucherScopeView[];
+  /** 适用范围模式（ADR-092）：include = 指定可用；exclude = 指定不可用。 */
+  scopeMode: 'include' | 'exclude';
 }
 
 export interface GiftCardInput {
@@ -135,6 +139,7 @@ function mapVoucher(v: AdminVoucher): VoucherView {
       ? v.tiers.map((t) => ({ minSpentMinor: t.min_spent_minor, discountMinor: t.discount_minor }))
       : null,
     scopes: (v.scopes ?? []).map((sc) => ({ scopeType: sc.scope_type, scopeId: sc.scope_id })),
+    scopeMode: v.scope_mode === 'exclude' ? 'exclude' : 'include',
   };
 }
 
@@ -199,6 +204,7 @@ const SEED_VOUCHERS: VoucherView[] = [
     validDays: null,
     tiers: null,
     scopes: [],
+    scopeMode: 'include',
   },
 ];
 
@@ -345,6 +351,7 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
       // mock 存视图模型（camel），真实请求体才转 snake
       tiers: input.tiers,
       scopes: input.scopes ?? [],
+      scopeMode: input.scopeMode,
     };
     mockSaveVoucher(v);
     return { ...v, codes: [] };
@@ -361,6 +368,7 @@ export async function createVoucher(input: VoucherInput): Promise<VoucherDetailV
     is_public: input.isPublic,
     collect_limit: input.collectLimit,
     valid_days: input.validDays,
+    scope_mode: input.scopeMode,
     tiers: input.tiers
       ? input.tiers.map((t) => ({ min_spent_minor: t.minSpentMinor, discount_minor: t.discountMinor }))
       : null,
@@ -392,6 +400,7 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
         ? input.tiers.map((t) => ({ min_spent_minor: t.minSpentMinor, discount_minor: t.discountMinor }))
         : null,
         scopes: input.scopes ?? [],
+        scopeMode: input.scopeMode,
       });
       mockSaveVoucher(v);
     }
@@ -409,6 +418,7 @@ export async function updateVoucher(id: string, input: VoucherInput): Promise<vo
     is_public: input.isPublic,
     collect_limit: input.collectLimit,
     valid_days: input.validDays,
+    scope_mode: input.scopeMode,
     tiers: input.tiers
       ? input.tiers.map((t) => ({ min_spent_minor: t.minSpentMinor, discount_minor: t.discountMinor }))
       : null,
