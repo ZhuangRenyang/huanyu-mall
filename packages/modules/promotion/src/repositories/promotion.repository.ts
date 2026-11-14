@@ -267,6 +267,7 @@ export class DrizzlePromotionRepository implements PromotionRepository {
         isPublic: input.isPublic ?? false,
         collectLimit: input.collectLimit ?? 1,
         validDays: input.validDays ?? null,
+        tiers: input.tiers ?? null,
       })
       .returning();
     return toVoucherDTO(rows[0]!);
@@ -313,6 +314,7 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     if (patch.isPublic !== undefined) set.isPublic = patch.isPublic;
     if (patch.collectLimit !== undefined) set.collectLimit = patch.collectLimit;
     if (patch.validDays !== undefined) set.validDays = patch.validDays;
+    if (patch.tiers !== undefined) set.tiers = patch.tiers;
     const rows = await this.db
       .update(schema.voucher)
       .set(set)
@@ -781,6 +783,7 @@ function toVoucherDTO(r: typeof schema.voucher.$inferSelect): VoucherDTO {
     is_public: r.isPublic,
     collect_limit: r.collectLimit,
     valid_days: r.validDays,
+    tiers: r.tiers as VoucherDTO["tiers"],
   };
 }
 

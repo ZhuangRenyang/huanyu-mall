@@ -84,6 +84,8 @@ export const voucher = pgTable("voucher", {
   collectLimit: integer("collect_limit").notNull().default(1),
   /** 领取后 N 天有效（ADR-085）；空 = 只用 starts_at/ends_at 固定窗口。 */
   validDays: integer("valid_days"),
+  /** 阶梯满减（ADR-086）：[{min_spent_minor, discount_minor}]；空 = 单档。 */
+  tiers: jsonb("tiers"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   deletedAt: timestamp("deleted_at", { withTimezone: true }),

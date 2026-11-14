@@ -687,6 +687,19 @@ function computeOrderRuleDiscount(rule: PromotionRuleDTO, subtotalMinor: bigint)
  * 结果恒 >= 0；封顶到小计由调用方负责。
  */
 function computeVoucherDiscount(voucher: VoucherDTO, subtotalMinor: bigint): bigint {
+  /*
+   * 阶梯满减（ADR-086）：取「已满足门槛」的最高一档。
+   * 一档都没满足返回 0 —— 调用方看到 0 会跳过这张券，不会把它当「不打折但可用」。
+   */
+  if (voucher.tiers && voucher.tiers.length > 0) {
+    const eligible = voucher.tiers
+      .filter((t) => subtotalMinor >= BigInt(t.min_spent_minor))
+      .sort((a, b) => b.min_spent_minor - a.min_spent_minor);
+    if (eligible.length === 0) return 0n;
+    const off = BigInt(eligible[0]!.discount_minor);
+    // 抵扣不超过适用小计：满 199 减 500 这种配置不能把订单打成负数
+    return off > subtotalMinor ? subtotalMinor : off;
+  }
   if (voucher.discount_type === "fixed") {
     return voucher.discount_value;
   }

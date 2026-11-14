@@ -253,6 +253,8 @@ function VoucherEditor({
   const [collectLimit, setCollectLimit] = useState('1');
   /** 领取后 N 天有效（ADR-085）；空 = 用上面的固定区间。 */
   const [validDays, setValidDays] = useState('');
+  /** 阶梯满减（ADR-086）：每行「满 199 减 20」，留空 = 单档。 */
+  const [tiersText, setTiersText] = useState('');
   /* 适用范围（ADR-064）：只有 type='specific_product' 时显示与提交 */
   const [categoryIds, setCategoryIds] = useState<string[]>([]);
   const [productIds, setProductIds] = useState<string[]>([]);
@@ -302,6 +304,11 @@ function VoucherEditor({
     setIsPublic(voucher?.isPublic ?? false);
     setCollectLimit(String(voucher?.collectLimit ?? 1));
     setValidDays(voucher?.validDays != null ? String(voucher.validDays) : '');
+    setTiersText(
+      (voucher?.tiers ?? [])
+        .map((t) => `满 ${minorToYuan(t.minSpentMinor)} 减 ${minorToYuan(t.discountMinor)}`)
+        .join('\n'),
+    );
     // 范围回填（ADR-064）
     const scopes = voucher?.scopes ?? [];
     setCategoryIds(scopes.filter((sc) => sc.scopeType === 'category').map((sc) => sc.scopeId));
@@ -349,6 +356,7 @@ function VoucherEditor({
       isPublic,
       collectLimit: collectLimit.trim() ? Math.max(1, Math.round(Number(collectLimit))) : 1,
       validDays: validDays.trim() ? Math.max(1, Math.round(Number(validDays))) : null,
+      tiers: parseTiers(tiersText),
       ...(voucher ? {} : { codes: parseCodes() }),
       ...(type === 'specific_product' ? { scopes } : {}),
     };
@@ -587,6 +595,20 @@ function VoucherEditor({
                 <p className="mt-1 text-xs text-muted-foreground">
                   填了就按「领取那一刻起 N 天」算，与固定区间取更早的截止时间。
                 </p>
+                <label htmlFor="v-tiers" className="mt-3 block text-xs font-medium text-muted-foreground">
+                  阶梯满减（选填，每行一档：满 199 减 20）
+                </label>
+                <textarea
+                  id="v-tiers"
+                  rows={3}
+                  value={tiersText}
+                  onChange={(e) => setTiersText(e.target.value)}
+                  placeholder={"满 199 减 20\n满 299 减 40"}
+                  className="mt-1 w-full rounded-md border border-border px-3 py-2 text-sm"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  填了阶梯就用阶梯，单档金额与门槛不再生效；取满足门槛的最高一档。
+                </p>
               </div>
             )}
           </div>
@@ -772,4 +794,16 @@ function VoucherCodesDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** 「满 199 减 20」→ minor；解析不了的行忽略，不让一个笔误把整张券存坏。 */
+function parseTiers(text: string): Array<{ minSpentMinor: number; discountMinor: number }> | null {
+  const rows = text
+    .split('\n')
+    .map((line) => line.match(/满\s*(\d+(?:\.\d+)?)\s*减\s*(\d+(?:\.\d+)?)/))
+    .filter((m): m is RegExpMatchArray => Boolean(m))
+    .map((m) => ({ minSpentMinor: yuanToMinor(m[1]!), discountMinor: yuanToMinor(m[2]!) }))
+    .filter((t) => t.minSpentMinor > 0 && t.discountMinor > 0)
+    .sort((a, b) => a.minSpentMinor - b.minSpentMinor);
+  return rows.length > 0 ? rows : null;
 }

@@ -258,6 +258,8 @@ export interface CreateVoucherRequest {
   collect_limit?: number;
   /** 领取后 N 天有效（ADR-085）。 */
   valid_days?: number | null;
+  /** 阶梯满减（ADR-086）。 */
+  tiers?: Array<{ min_spent_minor: number; discount_minor: number }> | null;
   /** 适用范围（ADR-064）：指定商品/分类。 */
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }
@@ -275,6 +277,7 @@ export interface UpdateVoucherRequest {
   is_public?: boolean;
   collect_limit?: number;
   valid_days?: number | null;
+  tiers?: Array<{ min_spent_minor: number; discount_minor: number }> | null;
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }
 

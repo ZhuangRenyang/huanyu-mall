@@ -207,6 +207,8 @@ export interface AdminVoucher {
   collect_limit?: number;
   /** 领取后 N 天有效（ADR-085）；空 = 跟随固定区间。 */
   valid_days?: number | null;
+  /** 阶梯满减（ADR-086）。 */
+  tiers?: Array<{ min_spent_minor: number; discount_minor: number }> | null;
   /** 适用范围（ADR-064）：type='specific_product' 时返回。 */
   scopes?: Array<{ scope_type: 'product' | 'category'; scope_id: string }>;
 }

@@ -167,6 +167,8 @@ class InMemoryPromotionRepository implements PromotionRepository {
       status: input.status ?? "active",
       is_public: input.isPublic ?? false,
       collect_limit: input.collectLimit ?? 1,
+      valid_days: input.validDays ?? null,
+      tiers: input.tiers ?? null,
     };
     this.vouchers.set(dto.id, dto);
     return dto;
@@ -194,6 +196,8 @@ class InMemoryPromotionRepository implements PromotionRepository {
       status: patch.status ?? cur.status,
       is_public: patch.isPublic !== undefined ? patch.isPublic : cur.is_public,
       collect_limit: patch.collectLimit !== undefined ? patch.collectLimit : cur.collect_limit,
+      valid_days: patch.validDays !== undefined ? patch.validDays : cur.valid_days,
+      tiers: patch.tiers !== undefined ? patch.tiers : cur.tiers,
     };
     this.vouchers.set(id, next);
     return next;
@@ -859,6 +863,37 @@ describe("PromotionService（M-promotion，阶段 1 CRUD 骨架）", () => {
     });
     expect(res.voucherDiscountMinor).toBe(2000n);
     expect(res.voucherDiscounts).toEqual([{ promotionId: voucher.id, code: "SAVE20", amountMinor: 2000n }]);
+  });
+
+  it("computeDiscounts：阶梯满减取满足门槛的最高档（ADR-086）", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    const voucher = await service.createVoucher({
+      name: "阶梯券",
+      discountType: "fixed",
+      discountValue: 0n,
+      tiers: [
+        { min_spent_minor: 19900, discount_minor: 2000 },
+        { min_spent_minor: 29900, discount_minor: 4000 },
+      ],
+    });
+    await service.addVoucherCode({ voucherId: voucher.id, code: "TIER" });
+
+    const cart = (subtotalMinor: bigint) =>
+      service.computeDiscounts({
+        currencyCode: "CNY",
+        items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: subtotalMinor }],
+        subtotalMinor,
+        shippingMinor: 0n,
+        voucherCodes: ["TIER"],
+        giftCardCodes: [],
+      });
+
+    // 199 满足第一档；250 仍是第一档；300 进第二档；150 一档都不满足 → 0
+    expect((await cart(19900n)).voucherDiscountMinor).toBe(2000n);
+    expect((await cart(25000n)).voucherDiscountMinor).toBe(2000n);
+    expect((await cart(30000n)).voucherDiscountMinor).toBe(4000n);
+    expect((await cart(15000n)).voucherDiscountMinor).toBe(0n);
   });
 
   it("computeDiscounts：voucher percentage = round(小计×bps/10000)", async () => {
