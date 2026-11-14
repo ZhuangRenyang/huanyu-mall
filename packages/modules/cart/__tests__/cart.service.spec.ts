@@ -273,6 +273,9 @@ class FakePromotionLookup implements PromotionLookupPort {
       // 秒杀（ADR-099）：这个测试桩不模拟秒杀，固定无
       flashDiscountMinor: 0n,
       flashAdjustments: [],
+      // 会员折扣（ADR-102）：这个测试桩不模拟等级，固定无
+      memberDiscountMinor: 0n,
+      memberAdjustments: [],
     };
   }
 }

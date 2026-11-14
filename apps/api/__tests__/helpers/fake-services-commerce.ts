@@ -92,6 +92,14 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   };
   // —— 领券（ADR-029）：内存版，够驱动路由层契约测试 ——
   const collections = new Map<string, { voucherId: string; customerId: string; code: string }>();
+  // 会员等级（ADR-102）：内存阶梯
+  const memberLevels: Array<{
+    id: string;
+    name: string;
+    threshold_minor: bigint;
+    discount_bps: number;
+    sort: number;
+  }> = [];
   // 分销（ADR-101）：内存推广员 / 佣金流水
   const affiliates: Array<{
     id: string;
@@ -915,6 +923,60 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   return {
     promotion,
     customer: {
+      /*
+       * 会员等级（ADR-102）：内存阶梯。语义与真实服务一致 ——
+       * 门槛唯一、按累计消费取满足门槛的最高一档。
+       */
+      // 注意：门槛是 bigint，比较器必须返回 number（BigInt 相减会抛 TypeError）
+      listMemberLevels: async () =>
+        [...memberLevels].sort((a, b) =>
+          a.threshold_minor < b.threshold_minor ? -1 : a.threshold_minor > b.threshold_minor ? 1 : 0,
+        ),
+      createMemberLevel: async (input: { name: string; thresholdMinor: bigint; discountBps: number }) => {
+        if (!input.name.trim()) throw new DomainError({ code: 20001, message: "请填写等级名称" });
+        if (input.discountBps <= 0 || input.discountBps > 3000) {
+          throw new DomainError({ code: 20001, message: "会员折扣需在 0.01%–30% 之间" });
+        }
+        if (memberLevels.some((l) => l.threshold_minor === input.thresholdMinor)) {
+          throw new DomainError({ code: 20001, message: "已有一档等级使用相同的消费门槛" });
+        }
+        const dto = {
+          id: `lvl_${memberLevels.length + 1}`,
+          name: input.name.trim(),
+          threshold_minor: input.thresholdMinor,
+          discount_bps: input.discountBps,
+          sort: memberLevels.length,
+        };
+        memberLevels.push(dto);
+        return dto;
+      },
+      updateMemberLevel: async (
+        id: string,
+        patch: { name?: string; thresholdMinor?: bigint; discountBps?: number },
+      ) => {
+        const lvl = memberLevels.find((l) => l.id === id);
+        if (!lvl) throw new DomainError({ code: 30001, message: `会员等级不存在：${id}` });
+        if (patch.name !== undefined) lvl.name = patch.name;
+        if (patch.thresholdMinor !== undefined) lvl.threshold_minor = patch.thresholdMinor;
+        if (patch.discountBps !== undefined) lvl.discount_bps = patch.discountBps;
+        return lvl;
+      },
+      resolveMemberLevel: async (spendMinor: bigint) => {
+        let hit = null as (typeof memberLevels)[number] | null;
+        for (const l of [...memberLevels].sort((x, y) =>
+          x.threshold_minor < y.threshold_minor ? -1 : x.threshold_minor > y.threshold_minor ? 1 : 0,
+        )) {
+          if (spendMinor >= l.threshold_minor) hit = l;
+        }
+        return hit;
+      },
+      getMemberDiscountBps: async (spendMinor: bigint) => {
+        let bps = 0;
+        for (const l of memberLevels) {
+          if (spendMinor >= l.threshold_minor) bps = l.discount_bps;
+        }
+        return bps;
+      },
       retrieveCustomer: async (id: string) => {
         if (id !== "cust_1") {
           throw new DomainError({ code: 30001, message: `客户不存在：${id}` });

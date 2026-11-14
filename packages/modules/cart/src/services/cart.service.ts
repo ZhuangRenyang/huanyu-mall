@@ -56,6 +56,15 @@ export class CartService implements ICartModuleService {
     );
     const categoryMap = new Map(categoryIdsByProduct.map((c) => [c.productId, c.categoryIds]));
 
+    /*
+     * 会员折扣力度（ADR-102）：登录顾客才有；没接会员端口或查不到等级 → 0。
+     * 只问「打几折」，具体算多少钱仍在 promotion 里按行计算（铁律 13）。
+     */
+    const memberBps =
+      cart.customer_id && this.deps.membership
+        ? await this.deps.membership.getDiscountBps(cart.customer_id)
+        : 0;
+
     const discounts = await this.deps.promotion.computeDiscounts({
       currencyCode: cart.currency_code,
       customerId: cart.customer_id,
@@ -75,6 +84,8 @@ export class CartService implements ICartModuleService {
       giftCardCodes: cart.gift_card_codes,
       // 积分抵扣意愿：只传点数，抵扣额由 promotion 折算封顶（ADR-094）
       pointsToUse: cart.points_to_use,
+      // 会员折扣（ADR-102）：等级由客户域判定，购物车只取力度（bps）
+      memberDiscountBps: memberBps,
     });
 
     /*
@@ -88,10 +99,14 @@ export class CartService implements ICartModuleService {
     for (const a of discounts.flashAdjustments) {
       discountByItem.set(a.itemId, (discountByItem.get(a.itemId) ?? 0n) + a.amountMinor);
     }
+    for (const a of discounts.memberAdjustments) {
+      discountByItem.set(a.itemId, (discountByItem.get(a.itemId) ?? 0n) + a.amountMinor);
+    }
     // discount = 行级折扣合计 + 订单级折扣 + voucher 折扣（阶段 4）+ gift card 抵扣（阶段 5）。
     const lineDiscountMinor =
       discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n) +
-      discounts.flashAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+      discounts.flashAdjustments.reduce((s, a) => s + a.amountMinor, 0n) +
+      discounts.memberDiscountMinor;
     const discountMinor =
       lineDiscountMinor +
       discounts.orderDiscountMinor +
@@ -381,6 +396,8 @@ function buildDiscountDetails(discounts: {
   orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
   voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
   giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+  memberDiscountMinor: bigint;
+  memberAdjustments: Array<{ itemId: string; amountMinor: bigint }>;
   flashDiscountMinor: bigint;
   flashAdjustments: Array<{
     itemId: string;
@@ -415,6 +432,11 @@ function buildDiscountDetails(discounts: {
   }
   for (const [flashSaleItemId, amountMinor] of flashByItem) {
     out.push({ type: "flash", promotion_id: flashSaleItemId, code: null, amount_minor: amountMinor });
+  }
+
+  if (discounts.memberDiscountMinor > 0n) {
+    // 会员折扣（ADR-102）：没有促销 id，来源是顾客等级
+    out.push({ type: "member", promotion_id: "", code: null, amount_minor: discounts.memberDiscountMinor });
   }
 
   for (const od of discounts.orderDiscounts) {

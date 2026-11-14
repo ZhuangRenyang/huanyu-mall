@@ -277,6 +277,12 @@ export interface ComputeDiscountsInput {
   giftCardCodes: string[];
   /** 顾客想用的积分数（ADR-093/094）：服务端折算成抵扣额并封顶。 */
   pointsToUse?: bigint;
+  /**
+   * 会员折扣力度（ADR-102，万分比）：由调用侧按顾客累计消费算出后传入。
+   *
+   * 不在 promotion 里查会员等级：等级属于客户域，促销模块不该反过来依赖客户。
+   */
+  memberDiscountBps?: number;
 }
 
 export interface ComputeDiscountsResult {
@@ -290,6 +296,10 @@ export interface ComputeDiscountsResult {
   giftCardAppliedMinor: bigint;
   /** 命中的 Gift Card 明细（多卡按顺序累加抵扣，封顶到剩余应付）。供下单侧固化 order_discount 留痕（type='gift_card'）并扣减余额。 */
   giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+  /** 会员折扣合计（ADR-102）：行级，与目录促销取较大者，不叠加。 */
+  memberDiscountMinor: bigint;
+  /** 命中的会员折扣明细（按行）。 */
+  memberAdjustments: Array<{ itemId: string; amountMinor: bigint }>;
   /** 秒杀优惠合计（ADR-099）：行级，直接抵到原价上。 */
   flashDiscountMinor: bigint;
   /**

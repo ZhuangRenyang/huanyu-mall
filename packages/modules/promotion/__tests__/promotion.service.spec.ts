@@ -2581,3 +2581,102 @@ describe("分销（ADR-101）", () => {
     expect(none.affiliate).toBeNull();
   });
 });
+
+describe("会员折扣（ADR-102）", () => {
+  const ctx = (bps: number, quantity = 1) => ({
+    currencyCode: "CNY",
+    items: [
+      { id: "cli_1", variantId: "var_1", categoryIds: [], quantity, unitPriceMinor: 10000n },
+    ],
+    subtotalMinor: 10000n * BigInt(quantity),
+    shippingMinor: 0n,
+    voucherCodes: [],
+    giftCardCodes: [],
+    memberDiscountBps: bps,
+  });
+
+  it("按行计算：100 元 × 5% = 5 元；没有等级时不打折", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const withMember = await service.computeDiscounts(ctx(500));
+    expect(withMember.memberDiscountMinor).toBe(500n);
+    expect(withMember.memberAdjustments).toHaveLength(1);
+
+    const none = await service.computeDiscounts(ctx(0));
+    expect(none.memberDiscountMinor).toBe(0n);
+    expect(none.memberAdjustments).toHaveLength(0);
+  });
+
+  it("与目录促销取较大者，不叠加（同一件商品不能打两次折）", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    await service.setFeatureEnabled("promotion", true);
+    const p = await service.createPromotion({
+      name: "全场 8 折",
+      type: "catalogue",
+      isAutomatic: true,
+      status: "active",
+    });
+    await service.addPromotionRule({
+      promotionId: p.id,
+      predicate: { variantIds: ["var_1"] },
+      rewardType: "percentage",
+      rewardValue: 2000n, // 20% off → 2000 分
+    });
+
+    // 会员 5% 小于促销 20% → 取促销
+    const promoWins = await service.computeDiscounts(ctx(500));
+    expect(promoWins.lineAdjustments[0]?.amountMinor).toBe(2000n);
+    expect(promoWins.memberDiscountMinor).toBe(0n);
+
+    // 会员 30% 大于促销 20% → 取会员
+    const memberWins = await service.computeDiscounts(ctx(3000));
+    expect(memberWins.memberDiscountMinor).toBe(3000n);
+    expect(memberWins.lineAdjustments).toHaveLength(0);
+  });
+
+  it("秒杀之后再打会员折扣：按秒杀价算，不按原价", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    await service.setFeatureEnabled("promotion", true);
+    const sale = await service.createFlashSale({
+      name: "秒杀",
+      startsAt: new Date(Date.now() - 60_000),
+      endsAt: new Date(Date.now() + 3_600_000),
+      items: [
+        {
+          variantId: "var_1",
+          title: "测试商品",
+          originalPriceMinor: 10000n,
+          flashPriceMinor: 6000n,
+          stock: 10,
+        },
+      ],
+    });
+    await service.setFlashSaleStatus(sale.id, "active");
+
+    const res = await service.computeDiscounts(ctx(500));
+    // 秒杀优惠 4000，会员按折后 6000 × 5% = 300
+    expect(res.flashDiscountMinor).toBe(4000n);
+    expect(res.memberDiscountMinor).toBe(300n);
+  });
+
+  it("满减门槛按会员折后金额算", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    await service.setFeatureEnabled("promotion", true);
+    const p = await service.createPromotion({
+      name: "满 95 减 10",
+      type: "order",
+      isAutomatic: true,
+      status: "active",
+    });
+    await service.addPromotionRule({
+      promotionId: p.id,
+      predicate: { kind: "subtotalGte", amountMinor: 9500n },
+      rewardType: "fixed",
+      rewardValue: 1000n,
+    });
+
+    // 原价 100 够门槛；会员 10% 折后 90，不到 95，不减
+    const res = await service.computeDiscounts(ctx(1000));
+    expect(res.memberDiscountMinor).toBe(1000n);
+    expect(res.orderDiscountMinor).toBe(0n);
+  });
+});

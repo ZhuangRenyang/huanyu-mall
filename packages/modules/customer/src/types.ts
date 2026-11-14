@@ -67,6 +67,12 @@ export interface CustomerListQuery {
 }
 
 export interface CustomerRepository {
+  // ---- 会员等级（ADR-102）----
+  insertMemberLevel(input: CreateMemberLevelInput & { id: string; sort: number }): Promise<MemberLevelDTO>;
+  listMemberLevels(): Promise<MemberLevelDTO[]>;
+  findMemberLevel(id: string): Promise<MemberLevelDTO | null>;
+  updateMemberLevel(id: string, patch: UpdateMemberLevelInput): Promise<MemberLevelDTO | null>;
+
   insert(input: CreateCustomerInput & { id: string }): Promise<CustomerDTO>;
   findById(id: string): Promise<CustomerDTO | null>;
   findByEmail(email: string): Promise<CustomerDTO | null>;
@@ -97,6 +103,25 @@ export interface FavoriteDTO {
   created_at: Date;
 }
 
+/** 会员等级（ADR-102）。 */
+export interface MemberLevelDTO {
+  id: string;
+  name: string;
+  /** 达到该累计消费（minor）即为这一档。 */
+  threshold_minor: bigint;
+  /** 折扣力度（万分比）：500 = 便宜 5%。 */
+  discount_bps: number;
+  sort: number;
+}
+
+export interface CreateMemberLevelInput {
+  name: string;
+  thresholdMinor: bigint;
+  discountBps: number;
+}
+
+export type UpdateMemberLevelInput = Partial<CreateMemberLevelInput>;
+
 export interface ICustomerModuleService {
   createCustomer(input: CreateCustomerInput): Promise<CustomerDTO>;
   retrieveCustomer(id: string): Promise<CustomerDTO>;
@@ -119,4 +144,17 @@ export interface ICustomerModuleService {
   /** 全部收藏的商品 id（详情页判断「已收藏」用，不分页）。 */
   listFavoriteProductIds(customerId: string): Promise<string[]>;
   deleteCustomer(id: string): Promise<void>;
+
+  // ---- 会员等级（ADR-102）----
+  listMemberLevels(): Promise<MemberLevelDTO[]>;
+  createMemberLevel(input: CreateMemberLevelInput): Promise<MemberLevelDTO>;
+  updateMemberLevel(id: string, patch: UpdateMemberLevelInput): Promise<MemberLevelDTO>;
+  /**
+   * 按累计消费匹配等级（取满足门槛的最高一档）。
+   *
+   * 不落库：等级规则随时可调，顾客下次进店就按新规则走。
+   */
+  resolveMemberLevel(spendMinor: bigint): Promise<MemberLevelDTO | null>;
+  /** 会员折扣力度（万分比）；没有等级返回 0。 */
+  getMemberDiscountBps(spendMinor: bigint): Promise<number>;
 }

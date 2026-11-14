@@ -9,6 +9,7 @@ import {
   type AdminFlashSale,
   type AdminGroupBuy,
   type AdminInvoice,
+  type AdminMemberLevel,
   type AdminOrder,
   type AdminRefundRequest,
   type AdminSession,
@@ -27,6 +28,7 @@ const KEYS = {
   groupBuys: 'admin:group-buys',
   affiliates: 'admin:affiliates',
   commissions: 'admin:commissions',
+  memberLevels: 'admin:member-levels',
   theme: 'admin:theme',
   providers: 'admin:providers',
   password: 'admin:password',
@@ -371,6 +373,47 @@ export function shipExchange(id: string, carrier: string, trackingNumber: string
 export function listRefunds(status?: string): AdminRefundRequest[] {
   const all = read<AdminRefundRequest[]>(KEYS.refunds, []);
   return status ? all.filter((r) => r.status === status) : all;
+}
+
+// ---- 会员等级（ADR-102）----
+
+/** mock：会员等级阶梯（首次访问给三档演示数据）。 */
+export function listMemberLevels(): AdminMemberLevel[] {
+  const raw = read<AdminMemberLevel[] | null>(KEYS.memberLevels, null);
+  if (raw) return raw;
+  const seed: AdminMemberLevel[] = [
+    { id: 'lvl_1', name: '普通会员', thresholdMinor: 0, discountBps: 100 },
+    { id: 'lvl_2', name: '银卡会员', thresholdMinor: 100000, discountBps: 300 },
+    { id: 'lvl_3', name: '金卡会员', thresholdMinor: 500000, discountBps: 500 },
+  ];
+  write(KEYS.memberLevels, seed);
+  return seed;
+}
+
+/** mock：新建/更新等级（id 为空则新建）。 */
+export function saveMemberLevel(input: {
+  id?: string;
+  name?: string;
+  thresholdMinor?: number;
+  discountBps?: number;
+}): void {
+  const list = listMemberLevels();
+  if (input.id) {
+    const level = list.find((l) => l.id === input.id);
+    if (!level) return;
+    if (input.name !== undefined) level.name = input.name;
+    if (input.thresholdMinor !== undefined) level.thresholdMinor = input.thresholdMinor;
+    if (input.discountBps !== undefined) level.discountBps = input.discountBps;
+  } else {
+    list.push({
+      id: `lvl_${Date.now()}`,
+      name: input.name ?? '新等级',
+      thresholdMinor: input.thresholdMinor ?? 0,
+      discountBps: input.discountBps ?? 100,
+    });
+  }
+  list.sort((a, b) => a.thresholdMinor - b.thresholdMinor);
+  write(KEYS.memberLevels, list);
 }
 
 // ---- 分销（ADR-101）----

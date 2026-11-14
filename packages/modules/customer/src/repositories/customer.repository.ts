@@ -3,6 +3,9 @@ import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
 import type {
   AddAddressInput,
+  CreateMemberLevelInput,
+  MemberLevelDTO,
+  UpdateMemberLevelInput,
   FavoriteDTO,
   AddressDTO,
   CreateCustomerInput,
@@ -238,6 +241,69 @@ export class DrizzleCustomerRepository implements CustomerRepository {
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(eq(schema.customerAddress.id, addressId));
   }
+
+  // —— 会员等级（ADR-102）——
+
+  async insertMemberLevel(
+    input: CreateMemberLevelInput & { id: string; sort: number },
+  ): Promise<MemberLevelDTO> {
+    const rows = await this.db
+      .insert(schema.memberLevel)
+      .values({
+        id: input.id,
+        name: input.name,
+        thresholdMinor: input.thresholdMinor,
+        discountBps: input.discountBps,
+        sort: input.sort,
+      })
+      .returning();
+    return toMemberLevelDTO(rows[0]!);
+  }
+
+  async listMemberLevels(): Promise<MemberLevelDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.memberLevel)
+      // 门槛从低到高：列表就是「等级阶梯」
+      .orderBy(schema.memberLevel.thresholdMinor);
+    return rows.map(toMemberLevelDTO);
+  }
+
+  async findMemberLevel(id: string): Promise<MemberLevelDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.memberLevel)
+      .where(eq(schema.memberLevel.id, id))
+      .limit(1);
+    return rows[0] ? toMemberLevelDTO(rows[0]) : null;
+  }
+
+  async updateMemberLevel(
+    id: string,
+    patch: UpdateMemberLevelInput,
+  ): Promise<MemberLevelDTO | null> {
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (patch.name !== undefined) set.name = patch.name;
+    if (patch.thresholdMinor !== undefined) set.thresholdMinor = patch.thresholdMinor;
+    if (patch.discountBps !== undefined) set.discountBps = patch.discountBps;
+    const rows = await this.db
+      .update(schema.memberLevel)
+      .set(set)
+      .where(eq(schema.memberLevel.id, id))
+      .returning();
+    return rows[0] ? toMemberLevelDTO(rows[0]) : null;
+  }
+
+}
+
+function toMemberLevelDTO(r: typeof schema.memberLevel.$inferSelect): MemberLevelDTO {
+  return {
+    id: r.id,
+    name: r.name,
+    threshold_minor: r.thresholdMinor,
+    discount_bps: r.discountBps,
+    sort: r.sort,
+  };
 }
 
 function toCustomerDTO(r: typeof schema.customer.$inferSelect): CustomerDTO {

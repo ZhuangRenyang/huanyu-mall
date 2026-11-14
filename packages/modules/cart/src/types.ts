@@ -44,7 +44,7 @@ export interface CartShippingMethodDTO {
 
 /** 命中的促销折扣明细（读时动态算），供下单侧固化进 order_discount 留痕（ADR-012 §3）。 */
 export interface CartDiscountDTO {
-  type: "catalogue" | "order" | "voucher" | "gift_card" | "points" | "flash";
+  type: "catalogue" | "order" | "voucher" | "gift_card" | "points" | "flash" | "member";
   promotion_id: string;
   code: string | null;
   amount_minor: bigint;
@@ -160,6 +160,18 @@ export interface CartServiceDeps {
   shipping: ShippingLookupPort;
   promotion: PromotionLookupPort;
   tax: TaxLookupPort;
+  /**
+   * 会员等级折扣端口（ADR-102）。
+   *
+   * 可选：没接会员模块时（单机测试、老部署）不传，等价于没有折扣。
+   * 等级属于客户域，购物车只问一句「这个顾客打几折」。
+   */
+  membership?: MembershipLookupPort;
+}
+
+export interface MembershipLookupPort {
+  /** 会员折扣力度（万分比）；无等级返回 0。 */
+  getDiscountBps(customerId: string): Promise<number>;
 }
 
 /** 促销查询端口（跨模块走端口，M-promotion）：算目录促销行级折扣（金额服务端算，客户端永不传价）。 */
@@ -180,6 +192,8 @@ export interface PromotionLookupPort {
     giftCardCodes: string[];
     /** 顾客想用的积分数（ADR-094）。 */
     pointsToUse?: bigint;
+    /** 会员折扣力度（ADR-102，万分比）。 */
+    memberDiscountBps?: number;
   }): Promise<{
     lineAdjustments: Array<{ itemId: string; amountMinor: bigint; promotionId: string; code: string }>;
     orderDiscountMinor: bigint;
@@ -188,6 +202,9 @@ export interface PromotionLookupPort {
     voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
     giftCardAppliedMinor: bigint;
     giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+    /** 会员折扣合计（ADR-102）。 */
+    memberDiscountMinor: bigint;
+    memberAdjustments: Array<{ itemId: string; amountMinor: bigint }>;
     /** 秒杀优惠合计（ADR-099）。 */
     flashDiscountMinor: bigint;
     /** 命中的秒杀明细（含数量，供下单扣活动库存）。 */

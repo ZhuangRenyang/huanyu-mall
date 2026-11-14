@@ -169,6 +169,8 @@ export function createStoreClient(opts: ClientOptions) {
     claimGroupBuyVoucher: (id: string) => post(`/api/v1/store/group-buys/${id}/voucher`),
     /** 我的推广（ADR-101）：推广码 + 待结算/已结算 + 流水。 */
     getMyAffiliate: () => get("/api/v1/store/affiliate/me"),
+    /** 我的会员等级（ADR-102）：当前等级 + 累计消费 + 下一档差额。 */
+    getMyMemberLevel: () => get("/api/v1/store/member-level"),
     /** 我的积分（ADR-093）：余额 + 最近流水。 */
     getStorePoints: () => get("/api/v1/store/points"),
     /** 可领取的店铺券（匿名可读；登录后带 collected 标记）。 */
@@ -503,6 +505,14 @@ export function createAdminClient(opts: ClientOptions) {
     createShipment: (fulfillmentId: string, b: CreateShipmentRequest) =>
       post(`/api/v1/admin/fulfillments/${fulfillmentId}/shipments`, b),
     listCustomers: (q?: Query) => get("/api/v1/admin/customers", q),
+    // —— 会员等级（ADR-102）——
+    listMemberLevels: () => get("/api/v1/admin/member-levels"),
+    createMemberLevel: (b: { name: string; threshold_minor: number; discount_bps: number }) =>
+      post("/api/v1/admin/member-levels", b),
+    updateMemberLevel: (
+      id: string,
+      b: { name?: string; threshold_minor?: number; discount_bps?: number },
+    ) => patch(`/api/v1/admin/member-levels/${id}`, b),
     /** 客户详情：资料 + 地址 + 最近订单。 */
     getCustomer: (id: string) => get(`/api/v1/admin/customers/${id}`),
     listInventoryItems: (q?: Query) => get("/api/v1/admin/inventory-items", q),

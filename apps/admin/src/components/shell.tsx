@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
+  Award,
   Banknote,
   BarChart3,
   Receipt,
@@ -73,7 +74,10 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
     // 客户单独一组（淘宝「客户运营」/ Shopify「Customers」）：
     // 挂在订单下会变成「订单的附属物」，而客户资料、地址、消费是独立维度
     label: '客户',
-    items: [{ to: '/customers', label: '客户列表', icon: Users }],
+    items: [
+      { to: '/customers', label: '客户列表', icon: Users },
+      { to: '/member-levels', label: '会员等级', icon: Award },
+    ],
   },
   {
     label: '营销',

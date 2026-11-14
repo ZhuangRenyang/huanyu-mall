@@ -127,6 +127,15 @@ export interface AdminRefundRequest {
   exchangeTrackingNumber: string | null;
 }
 
+/** 会员等级（ADR-102）：门槛 + 折扣，归属由累计消费实时匹配。 */
+export interface AdminMemberLevel {
+  id: string;
+  name: string;
+  thresholdMinor: number;
+  /** 折扣力度（万分比）：500 = 便宜 5%。 */
+  discountBps: number;
+}
+
 /** 推广员（ADR-101）。 */
 export interface AdminAffiliate {
   id: string;

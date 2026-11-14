@@ -1,4 +1,4 @@
-import { boolean, char, index, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, boolean, char, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const customer = pgTable(
@@ -66,4 +66,22 @@ export const customerFavorite = pgTable(
     uniqueIndex("uq_customer_favorite").on(t.customerId, t.productId),
     index("idx_customer_favorite_customer").on(t.customerId, t.createdAt),
   ],
+);
+
+/** 会员等级（ADR-102）：按累计消费自动匹配，只决定「折扣力度」。 */
+export const memberLevel = pgTable(
+  "member_level",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    /** 达到该累计消费（minor）即为这一档。 */
+    thresholdMinor: bigint("threshold_minor", { mode: "bigint" }).notNull().default(0n),
+    /** 折扣力度（万分比）：500 = 便宜 5%。 */
+    discountBps: integer("discount_bps").notNull(),
+    /** 展示排序（等级从低到高）。 */
+    sort: integer("sort").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("uq_member_level_threshold").on(t.thresholdMinor)],
 );

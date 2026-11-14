@@ -30,6 +30,27 @@ export default Module("cart", {
       promotion: ctx.resolve<PromotionLookupPort>("promotion"),
       // 税：按顾客收货国家解析税率（ADR-018）
       tax: ctx.resolve<TaxLookupPort>("tax"),
+      /*
+       * 会员折扣（ADR-102）：等级在客户域、累计消费在订单域。
+       *
+       * 这里用结构性类型取两个模块的窄接口，而不是 import 它们的类型 ——
+       * 购物车只需要「问一句打几折」，不该在编译期依赖整个客户/订单模块。
+       */
+      membership: {
+        getDiscountBps: async (customerId: string) => {
+          const orders = ctx.resolve<{
+            summarizeByCustomerIds(
+              ids: string[],
+            ): Promise<Array<{ total_spent_minor: bigint }>>;
+          }>("order");
+          const sums = await orders.summarizeByCustomerIds([customerId]);
+          const spent = sums[0]?.total_spent_minor ?? 0n;
+          const customers = ctx.resolve<{
+            getMemberDiscountBps(spendMinor: bigint): Promise<number>;
+          }>("customer");
+          return customers.getMemberDiscountBps(spent);
+        },
+      },
     }),
   migrations: ["migrations/0001_init.sql", "migrations/0002_voucher_codes.sql", "migrations/0003_gift_card_codes.sql", "migrations/0004_shipping_country.sql",
     "migrations/0005_points.sql"],

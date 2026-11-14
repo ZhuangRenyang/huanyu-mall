@@ -1217,16 +1217,19 @@ export class PromotionService implements IPromotionModuleService {
       });
     }
     const flashDiscountMinor = flashAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
-    /** 折后小计：满减、整单券、剩余应付都按它算（与「秒杀价替换原价」同一口径）。 */
-    let effectiveSubtotal = ctx.subtotalMinor - flashDiscountMinor;
-    if (effectiveSubtotal < 0n) effectiveSubtotal = 0n;
     /** 每行的秒杀优惠额（券的适用金额要按折后算）。 */
     const flashAmountByItem = new Map(flashAdjustments.map((a) => [a.itemId, a.amountMinor]));
 
     const lineAdjustments: ComputeDiscountsResult["lineAdjustments"] = [];
+    /** 会员折扣（ADR-102）：行级，与目录促销取较大者 —— 同一件商品不能打两次折。 */
+    const memberAdjustments: ComputeDiscountsResult["memberAdjustments"] = [];
+    const memberBps = ctx.memberDiscountBps ?? 0;
 
     for (const item of ctx.items) {
       const lineSubtotalMinor = item.unitPriceMinor * BigInt(item.quantity);
+      // 秒杀后的行金额：会员折扣按它算（不按原价，否则等于把秒杀价又打了一次）
+      const flashAmount = flashAmountByItem.get(item.id) ?? 0n;
+      const adjustedLineMinor = lineSubtotalMinor - flashAmount;
       let best: { amountMinor: bigint; promotionId: string; code: string } | null = null;
 
       for (const { promotion, rules } of active) {
@@ -1247,17 +1250,31 @@ export class PromotionService implements IPromotionModuleService {
         }
       }
 
-      // 资金安全硬约束 3：折扣不能为负、不能超过行项小计（结果为负/超额直接归零封顶）。
+      // 资金安全硬约束 3：折扣不能为负、不能超过行金额（结果为负/超额直接归零封顶）。
+      const memberAmount =
+        memberBps > 0 && adjustedLineMinor > 0n
+          ? (adjustedLineMinor * BigInt(memberBps)) / 10000n
+          : 0n;
       if (best && best.amountMinor > 0n) {
-        const clamped = best.amountMinor > lineSubtotalMinor ? lineSubtotalMinor : best.amountMinor;
-        lineAdjustments.push({
-          itemId: item.id,
-          amountMinor: clamped,
-          promotionId: best.promotionId,
-          code: best.code,
-        });
+        const clamped = best.amountMinor > adjustedLineMinor ? adjustedLineMinor : best.amountMinor;
+        if (memberAmount > clamped) {
+          memberAdjustments.push({ itemId: item.id, amountMinor: memberAmount });
+        } else {
+          lineAdjustments.push({
+            itemId: item.id,
+            amountMinor: clamped,
+            promotionId: best.promotionId,
+            code: best.code,
+          });
+        }
+      } else if (memberAmount > 0n) {
+        memberAdjustments.push({ itemId: item.id, amountMinor: memberAmount });
       }
     }
+    const memberDiscountMinor = memberAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
+    /** 折后小计：满减、整单券、剩余应付都按它算（秒杀 + 会员折扣都先扣）。 */
+    let effectiveSubtotal = ctx.subtotalMinor - flashDiscountMinor - memberDiscountMinor;
+    if (effectiveSubtotal < 0n) effectiveSubtotal = 0n;
 
     // —— 订单促销（阶段 3）：订单级上下文求值，命中取折扣金额最大的一条（与目录促销一致）。——
     const orderPromotions = flags.promotion
@@ -1364,7 +1381,9 @@ export class PromotionService implements IPromotionModuleService {
     // —— Gift Card（阶段 5）：余额抵扣，多卡按顺序累加，封顶到剩余应付（ADR-012 §6 / 硬约束 4）。——
     // 剩余应付 = 小计 + 运费 - (行级折扣 + 订单促销折扣 + voucher 折扣)；gift card 抵扣不能超过剩余应付。
     const lineDiscountMinor =
-      lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n) + flashDiscountMinor;
+      lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n) +
+      flashDiscountMinor +
+      memberDiscountMinor;
     let remainingMinor =
       ctx.subtotalMinor + ctx.shippingMinor - lineDiscountMinor - orderDiscountMinor - voucherDiscountMinor;
     if (remainingMinor < 0n) remainingMinor = 0n;
@@ -1401,6 +1420,8 @@ export class PromotionService implements IPromotionModuleService {
       lineAdjustments,
       flashDiscountMinor,
       flashAdjustments,
+      memberDiscountMinor,
+      memberAdjustments,
       orderDiscountMinor,
       orderDiscounts,
       voucherDiscountMinor,

@@ -29,7 +29,7 @@ export interface CartCompleteInput {
   customerNote?: string | null;
   /** 命中的促销折扣明细（供 order 固化 order_discount 留痕）。 */
   discounts?: Array<{
-    type: "catalogue" | "order" | "voucher" | "gift_card" | "points" | "flash";
+    type: "catalogue" | "order" | "voucher" | "gift_card" | "points" | "flash" | "member";
     promotionId: string;
     code: string | null;
     amountMinor: bigint;

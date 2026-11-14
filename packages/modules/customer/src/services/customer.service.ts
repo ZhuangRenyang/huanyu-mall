@@ -1,11 +1,14 @@
-import { prefixedUlid } from "@mall/core";
+import { DomainError, prefixedUlid } from "@mall/core";
 import { addressNotFound, addressNotOwned, customerNotFound } from "../errors.js";
 import type {
   AddAddressInput,
   AddressDTO,
   CreateCustomerInput,
+  CreateMemberLevelInput,
   FavoriteDTO,
   CustomerDTO,
+  MemberLevelDTO,
+  UpdateMemberLevelInput,
   CustomerRepository,
   ICustomerModuleService,
   UpdateAddressInput,
@@ -115,5 +118,92 @@ export class CustomerService implements ICustomerModuleService {
   async deleteCustomer(id: string): Promise<void> {
     await this.retrieveCustomer(id);
     await this.repo.softDelete(id);
+  }
+
+  // —— 会员等级（ADR-102）——
+
+  async listMemberLevels(): Promise<MemberLevelDTO[]> {
+    return this.repo.listMemberLevels();
+  }
+
+  /**
+   * 新建等级。
+   *
+   * 门槛必须唯一（唯一索引兜底）：两档门槛相同，顾客算哪一档就没有答案。
+   * 折扣力度上限 30%，与分销佣金上限同一考虑：再高不是权益，是清仓。
+   */
+  async createMemberLevel(input: CreateMemberLevelInput): Promise<MemberLevelDTO> {
+    const name = input.name?.trim() ?? "";
+    if (name === "") throw new DomainError({ code: 20001, message: "请填写等级名称" });
+    if (input.thresholdMinor < 0n) {
+      throw new DomainError({ code: 20001, message: "门槛金额不能为负" });
+    }
+    if (
+      !Number.isInteger(input.discountBps) ||
+      input.discountBps <= 0 ||
+      input.discountBps > 3000
+    ) {
+      throw new DomainError({ code: 20001, message: "会员折扣需在 0.01%–30% 之间" });
+    }
+    const levels = await this.repo.listMemberLevels();
+    if (levels.some((l) => l.threshold_minor === input.thresholdMinor)) {
+      throw new DomainError({ code: 20001, message: "已有一档等级使用相同的消费门槛" });
+    }
+    return this.repo.insertMemberLevel({
+      id: prefixedUlid("lvl"),
+      name,
+      thresholdMinor: input.thresholdMinor,
+      discountBps: input.discountBps,
+      // 排到最后一档之后
+      sort: levels.length,
+    });
+  }
+
+  async updateMemberLevel(id: string, patch: UpdateMemberLevelInput): Promise<MemberLevelDTO> {
+    const existing = await this.repo.findMemberLevel(id);
+    if (!existing) throw new DomainError({ code: 30001, message: `会员等级不存在：${id}` });
+
+    if (patch.name !== undefined && patch.name.trim() === "") {
+      throw new DomainError({ code: 20001, message: "等级名称不能为空" });
+    }
+    if (patch.discountBps !== undefined) {
+      if (
+        !Number.isInteger(patch.discountBps) ||
+        patch.discountBps <= 0 ||
+        patch.discountBps > 3000
+      ) {
+        throw new DomainError({ code: 20001, message: "会员折扣需在 0.01%–30% 之间" });
+      }
+    }
+    if (patch.thresholdMinor !== undefined) {
+      if (patch.thresholdMinor < 0n) {
+        throw new DomainError({ code: 20001, message: "门槛金额不能为负" });
+      }
+      const levels = await this.repo.listMemberLevels();
+      if (levels.some((l) => l.id !== id && l.threshold_minor === patch.thresholdMinor)) {
+        throw new DomainError({ code: 20001, message: "已有一档等级使用相同的消费门槛" });
+      }
+    }
+    const updated = await this.repo.updateMemberLevel(id, {
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.thresholdMinor !== undefined ? { thresholdMinor: patch.thresholdMinor } : {}),
+      ...(patch.discountBps !== undefined ? { discountBps: patch.discountBps } : {}),
+    });
+    return updated!;
+  }
+
+  /** 按累计消费匹配等级：取满足门槛的最高一档；没有满足的返回 null。 */
+  async resolveMemberLevel(spendMinor: bigint): Promise<MemberLevelDTO | null> {
+    const levels = await this.repo.listMemberLevels();
+    let hit: MemberLevelDTO | null = null;
+    for (const level of levels) {
+      if (spendMinor >= level.threshold_minor) hit = level;
+    }
+    return hit;
+  }
+
+  async getMemberDiscountBps(spendMinor: bigint): Promise<number> {
+    const level = await this.resolveMemberLevel(spendMinor);
+    return level?.discount_bps ?? 0;
   }
 }
