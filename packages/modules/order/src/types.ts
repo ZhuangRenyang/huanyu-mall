@@ -227,6 +227,48 @@ export interface RefundRequestDTO {
   order_email?: string | null;
 }
 
+/**
+ * 发票类型（ADR-098）：个人 / 企业。
+ *
+ * 企业必须填税号 —— 没有税号的增值税发票不能报销，等于白开。
+ */
+export type InvoiceType = "personal" | "company";
+
+/** 发票状态：待开票 / 已开票 / 已拒绝。 */
+export type InvoiceStatus = "pending" | "issued" | "rejected";
+
+/** 发票申请单（ADR-098）。真正开票在商家线下完成，这里只记业务状态。 */
+export interface InvoiceDTO {
+  id: string;
+  order_id: string;
+  customer_id: string | null;
+  type: InvoiceType;
+  /** 发票抬头（个人姓名 / 企业名称）。 */
+  title: string;
+  /** 企业税号；个人为空。 */
+  tax_id: string | null;
+  /** 收票邮箱（默认取订单邮箱）。 */
+  email: string;
+  /** 开票金额快照（下单时的订单总额）。 */
+  amount_minor: bigint;
+  currency_code: string;
+  /** 顾客备注（如「请开明细」）。 */
+  remark: string | null;
+  status: InvoiceStatus;
+  /** 商家登记的发票号码；未开票为空。 */
+  invoice_no: string | null;
+  issued_at: string | null;
+  /** 商家处理说明（拒绝时必填）。 */
+  review_note: string | null;
+  created_at: string;
+}
+
+export interface InvoiceQuery {
+  status?: InvoiceStatus;
+  limit?: number;
+  offset?: number;
+}
+
 export interface RefundRequestQuery {
   status?: RefundRequestStatus;
   /** 只看某张订单的申请（店面顾客查自己的进度用）。 */
@@ -274,6 +316,30 @@ export interface OrderQuery {
 export interface OrderRepository {
   /** 写商家备注；null 表示清空。 */
   setMerchantNote(id: string, note: string | null): Promise<OrderDTO | null>;
+
+  // ---- 发票（ADR-098）----
+  insertInvoice(input: {
+    id: string;
+    orderId: string;
+    customerId: string | null;
+    type: InvoiceType;
+    title: string;
+    taxId: string | null;
+    email: string;
+    amountMinor: bigint;
+    currencyCode: string;
+    remark: string | null;
+  }): Promise<InvoiceDTO>;
+  findInvoice(id: string): Promise<InvoiceDTO | null>;
+  /** 按订单查发票单（一张订单只有一张）。 */
+  findInvoiceByOrder(orderId: string): Promise<InvoiceDTO | null>;
+  listInvoices(q: InvoiceQuery): Promise<{ items: InvoiceDTO[]; count: number }>;
+  /** 各状态发票单数（发票管理页签角标，一次 GROUP BY）。 */
+  countInvoicesByStatus(): Promise<Record<string, number>>;
+  /** 开票：写发票号与开票时间。 */
+  markInvoiceIssued(id: string, input: { invoiceNo: string; issuedAt: Date; note: string | null }): Promise<InvoiceDTO | null>;
+  /** 拒绝开票：写原因。 */
+  markInvoiceRejected(id: string, note: string): Promise<InvoiceDTO | null>;
 
   // ---- 退款申请单 ----
   insertRefundRequest(input: {
@@ -527,4 +593,25 @@ export interface IOrderModuleService {
   cancelRefundRequest(id: string): Promise<RefundRequestDTO>;
   markRefundSettled(orderId: string, refundRequestId: string): Promise<OrderDTO>;
   cancelOrder(id: string): Promise<void>;
+
+  // ---- 发票（ADR-098）----
+  /**
+   * 顾客提交开票申请。
+   *
+   * 只允许已付款订单（未付款就开票，退款时票要红冲，两头都麻烦）；
+   * 一张订单只能申请一次（重复申请会开出两张）。
+   * 金额取订单总额快照，不接受客户端传值。
+   */
+  requestInvoice(
+    orderId: string,
+    input: { type: InvoiceType; title: string; taxId?: string | null; email?: string | null; remark?: string | null },
+  ): Promise<InvoiceDTO>;
+  /** 按订单查发票单（店面展示进度）。 */
+  getInvoiceByOrder(orderId: string): Promise<InvoiceDTO | null>;
+  listInvoices(q: InvoiceQuery): Promise<{ items: InvoiceDTO[]; count: number }>;
+  countInvoicesByStatus(): Promise<Record<string, number>>;
+  /** 登记开票：pending → issued，写发票号与开票时间。 */
+  issueInvoice(id: string, input: { invoiceNo: string; note?: string | null }): Promise<InvoiceDTO>;
+  /** 拒绝开票：pending → rejected，原因必填。 */
+  rejectInvoice(id: string, note: string): Promise<InvoiceDTO>;
 }

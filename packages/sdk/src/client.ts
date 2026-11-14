@@ -288,6 +288,19 @@ export function createStoreClient(opts: ClientOptions) {
       },
     ) => post(`/api/v1/store/orders/${id}/refund-requests`, b),
     listOrderRefunds: (id: string) => get(`/api/v1/store/orders/${id}/refund-requests`),
+    /** 申请开票（ADR-098）：只传抬头信息，金额由服务端取订单总额。 */
+    requestOrderInvoice: (
+      id: string,
+      b: {
+        type: "personal" | "company";
+        title: string;
+        tax_id?: string;
+        email?: string;
+        remark?: string;
+      },
+    ) => post(`/api/v1/store/orders/${id}/invoice`, b),
+    /** 该订单的开票进度（未申请时返回 null）。 */
+    getOrderInvoice: (id: string) => get(`/api/v1/store/orders/${id}/invoice`),
     /** 买家提交退货物流（商家同意退货后，ADR-051）。 */
     submitReturnShipment: (refundId: string, b: { carrier: string; tracking_number: string }) =>
       post(`/api/v1/store/refund-requests/${refundId}/return-shipment`, b),
@@ -427,6 +440,12 @@ export function createAdminClient(opts: ClientOptions) {
       post(`/api/v1/admin/refund-requests/${id}/receive-exchange`, b),
     shipExchange: (id: string, b: { carrier: string; tracking_number: string }) =>
       post(`/api/v1/admin/refund-requests/${id}/ship-exchange`, b),
+    // —— 发票管理（ADR-098）——
+    listInvoices: (q?: Query) => get("/api/v1/admin/invoices", q),
+    issueInvoice: (id: string, b: { invoice_no: string; note?: string }) =>
+      post(`/api/v1/admin/invoices/${id}/issue`, b),
+    rejectInvoice: (id: string, b: { note: string }) =>
+      post(`/api/v1/admin/invoices/${id}/reject`, b),
     /** 该订单的操作日志（审计流水，orders 权限即可查）。 */
     listOrderLogs: (id: string) => get(`/api/v1/admin/orders/${id}/logs`),
     cancelOrder: (id: string) => post(`/api/v1/admin/orders/${id}/cancel`),

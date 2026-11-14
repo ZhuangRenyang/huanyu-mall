@@ -112,6 +112,35 @@ export const orderDiscount = pgTable(
 );
 
 /** 退款申请单（售后业务单据，与 payment.refund 资金流水分开）。 */
+/** 订单发票申请单（ADR-098）：手工登记版，一张订单一张。 */
+export const orderInvoice = pgTable(
+  "order_invoice",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull(),
+    customerId: text("customer_id"),
+    /** personal = 个人；company = 企业（需税号）。 */
+    type: text("type").notNull().default("personal"),
+    title: text("title").notNull(),
+    taxId: text("tax_id"),
+    email: text("email").notNull(),
+    amountMinor: bigint("amount_minor", { mode: "bigint" }).notNull(),
+    currencyCode: char("currency_code", { length: 3 }).notNull(),
+    remark: text("remark"),
+    /** pending = 待开票；issued = 已开票；rejected = 已拒绝。 */
+    status: text("status").notNull().default("pending"),
+    invoiceNo: text("invoice_no"),
+    issuedAt: timestamp("issued_at", { withTimezone: true }),
+    reviewNote: text("review_note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_order_invoice_order").on(t.orderId),
+    index("idx_order_invoice_status").on(t.status),
+  ],
+);
+
 export const refundRequest = pgTable(
   "refund_request",
   {

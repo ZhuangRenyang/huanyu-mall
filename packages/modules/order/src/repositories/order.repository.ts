@@ -15,6 +15,9 @@ import type {
   Actor,
   CreateOrderDiscountInput,
   CustomerOrderSummaryDTO,
+  InvoiceDTO,
+  InvoiceQuery,
+  InvoiceType,
   OrderDiscountDTO,
   OrderDiscountType,
   OrderDTO,
@@ -392,6 +395,111 @@ export class DrizzleOrderRepository implements OrderRepository {
     return rows[0] ? toOrderDTO(rows[0]) : null;
   }
 
+  // ---- 发票（ADR-098）----
+
+  async insertInvoice(input: {
+    id: string;
+    orderId: string;
+    customerId: string | null;
+    type: InvoiceType;
+    title: string;
+    taxId: string | null;
+    email: string;
+    amountMinor: bigint;
+    currencyCode: string;
+    remark: string | null;
+  }): Promise<InvoiceDTO> {
+    const rows = await this.db
+      .insert(schema.orderInvoice)
+      .values({
+        id: input.id,
+        orderId: input.orderId,
+        customerId: input.customerId,
+        type: input.type,
+        title: input.title,
+        taxId: input.taxId,
+        email: input.email,
+        amountMinor: input.amountMinor,
+        currencyCode: input.currencyCode,
+        remark: input.remark,
+      })
+      .returning();
+    return toInvoiceDTO(rows[0]!);
+  }
+
+  async findInvoice(id: string): Promise<InvoiceDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.orderInvoice)
+      .where(eq(schema.orderInvoice.id, id))
+      .limit(1);
+    return rows[0] ? toInvoiceDTO(rows[0]) : null;
+  }
+
+  async findInvoiceByOrder(orderId: string): Promise<InvoiceDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.orderInvoice)
+      .where(eq(schema.orderInvoice.orderId, orderId))
+      .limit(1);
+    return rows[0] ? toInvoiceDTO(rows[0]) : null;
+  }
+
+  async listInvoices(q: InvoiceQuery): Promise<{ items: InvoiceDTO[]; count: number }> {
+    const where = q.status ? eq(schema.orderInvoice.status, q.status) : undefined;
+    const limit = q.limit ?? 20;
+    const offset = q.offset ?? 0;
+    const rows = await this.db
+      .select()
+      .from(schema.orderInvoice)
+      .where(where)
+      .orderBy(desc(schema.orderInvoice.createdAt))
+      .limit(limit)
+      .offset(offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.orderInvoice)
+      .where(where);
+    return { items: rows.map(toInvoiceDTO), count: countRows[0]?.count ?? 0 };
+  }
+
+  async countInvoicesByStatus(): Promise<Record<string, number>> {
+    const rows = await this.db
+      .select({ status: schema.orderInvoice.status, n: sql<number>`count(*)::int` })
+      .from(schema.orderInvoice)
+      .groupBy(schema.orderInvoice.status);
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.status] = Number(r.n);
+    return out;
+  }
+
+  async markInvoiceIssued(
+    id: string,
+    input: { invoiceNo: string; issuedAt: Date; note: string | null },
+  ): Promise<InvoiceDTO | null> {
+    const rows = await this.db
+      .update(schema.orderInvoice)
+      .set({
+        status: "issued",
+        invoiceNo: input.invoiceNo,
+        issuedAt: input.issuedAt,
+        reviewNote: input.note,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.orderInvoice.id, id))
+      .returning();
+    return rows[0] ? toInvoiceDTO(rows[0]) : null;
+  }
+
+  async markInvoiceRejected(id: string, note: string): Promise<InvoiceDTO | null> {
+    const rows = await this.db
+      .update(schema.orderInvoice)
+      .set({ status: "rejected", reviewNote: note, updatedAt: new Date() })
+      .where(eq(schema.orderInvoice.id, id))
+      .returning();
+    return rows[0] ? toInvoiceDTO(rows[0]) : null;
+  }
+
   async findById(id: string): Promise<OrderDTO | null> {
     const rows = await this.db.select().from(schema.order).where(eq(schema.order.id, id)).limit(1);
     return rows[0] ? toOrderDTO(rows[0]) : null;
@@ -633,6 +741,26 @@ export class DrizzleOrderRepository implements OrderRepository {
       .set({ paymentStatus, updatedAt: new Date() })
       .where(eq(schema.order.id, id));
   }
+}
+
+function toInvoiceDTO(r: typeof schema.orderInvoice.$inferSelect): InvoiceDTO {
+  return {
+    id: r.id,
+    order_id: r.orderId,
+    customer_id: r.customerId ?? null,
+    type: (r.type as InvoiceDTO["type"]) ?? "personal",
+    title: r.title,
+    tax_id: r.taxId ?? null,
+    email: r.email,
+    amount_minor: r.amountMinor,
+    currency_code: r.currencyCode,
+    remark: r.remark ?? null,
+    status: (r.status as InvoiceDTO["status"]) ?? "pending",
+    invoice_no: r.invoiceNo ?? null,
+    issued_at: r.issuedAt ? r.issuedAt.toISOString() : null,
+    review_note: r.reviewNote ?? null,
+    created_at: r.createdAt.toISOString(),
+  };
 }
 
 function toRefundRequestDTO(

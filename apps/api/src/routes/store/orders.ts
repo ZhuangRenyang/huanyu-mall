@@ -27,6 +27,20 @@ const returnShipmentBody = z.object({
   tracking_number: z.string().min(4).max(60),
 });
 
+/**
+ * 开票申请（ADR-098）：只管抬头信息，金额一律取订单总额（铁律 13）。
+ *
+ * type=company 时税号必填（服务层校验），这里不强制 —— 让服务层给出统一的中文错误。
+ */
+const invoiceRequestBody = z.object({
+  type: z.enum(["personal", "company"]),
+  title: z.string().min(1).max(120),
+  tax_id: z.string().max(40).optional(),
+  /** 收票邮箱；不传则用订单邮箱。 */
+  email: z.string().email().max(160).optional(),
+  remark: z.string().max(300).optional(),
+});
+
 /** 页签可含多个状态（待收货 = fulfilled + delivered），用逗号分隔。 */
 const listQuery = PaginationQuerySchema.extend({
   status: z
@@ -332,4 +346,38 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
     reply.ok({ items: res.items });
     },
   );
+
+  /**
+   * 申请开票（ADR-098，淘宝「申请开票」）。
+   *
+   * 只落申请单：真正开票由商家线下完成、后台登记发票号。
+   * 金额取订单总额，顾客不能传（铁律 13）；一张订单只能申请一次。
+   */
+  app.post(
+    "/api/v1/store/orders/:id/invoice",
+    { preHandler: auth.customerAuth, schema: { body: invoiceRequestBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = req.body as z.infer<typeof invoiceRequestBody>;
+      const order = await deps.services.order.retrieveOrder(id);
+      assertOrderAccess(order, req.auth);
+
+      const invoice = await deps.services.order.requestInvoice(id, {
+        type: body.type,
+        title: body.title,
+        taxId: body.tax_id ?? null,
+        email: body.email ?? null,
+        remark: body.remark ?? null,
+      });
+      reply.code(201).ok(invoice);
+    },
+  );
+
+  /** 该订单的开票进度（顾客看「待开票 / 已开票 + 号码 / 已拒绝 + 原因」）。 */
+  app.get("/api/v1/store/orders/:id/invoice", { preHandler: auth.customerAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const order = await deps.services.order.retrieveOrder(id);
+    assertOrderAccess(order, req.auth);
+    reply.ok(await deps.services.order.getInvoiceByOrder(id));
+  });
 }

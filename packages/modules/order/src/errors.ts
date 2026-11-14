@@ -56,3 +56,44 @@ export function exchangeTargetRequired(reason: string): DomainError {
 export function returnShipmentInvalid(reason: string): DomainError {
   return new DomainError({ code: 20001, message: reason });
 }
+
+// ---------------------------------------------------------------- *
+// 发票（ADR-098）
+// ---------------------------------------------------------------- *
+
+export function invoiceNotFound(id: string): DomainError {
+  return new DomainError({ code: 30001, message: `发票申请不存在：${id}` });
+}
+
+/** 未付款订单不能开票：开了票又要退款，票得红冲，两头都麻烦。 */
+export function invoiceNotAllowed(reason: string): DomainError {
+  return new DomainError({ code: 30002, message: `不能开票：${reason}` });
+}
+
+/** 一张订单只能申请一次开票。 */
+export function invoiceAlreadyRequested(orderId: string): DomainError {
+  return new DomainError({ code: 30002, message: `订单 ${orderId} 已提交过开票申请` });
+}
+
+/** 发票单已处理过（防双击重复开票）。 */
+export function invoiceAlreadyReviewed(status: string): DomainError {
+  return new DomainError({ code: 30002, message: `该发票申请已处理（当前状态：${status}）` });
+}
+
+export function invoiceTitleRequired(): DomainError {
+  return new DomainError({ code: 20001, message: "请填写发票抬头" });
+}
+
+/** 企业发票必须填税号：没有税号的增值税发票不能报销。 */
+export function invoiceTaxIdRequired(): DomainError {
+  return new DomainError({ code: 20001, message: "企业发票必须填写税号" });
+}
+
+export function invoiceNoRequired(): DomainError {
+  return new DomainError({ code: 20001, message: "请填写发票号码" });
+}
+
+/** 拒绝开票必须填原因（顾客要知道为什么开不了）。 */
+export function invoiceReviewNoteRequired(): DomainError {
+  return new DomainError({ code: 20001, message: "拒绝开票必须填写原因" });
+}

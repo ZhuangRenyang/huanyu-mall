@@ -127,6 +127,33 @@ export interface AdminRefundRequest {
   exchangeTrackingNumber: string | null;
 }
 
+/**
+ * 发票申请单（ADR-098，moc 存储用）。
+ *
+ * 与退款单同一个套路：mock 存 camelCase 视图模型，真实请求体才转 snake_case。
+ * 金额取订单总额快照，商家不能改。
+ */
+export interface AdminInvoice {
+  id: string;
+  orderId: string;
+  type: 'personal' | 'company';
+  /** 发票抬头（个人姓名 / 企业名称）。 */
+  title: string;
+  /** 企业税号；个人为空。 */
+  taxId: string | null;
+  email: string;
+  amountMinor: number;
+  currencyCode: string;
+  remark: string | null;
+  status: 'pending' | 'issued' | 'rejected';
+  /** 商家登记的发票号码；未开票为空。 */
+  invoiceNo: string | null;
+  issuedAt: string | null;
+  /** 商家处理说明（拒绝原因）。 */
+  reviewNote: string | null;
+  createdAt: string;
+}
+
 /** 订单操作日志条目（来自审计流水）。 */
 export interface AdminOrderLog {
   id: string;

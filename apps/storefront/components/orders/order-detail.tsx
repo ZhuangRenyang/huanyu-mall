@@ -12,6 +12,7 @@ import {
   type StoreRefundView,
 } from '@/lib/refunds';
 import { OrderTimeline } from './order-timeline';
+import { InvoicePanel } from './invoice-panel';
 import { ReviewDialog } from './review-dialog';
 import {
   ORDER_STATUS_META,
@@ -565,6 +566,16 @@ export function OrderDetail({
             <p className="text-sm text-foreground">{order.paymentMethod}</p>
           </InfoCard>
         </div>
+
+        {/* 发票（ADR-098）：排在售后之上 —— 开票是交易完成后的正向动作，
+            售后是出了问题才走的路，正序在前更符合顾客的预期 */}
+        <InvoicePanel
+          orderId={order.id}
+          status={order.status}
+          amountMinor={order.totalMinor}
+          currencyCode={order.currencyCode}
+          defaultEmail={order.contactEmail}
+        />
 
         <RefundPanel
           orderId={order.id}

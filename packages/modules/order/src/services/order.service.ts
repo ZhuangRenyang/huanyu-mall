@@ -1,6 +1,14 @@
 import { prefixedUlid } from "@mall/core";
 import {
   exchangeTargetRequired,
+  invoiceAlreadyRequested,
+  invoiceAlreadyReviewed,
+  invoiceNoRequired,
+  invoiceNotAllowed,
+  invoiceNotFound,
+  invoiceReviewNoteRequired,
+  invoiceTaxIdRequired,
+  invoiceTitleRequired,
   orderNotFound,
   partialRefundNotSupported,
   refundAlreadyPending,
@@ -19,6 +27,9 @@ import type {
   CreateOrderInput,
   CustomerOrderSummaryDTO,
   IOrderModuleService,
+  InvoiceDTO,
+  InvoiceQuery,
+  InvoiceType,
   OrderDTO,
   OrderLineItemDTO,
   OrderDetailDTO,
@@ -612,5 +623,97 @@ export class OrderService implements IOrderModuleService {
     assertTransition(order.status, "canceled");
     await this.repo.updateStatus(id, "canceled");
     await this.repo.insertStatusHistory(id, order.status, "canceled", "workflow", "compensation cancel");
+  }
+
+  // ---------------------------------------------------------------- *
+  // 发票（ADR-098）
+  // ---------------------------------------------------------------- *
+
+  /**
+   * 顾客提交开票申请。
+   *
+   * 金额取订单总额快照，不接受客户端传值（铁律 13）。
+   * 只允许已付款订单：未付款就开票，等退款时票要红冲，两头都麻烦。
+   */
+  async requestInvoice(
+    orderId: string,
+    input: {
+      type: InvoiceType;
+      title: string;
+      taxId?: string | null;
+      email?: string | null;
+      remark?: string | null;
+    },
+  ): Promise<InvoiceDTO> {
+    const order = await this.repo.findById(orderId);
+    if (!order) throw orderNotFound(orderId);
+    // payment_status 的「已收款」是 captured（paid 是订单状态，不是支付状态）
+    if (order.payment_status !== "captured") {
+      throw invoiceNotAllowed("订单未收款，收款后才能开票");
+    }
+
+    const title = input.title?.trim() ?? "";
+    if (title === "") throw invoiceTitleRequired();
+    const taxId = input.taxId?.trim() ? input.taxId.trim() : null;
+    if (input.type === "company" && !taxId) throw invoiceTaxIdRequired();
+
+    // 先给友好错误；唯一索引兜底并发下两个请求同时进来
+    const existing = await this.repo.findInvoiceByOrder(orderId);
+    if (existing) throw invoiceAlreadyRequested(orderId);
+
+    const email = input.email?.trim() ? input.email.trim() : order.email;
+    return this.repo.insertInvoice({
+      id: prefixedUlid("inv"),
+      orderId,
+      customerId: order.customer_id,
+      type: input.type,
+      title,
+      taxId: input.type === "company" ? taxId : null,
+      email,
+      amountMinor: order.total_minor,
+      currencyCode: order.currency_code,
+      remark: input.remark?.trim() ? input.remark.trim() : null,
+    });
+  }
+
+  async getInvoiceByOrder(orderId: string): Promise<InvoiceDTO | null> {
+    return this.repo.findInvoiceByOrder(orderId);
+  }
+
+  async listInvoices(q: InvoiceQuery): Promise<{ items: InvoiceDTO[]; count: number }> {
+    return this.repo.listInvoices(q);
+  }
+
+  async countInvoicesByStatus(): Promise<Record<string, number>> {
+    return this.repo.countInvoicesByStatus();
+  }
+
+  /** 登记开票：pending → issued。发票号必填、去空白。 */
+  async issueInvoice(
+    id: string,
+    input: { invoiceNo: string; note?: string | null },
+  ): Promise<InvoiceDTO> {
+    const invoice = await this.repo.findInvoice(id);
+    if (!invoice) throw invoiceNotFound(id);
+    if (invoice.status !== "pending") throw invoiceAlreadyReviewed(invoice.status);
+    const invoiceNo = input.invoiceNo?.trim() ?? "";
+    if (invoiceNo === "") throw invoiceNoRequired();
+    const updated = await this.repo.markInvoiceIssued(id, {
+      invoiceNo,
+      issuedAt: new Date(),
+      note: input.note?.trim() ? input.note.trim() : null,
+    });
+    return updated!;
+  }
+
+  /** 拒绝开票：pending → rejected，原因必填（顾客要看到为什么被拒）。 */
+  async rejectInvoice(id: string, note: string): Promise<InvoiceDTO> {
+    const invoice = await this.repo.findInvoice(id);
+    if (!invoice) throw invoiceNotFound(id);
+    if (invoice.status !== "pending") throw invoiceAlreadyReviewed(invoice.status);
+    const trimmed = note?.trim() ?? "";
+    if (trimmed === "") throw invoiceReviewNoteRequired();
+    const updated = await this.repo.markInvoiceRejected(id, trimmed);
+    return updated!;
   }
 }

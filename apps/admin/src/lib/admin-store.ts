@@ -4,6 +4,7 @@ import {
   DEFAULT_THEME,
   SEED_ORDERS,
   SEED_PRODUCTS,
+  type AdminInvoice,
   type AdminOrder,
   type AdminRefundRequest,
   type AdminSession,
@@ -17,6 +18,7 @@ const KEYS = {
   products: 'admin:products',
   orders: 'admin:orders',
   refunds: 'admin:refund-requests',
+  invoices: 'admin:invoices',
   theme: 'admin:theme',
   providers: 'admin:providers',
   password: 'admin:password',
@@ -361,6 +363,66 @@ export function shipExchange(id: string, carrier: string, trackingNumber: string
 export function listRefunds(status?: string): AdminRefundRequest[] {
   const all = read<AdminRefundRequest[]>(KEYS.refunds, []);
   return status ? all.filter((r) => r.status === status) : all;
+}
+
+// ---- 发票（ADR-098）----
+
+/**
+ * mock：发票单列表。
+ *
+ * 首次访问时按种子订单造一张「待开票」的单，演示环境点开就有东西可操作。
+ * 不造已开票的：让商家能完整走一遍「登记发票号」的动作。
+ */
+export function listInvoices(status?: string): AdminInvoice[] {
+  const raw = read<AdminInvoice[] | null>(KEYS.invoices, null);
+  const all = raw ?? seedInvoices();
+  return status ? all.filter((i) => i.status === status) : all;
+}
+
+function seedInvoices(): AdminInvoice[] {
+  const order = listOrders()[0];
+  const seed: AdminInvoice[] = [
+    {
+      id: 'inv_demo_1',
+      orderId: order?.id ?? 'ord_2401',
+      type: 'company',
+      title: '深圳林氏科技有限公司',
+      taxId: '91440300MA5FXYZ123',
+      email: order?.customerEmail ?? 'lin@example.com',
+      amountMinor: order?.totalMinor ?? 89900,
+      currencyCode: order?.currency ?? 'CNY',
+      remark: '请开明细',
+      status: 'pending',
+      invoiceNo: null,
+      issuedAt: null,
+      reviewNote: null,
+      createdAt: '2026-11-13 09:40',
+    },
+  ];
+  write(KEYS.invoices, seed);
+  return seed;
+}
+
+/** mock：登记开票。 */
+export function issueInvoice(id: string, invoiceNo: string, note?: string): void {
+  const list = listInvoices();
+  const inv = list.find((i) => i.id === id);
+  if (!inv || inv.status !== 'pending') return;
+  inv.status = 'issued';
+  inv.invoiceNo = invoiceNo.trim();
+  inv.issuedAt = new Date().toISOString();
+  inv.reviewNote = note?.trim() ? note.trim() : null;
+  write(KEYS.invoices, list);
+}
+
+/** mock：拒绝开票。 */
+export function rejectInvoice(id: string, note: string): void {
+  const list = listInvoices();
+  const inv = list.find((i) => i.id === id);
+  if (!inv || inv.status !== 'pending') return;
+  inv.status = 'rejected';
+  inv.reviewNote = note.trim();
+  write(KEYS.invoices, list);
 }
 
 // ---- 主题 ----

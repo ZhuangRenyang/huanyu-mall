@@ -1032,6 +1032,27 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         created_at: string;
         order_email: string | null;
       }> = [];
+      /*
+       * 发票单（ADR-098）：内存数组，跨请求保留 —— 申请与后台开票是两次请求，
+       * 每次新建数组的话第二次就查不到了。
+       */
+      const invoices: Array<{
+        id: string;
+        order_id: string;
+        customer_id: string | null;
+        type: "personal" | "company";
+        title: string;
+        tax_id: string | null;
+        email: string;
+        amount_minor: bigint;
+        currency_code: string;
+        remark: string | null;
+        status: "pending" | "issued" | "rejected";
+        invoice_no: string | null;
+        issued_at: string | null;
+        review_note: string | null;
+        created_at: string;
+      }> = [];
       return {
       retrieveOrder: async (id?: string) => {
         // ord_other 属于别的顾客：用来验「知道单号也看不到别人的订单」
@@ -1041,6 +1062,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           ...base,
           customer_id: state.orderCustomerId ?? base.customer_id ?? null,
           status: state.orderStatus ?? base.status,
+          payment_status: state.orderPaymentStatus ?? base.payment_status,
           // 顾客留言：默认 null，测试可置值验「店面与后台看到同一段」
           customer_note: state.orderCustomerNote ?? base.customer_note,
         };
@@ -1144,6 +1166,82 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
         amountMinor: state.orderCreated ? BigInt(String(order.total_minor ?? 0)) : 0n,
         currencyCode: "CNY",
       }),
+      // 发票（ADR-098）：内存单据，够验「申请 → 开票 / 拒绝」的状态机
+      requestInvoice: async (
+        orderId: string,
+        input: {
+          type: "personal" | "company";
+          title: string;
+          taxId?: string | null;
+          email?: string | null;
+          remark?: string | null;
+        },
+      ) => {
+        // 与真实服务同语义的三条守卫：未收款不开票、一张单只能一张、企业必须税号
+        const paidStatus = state.orderPaymentStatus ?? order.payment_status;
+        if (paidStatus !== "captured") {
+          throw new DomainError({ code: 30002, message: "不能开票：订单未收款" });
+        }
+        if (!input.title.trim()) throw new DomainError({ code: 20001, message: "请填写发票抬头" });
+        if (input.type === "company" && !input.taxId?.trim()) {
+          throw new DomainError({ code: 20001, message: "企业发票必须填写税号" });
+        }
+        if (invoices.some((i) => i.order_id === orderId)) {
+          throw new DomainError({ code: 30002, message: `订单 ${orderId} 已提交过开票申请` });
+        }
+        const row = {
+          id: `inv_${orderId}`,
+          order_id: orderId,
+          customer_id: state.orderCustomerId ?? null,
+          type: input.type,
+          title: input.title.trim(),
+          tax_id: input.type === "company" ? (input.taxId ?? null) : null,
+          email: input.email ?? order.email,
+          amount_minor: BigInt(String(order.total_minor ?? 0)),
+          currency_code: "CNY",
+          remark: input.remark ?? null,
+          status: "pending" as const,
+          invoice_no: null as string | null,
+          issued_at: null as string | null,
+          review_note: null as string | null,
+          created_at: new Date().toISOString(),
+        };
+        invoices.push(row);
+        return row;
+      },
+      getInvoiceByOrder: async (orderId: string) =>
+        invoices.find((i) => i.order_id === orderId) ?? null,
+      listInvoices: async (q: { status?: string; limit?: number; offset?: number }) => {
+        const all = q.status ? invoices.filter((i) => i.status === q.status) : invoices;
+        return { items: all.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 20)), count: all.length };
+      },
+      countInvoicesByStatus: async () => {
+        const out: Record<string, number> = {};
+        for (const i of invoices) out[i.status] = (out[i.status] ?? 0) + 1;
+        return out;
+      },
+      issueInvoice: async (id: string, input: { invoiceNo: string; note?: string | null }) => {
+        const inv = invoices.find((i) => i.id === id);
+        if (!inv) throw new DomainError({ code: 30001, message: `发票申请不存在：${id}` });
+        if (inv.status !== "pending") {
+          throw new DomainError({ code: 30002, message: `该发票申请已处理（当前状态：${inv.status}）` });
+        }
+        inv.status = "issued";
+        inv.invoice_no = input.invoiceNo.trim();
+        inv.issued_at = new Date().toISOString();
+        inv.review_note = input.note ?? null;
+        return inv;
+      },
+      rejectInvoice: async (id: string, note: string) => {
+        const inv = invoices.find((i) => i.id === id);
+        if (!inv) throw new DomainError({ code: 30001, message: `发票申请不存在：${id}` });
+        if (inv.status !== "pending") {
+          throw new DomainError({ code: 30002, message: `该发票申请已处理（当前状态：${inv.status}）` });
+        }
+        inv.status = "rejected";
+        inv.review_note = note;
+        return inv;
+      },
       // 统计报表（ADR-097）：与 summarizePaidSince 同口径，仅时段不同
       summarizePaidBetween: async () => ({
         count: state.orderCreated ? 1 : 0,
