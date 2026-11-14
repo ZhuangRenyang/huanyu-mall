@@ -24,6 +24,10 @@ const voucherCodesBody = z.object({
 const giftCardCodesBody = z.object({
   codes: z.array(z.string().min(1)).max(50),
 });
+/** 用积分：只收点数（非负），抵扣金额由后端折算封顶（ADR-094）。 */
+const pointsBody = z.object({
+  points: z.number().int().min(0).max(10_000_000),
+});
 
 function mapLineItem(li: CartLineItemDTO) {
   return {
@@ -231,6 +235,18 @@ export function cartRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { id } = req.params as { id: string };
       const b = req.body as z.infer<typeof giftCardCodesBody>;
       const cart = await deps.services.cart.setGiftCardCodes(id, b.codes);
+      reply.ok(await mapCartWithAvailability(cart, deps));
+    },
+  );
+
+  // 用积分抵扣（ADR-094）：只传点数，抵扣额由后端折算封顶。
+  app.put(
+    "/api/v1/store/carts/:id/points",
+    { schema: { body: pointsBody } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const b = req.body as z.infer<typeof pointsBody>;
+      const cart = await deps.services.cart.setPointsToUse(id, BigInt(b.points));
       reply.ok(await mapCartWithAvailability(cart, deps));
     },
   );

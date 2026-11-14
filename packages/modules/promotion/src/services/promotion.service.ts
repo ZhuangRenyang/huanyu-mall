@@ -538,6 +538,34 @@ export class PromotionService implements IPromotionModuleService {
     return this.repo.listPointLedger(customerId, limit, offset);
   }
 
+  /**
+   * 下单成功扣减积分（ADR-094）：原子减余额 + 写 spend 流水。
+   * 余额不足抛错（触发 workflow 整单回滚）—— 服务层校验过封顶，正常不会不足，
+   * 但并发下（同顾客两单同时用积分）仍可能超扣，这里守住。
+   */
+  async consumePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void> {
+    if (points <= 0n) return;
+    await this.repo.applyPointDelta({
+      id: prefixedUlid("ptl"),
+      customerId,
+      kind: "spend",
+      delta: -points,
+      orderId,
+    });
+  }
+
+  /** workflow 补偿：退回积分（写 refund 流水）。 */
+  async releasePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void> {
+    if (points <= 0n) return;
+    await this.repo.applyPointDelta({
+      id: prefixedUlid("ptl"),
+      customerId,
+      kind: "refund",
+      delta: points,
+      orderId,
+    });
+  }
+
   async computeDiscounts(ctx: ComputeDiscountsInput): Promise<ComputeDiscountsResult> {
     const now = new Date();
     // 功能级总开关：关闭的功能整体不参与计算（默认全关，ADR-014）。
@@ -701,6 +729,15 @@ export class PromotionService implements IPromotionModuleService {
       remainingMinor -= deductible;
     }
 
+    // —— Points（ADR-094）：积分抵扣，服务端折算 + 封顶（1 点 = 1 minor，封顶到剩余应付的 50%）。——
+    let pointsAppliedMinor = 0n;
+    let pointsUsed = 0n;
+    if (flags.points && ctx.pointsToUse && ctx.pointsToUse > 0n && remainingMinor > 0n) {
+      pointsAppliedMinor = pointDiscountMinor(ctx.pointsToUse, remainingMinor);
+      pointsUsed = pointsAppliedMinor; // 1 点 = 1 minor，实际用掉点数与抵扣额同值
+      remainingMinor -= pointsAppliedMinor;
+    }
+
     return {
       lineAdjustments,
       orderDiscountMinor,
@@ -709,6 +746,8 @@ export class PromotionService implements IPromotionModuleService {
       voucherDiscounts,
       giftCardAppliedMinor,
       giftCardDiscounts,
+      pointsAppliedMinor,
+      pointsUsed,
     };
   }
 }

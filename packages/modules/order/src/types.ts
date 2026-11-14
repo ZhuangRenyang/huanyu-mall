@@ -15,7 +15,7 @@ export type OrderStatus =
 
 export type PaymentStatus = "unpaid" | "authorized" | "captured" | "refunded";
 export type Actor = "customer" | "admin" | "system" | "workflow";
-export type OrderDiscountType = "catalogue" | "order" | "voucher" | "gift_card";
+export type OrderDiscountType = "catalogue" | "order" | "voucher" | "gift_card" | "points";
 
 export interface OrderDTO {
   id: string;

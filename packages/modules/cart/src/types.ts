@@ -44,7 +44,7 @@ export interface CartShippingMethodDTO {
 
 /** 命中的促销折扣明细（读时动态算），供下单侧固化进 order_discount 留痕（ADR-012 §3）。 */
 export interface CartDiscountDTO {
-  type: "catalogue" | "order" | "voucher" | "gift_card";
+  type: "catalogue" | "order" | "voucher" | "gift_card" | "points";
   promotion_id: string;
   code: string | null;
   amount_minor: bigint;
@@ -64,6 +64,8 @@ export interface CartDTO {
   voucher_codes: string[];
   /** 顾客输入的 gift card 码（持久化，刷新不丢），读时传给 computeDiscounts 算抵扣。 */
   gift_card_codes: string[];
+  /** 顾客想用的积分数（ADR-094）。 */
+  points_to_use: bigint;
   totals: CartTotals | null;
 }
 
@@ -170,6 +172,8 @@ export interface PromotionLookupPort {
     shippingMinor: bigint;
     voucherCodes: string[];
     giftCardCodes: string[];
+    /** 顾客想用的积分数（ADR-094）。 */
+    pointsToUse?: bigint;
   }): Promise<{
     lineAdjustments: Array<{ itemId: string; amountMinor: bigint; promotionId: string; code: string }>;
     orderDiscountMinor: bigint;
@@ -178,6 +182,9 @@ export interface PromotionLookupPort {
     voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
     giftCardAppliedMinor: bigint;
     giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+    /** 积分抵扣金额（ADR-094）。 */
+    pointsAppliedMinor: bigint;
+    pointsUsed: bigint;
   }>;
 }
 
@@ -227,6 +234,8 @@ export interface CartRepository {
   updateVoucherCodes(id: string, codes: string[]): Promise<void>;
   /** 持久化顾客输入的 gift card codes（jsonb string[]）。 */
   updateGiftCardCodes(id: string, codes: string[]): Promise<void>;
+  /** 设置积分抵扣意愿（ADR-094）。 */
+  updatePointsToUse(id: string, points: bigint): Promise<void>;
   softDelete(id: string): Promise<void>;
   restore(id: string): Promise<void>;
   listLineItems(cartId: string): Promise<CartLineItemDTO[]>;
@@ -256,6 +265,8 @@ export interface ICartModuleService {
   setVoucherCodes(cartId: string, codes: string[]): Promise<CartDetailDTO>;
   /** 设置顾客输入的 gift card codes（覆盖式；只传凭证，抵扣由后端算）。 */
   setGiftCardCodes(cartId: string, codes: string[]): Promise<CartDetailDTO>;
+  /** 设置积分抵扣意愿（ADR-094）：只存点数，抵扣额由 promotion 折算封顶。 */
+  setPointsToUse(cartId: string, points: bigint): Promise<CartDetailDTO>;
   completeCart(cartId: string): Promise<void>;
   restoreCart(cartId: string): Promise<void>;
 }

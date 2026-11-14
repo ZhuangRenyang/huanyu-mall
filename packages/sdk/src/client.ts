@@ -196,6 +196,9 @@ export function createStoreClient(opts: ClientOptions) {
       del(`/api/v1/store/customer/favorites/${productId}`),
     setGiftCardCodes: (cartId: string, b: SetGiftCardCodesRequest) =>
       put(`/api/v1/store/carts/${cartId}/gift-card-codes`, b),
+    /** 用积分抵扣（ADR-094）：只传点数。 */
+    setPointsToUse: (cartId: string, points: number) =>
+      put(`/api/v1/store/carts/${cartId}/points`, { points }),
     listPaymentProviders: (cartId: string) =>
       get("/api/v1/store/payment-providers", { cart_id: cartId }),
     createPaymentSession: (b: CreatePaymentSessionRequest) =>

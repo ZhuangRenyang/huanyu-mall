@@ -73,13 +73,19 @@ export class CartService implements ICartModuleService {
       // 只传顾客输入的券码凭证；折扣金额由 promotion 侧算（铁律 13 / 资金安全硬约束 2）。
       voucherCodes: cart.voucher_codes,
       giftCardCodes: cart.gift_card_codes,
+      // 积分抵扣意愿：只传点数，抵扣额由 promotion 折算封顶（ADR-094）
+      pointsToUse: cart.points_to_use,
     });
 
     const discountByItem = new Map(discounts.lineAdjustments.map((a) => [a.itemId, a.amountMinor]));
     // discount = 行级折扣合计 + 订单级折扣 + voucher 折扣（阶段 4）+ gift card 抵扣（阶段 5）。
     const lineDiscountMinor = discounts.lineAdjustments.reduce((s, a) => s + a.amountMinor, 0n);
     const discountMinor =
-      lineDiscountMinor + discounts.orderDiscountMinor + discounts.voucherDiscountMinor + discounts.giftCardAppliedMinor;
+      lineDiscountMinor +
+      discounts.orderDiscountMinor +
+      discounts.voucherDiscountMinor +
+      discounts.giftCardAppliedMinor +
+      discounts.pointsAppliedMinor;
 
     // 折扣明细（供下单固化 order_discount 留痕）：目录行级折扣按促销聚合 + 订单级折扣。
     const discountDetails = buildDiscountDetails(discounts);
@@ -328,6 +334,15 @@ export class CartService implements ICartModuleService {
     return this.retrieveCart(cartId);
   }
 
+  /** 设置积分抵扣意愿（ADR-094）：点数非负，抵扣额由 promotion 折算封顶。 */
+  async setPointsToUse(cartId: string, points: bigint): Promise<CartDetailDTO> {
+    const cart = await this.deps.repo.findById(cartId);
+    if (!cart) throw cartNotFound(cartId);
+    const normalized = points < 0n ? 0n : points;
+    await this.deps.repo.updatePointsToUse(cartId, normalized);
+    return this.retrieveCart(cartId);
+  }
+
   async restoreCart(cartId: string): Promise<void> {
     await this.deps.repo.restore(cartId);
     await this.deps.repo.updateStatus(cartId, "open");
@@ -348,6 +363,7 @@ function buildDiscountDetails(discounts: {
   orderDiscounts: Array<{ promotionId: string; code: string | null; amountMinor: bigint }>;
   voucherDiscounts: Array<{ promotionId: string; code: string; amountMinor: bigint }>;
   giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+  pointsAppliedMinor: bigint;
 }): CartDiscountDTO[] {
   const out: CartDiscountDTO[] = [];
 
@@ -372,6 +388,10 @@ function buildDiscountDetails(discounts: {
 
   for (const gd of discounts.giftCardDiscounts) {
     out.push({ type: "gift_card", promotion_id: gd.giftCardId, code: gd.code, amount_minor: gd.amountMinor });
+  }
+
+  if (discounts.pointsAppliedMinor > 0n) {
+    out.push({ type: "points", promotion_id: "", code: null, amount_minor: discounts.pointsAppliedMinor });
   }
 
   return out;

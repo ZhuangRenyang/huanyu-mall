@@ -31,6 +31,7 @@ export default Module("cart", {
       // 税：按顾客收货国家解析税率（ADR-018）
       tax: ctx.resolve<TaxLookupPort>("tax"),
     }),
-  migrations: ["migrations/0001_init.sql", "migrations/0002_voucher_codes.sql", "migrations/0003_gift_card_codes.sql", "migrations/0004_shipping_country.sql"],
+  migrations: ["migrations/0001_init.sql", "migrations/0002_voucher_codes.sql", "migrations/0003_gift_card_codes.sql", "migrations/0004_shipping_country.sql",
+    "migrations/0005_points.sql"],
   linkable,
 });

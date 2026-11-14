@@ -70,6 +70,14 @@ export class DrizzleCartRepository implements CartRepository {
       .where(eq(schema.cart.id, id));
   }
 
+  /** 设置购物车积分抵扣意愿（ADR-094）。 */
+  async updatePointsToUse(id: string, points: bigint): Promise<void> {
+    await this.db
+      .update(schema.cart)
+      .set({ pointsToUse: points, updatedAt: new Date() })
+      .where(eq(schema.cart.id, id));
+  }
+
   async softDelete(id: string): Promise<void> {
     await this.db
       .update(schema.cart)
@@ -175,6 +183,7 @@ function toCartDTO(r: typeof schema.cart.$inferSelect): CartDTO {
     shipping_country: r.shippingCountry ?? null,
     voucher_codes: parseVoucherCodes(r.voucherCodes),
     gift_card_codes: parseStringArray(r.giftCardCodes),
+    points_to_use: r.pointsToUse ?? 0n,
     totals: parseTotals(r.totals),
   };
 }

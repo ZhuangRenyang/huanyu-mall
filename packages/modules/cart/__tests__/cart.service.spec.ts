@@ -235,6 +235,7 @@ class FakePromotionLookup implements PromotionLookupPort {
     shippingMinor: bigint;
     voucherCodes: string[];
     giftCardCodes: string[];
+    pointsToUse?: bigint;
   }) {
     const lineAdjustments = ctx.items
       .map((i) => ({
@@ -266,6 +267,9 @@ class FakePromotionLookup implements PromotionLookupPort {
       voucherDiscounts,
       giftCardAppliedMinor: giftCardDiscounts[0]?.amountMinor ?? 0n,
       giftCardDiscounts,
+      // 积分抵扣（ADR-094）：测试桩按 pointsToUse 直接等额抵扣（1 点 = 1 minor）
+      pointsAppliedMinor: ctx.pointsToUse && ctx.pointsToUse > 0n ? ctx.pointsToUse : 0n,
+      pointsUsed: ctx.pointsToUse && ctx.pointsToUse > 0n ? ctx.pointsToUse : 0n,
     };
   }
 }

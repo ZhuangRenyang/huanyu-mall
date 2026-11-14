@@ -275,6 +275,8 @@ export interface ComputeDiscountsInput {
   shippingMinor: bigint;
   voucherCodes: string[];
   giftCardCodes: string[];
+  /** 顾客想用的积分数（ADR-093/094）：服务端折算成抵扣额并封顶。 */
+  pointsToUse?: bigint;
 }
 
 export interface ComputeDiscountsResult {
@@ -288,6 +290,10 @@ export interface ComputeDiscountsResult {
   giftCardAppliedMinor: bigint;
   /** 命中的 Gift Card 明细（多卡按顺序累加抵扣，封顶到剩余应付）。供下单侧固化 order_discount 留痕（type='gift_card'）并扣减余额。 */
   giftCardDiscounts: Array<{ giftCardId: string; code: string; amountMinor: bigint }>;
+  /** 积分抵扣金额（ADR-094）：服务端按 pointsToUse 折算并封顶。 */
+  pointsAppliedMinor: bigint;
+  /** 实际用掉的积分数（1 点 = 1 minor，与 pointsAppliedMinor 同值）。 */
+  pointsUsed: bigint;
 }
 
 // —— Repository（drizzle 实现 + InMemory 测试桩）——
@@ -495,6 +501,11 @@ export interface IPromotionModuleService {
   consumeGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
   /** workflow 补偿：加回余额 + 写 refunded_in_order 流水。 */
   releaseGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
+
+  /** 下单成功时扣减积分（ADR-094）：余额不足抛错触发整单回滚。 */
+  consumePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
+  /** workflow 补偿：退回积分。 */
+  releasePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
 
   // gift_card_event
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;

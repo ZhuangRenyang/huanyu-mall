@@ -1702,3 +1702,46 @@ describe("积分（ADR-093）", () => {
     expect(ledger.count).toBe(1);
   });
 });
+
+describe("积分抵扣（ADR-094）", () => {
+  it("computeDiscounts：pointsToUse 折算抵扣并封顶，未开开关不抵扣", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.setFeatureEnabled("points", true);
+
+    const ctx = {
+      currencyCode: "CNY",
+      items: [{ id: "cli_1", variantId: "var_1", categoryIds: [], quantity: 1, unitPriceMinor: 10000n }],
+      subtotalMinor: 10000n,
+      shippingMinor: 0n,
+      voucherCodes: [],
+      giftCardCodes: [],
+      pointsToUse: 200n, // 想用 200 点
+    };
+    const res = await service.computeDiscounts(ctx);
+    // 200 点 → 200 minor，封顶到应付 50% = 5000，所以全额抵扣 200
+    expect(res.pointsAppliedMinor).toBe(200n);
+    expect(res.pointsUsed).toBe(200n);
+
+    // 积分远超应付一半 → 封顶 5000
+    const capped = await service.computeDiscounts({ ...ctx, pointsToUse: 100000n });
+    expect(capped.pointsAppliedMinor).toBe(5000n);
+    expect(capped.pointsUsed).toBe(5000n);
+
+    // 关开关 → 不抵扣
+    await service.setFeatureEnabled("points", false);
+    const off = await service.computeDiscounts(ctx);
+    expect(off.pointsAppliedMinor).toBe(0n);
+    expect(off.pointsUsed).toBe(0n);
+  });
+
+  it("consumePointsForOrder 扣分，releasePointsForOrder 退回", async () => {
+    const repo = new InMemoryPromotionRepository();
+    const service = new PromotionService(repo);
+    await service.earnPointsForOrder("cust_1", "ord_earn", 10000n); // 100 点
+    await service.consumePointsForOrder("cust_1", 60n, "ord_spend");
+    expect(await service.getPointBalance("cust_1")).toBe(40n);
+    await service.releasePointsForOrder("cust_1", 60n, "ord_spend");
+    expect(await service.getPointBalance("cust_1")).toBe(100n);
+  });
+});

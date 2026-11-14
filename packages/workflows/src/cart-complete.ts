@@ -29,7 +29,7 @@ export interface CartCompleteInput {
   customerNote?: string | null;
   /** 命中的促销折扣明细（供 order 固化 order_discount 留痕）。 */
   discounts?: Array<{
-    type: "catalogue" | "order" | "voucher" | "gift_card";
+    type: "catalogue" | "order" | "voucher" | "gift_card" | "points";
     promotionId: string;
     code: string | null;
     amountMinor: bigint;
@@ -79,6 +79,10 @@ export interface PromotionPort {
   consumeGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
   /** 补偿：加回余额 + 写 refunded_in_order 流水。 */
   releaseGiftCards(entries: Array<{ code: string; amountMinor: bigint }>, orderId: string): Promise<void>;
+  /** 下单成功时扣减积分（ADR-094）：余额不足抛错触发整单回滚。 */
+  consumePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
+  /** 补偿：退回积分。 */
+  releasePointsForOrder(customerId: string, points: bigint, orderId: string): Promise<void>;
 }
 
 /** 从折扣留痕明细里提取命中的 voucher 券码（下单成功后要原子核销，防超用）。 */
@@ -97,6 +101,14 @@ export function giftCardEntriesFromDiscounts(
   return discounts
     .filter((d) => d.type === "gift_card" && d.code)
     .map((d) => ({ code: d.code as string, amountMinor: d.amountMinor }));
+}
+
+/** 从折扣留痕明细里提取积分抵扣点数（1 点 = 1 minor，amountMinor 即点数）。 */
+export function pointsUsedFromDiscounts(discounts: CartCompleteInput["discounts"]): bigint {
+  if (!discounts) return 0n;
+  return discounts
+    .filter((d) => d.type === "points")
+    .reduce((sum, d) => sum + d.amountMinor, 0n);
 }
 
 export const createOrderStep = defineStep({
@@ -187,6 +199,27 @@ export const consumeGiftCardsStep = defineStep({
   },
 });
 
+/**
+ * 积分扣减（ADR-094）：下单成功后原子扣积分，余额不足抛错触发整单回滚。
+ * 补偿：退回积分，供后续步骤失败时回滚。
+ */
+export const consumePointsStep = defineStep({
+  id: "cart-complete.consume-points",
+  compensationClass: "R",
+  async invoke(
+    input: { customerId: string; points: bigint; orderId: string },
+    ctx,
+  ) {
+    if (input.points <= 0n) return new StepResponse({}, { ...input, points: 0n });
+    await ctx.resolve<PromotionPort>("promotion").consumePointsForOrder(input.customerId, input.points, input.orderId);
+    return new StepResponse({}, input);
+  },
+  async compensate(payload: { customerId: string; points: bigint; orderId: string }, ctx) {
+    if (payload.points <= 0n) return;
+    await ctx.resolve<PromotionPort>("promotion").releasePointsForOrder(payload.customerId, payload.points, payload.orderId);
+  },
+});
+
 export const cartCompleteWorkflow = defineWorkflow<CartCompleteInput, { orderId: string }>(
   { id: "cart-complete" },
   async (ctx, input) => {
@@ -196,6 +229,13 @@ export const cartCompleteWorkflow = defineWorkflow<CartCompleteInput, { orderId:
       entries: giftCardEntriesFromDiscounts(input.discounts),
       orderId: order.orderId,
     });
+    if (input.customerId) {
+      await ctx.step(consumePointsStep, {
+        customerId: input.customerId,
+        points: pointsUsedFromDiscounts(input.discounts),
+        orderId: order.orderId,
+      });
+    }
     await ctx.step(reserveInventoryStep, { orderId: order.orderId, items: input.items });
     await ctx.step(createPaymentCollectionStep, {
       orderId: order.orderId,
@@ -213,5 +253,6 @@ export function registerCartComplete(registry: WorkflowRegistry): void {
   registry.registerStep(createPaymentCollectionStep);
   registry.registerStep(consumeVoucherCodesStep);
   registry.registerStep(consumeGiftCardsStep);
+  registry.registerStep(consumePointsStep);
   registry.registerWorkflow(cartCompleteWorkflow);
 }
