@@ -211,7 +211,7 @@ export interface LinkTargetView {
 }
 
 export async function searchLinkTargets(
-  type: 'product' | 'category',
+  type: 'product' | 'category' | 'page',
   keyword: string,
 ): Promise<LinkTargetView[]> {
   if (getAdminApiMode() !== 'live') return [];
@@ -222,4 +222,75 @@ export async function searchLinkTargets(
   return (res.items ?? [])
     .filter((i): i is { id: string; label: string; href: string } => Boolean(i.id && i.label && i.href))
     .map((i) => ({ id: i.id, label: i.label, href: i.href }));
+}
+
+/** 微页面（ADR-082）。 */
+export interface MicroPageView {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  published: boolean;
+}
+
+const PAGE_KEY = 'admin:micro-pages';
+
+export async function listMicroPages(): Promise<MicroPageView[]> {
+  if (getAdminApiMode() !== 'live') {
+    try {
+      return JSON.parse(window.localStorage.getItem(PAGE_KEY) ?? '[]') as MicroPageView[];
+    } catch {
+      return [];
+    }
+  }
+  const res = (await adminClient().listMicroPages()) as {
+    items?: Array<{ id: string; slug: string; title: string; content?: string; is_published?: boolean }>;
+  };
+  return (res.items ?? []).map((p) => ({
+    id: p.id,
+    slug: p.slug,
+    title: p.title,
+    content: p.content ?? '',
+    published: p.is_published === true,
+  }));
+}
+
+export async function createMicroPage(input: {
+  slug: string;
+  title: string;
+  content: string;
+  published: boolean;
+}): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const list = await listMicroPages();
+    list.unshift({
+      id: `page_${Date.now()}`,
+      slug: input.slug,
+      title: input.title,
+      content: input.content,
+      published: input.published,
+    });
+    window.localStorage.setItem(PAGE_KEY, JSON.stringify(list));
+    return;
+  }
+  await adminClient().createMicroPage({
+    slug: input.slug,
+    title: input.title,
+    content: input.content,
+    is_published: input.published,
+  });
+}
+
+export async function setMicroPagePublished(id: string, published: boolean): Promise<void> {
+  if (getAdminApiMode() !== 'live') return;
+  await adminClient().updateMicroPage(id, { is_published: published });
+}
+
+export async function removeMicroPage(id: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const list = (await listMicroPages()).filter((p) => p.id !== id);
+    window.localStorage.setItem(PAGE_KEY, JSON.stringify(list));
+    return;
+  }
+  await adminClient().deleteMicroPage(id);
 }

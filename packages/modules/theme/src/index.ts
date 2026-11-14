@@ -20,6 +20,7 @@ export default Module("theme", {
     "migrations/0003_announcement.sql",
     "migrations/0003_return_address.sql",
     "migrations/0005_banner.sql",
+    "migrations/0006_micro_page.sql",
   ],
   linkable,
 });

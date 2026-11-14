@@ -24,6 +24,18 @@ export const themeSettings = pgTable("theme_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** 微页面（ADR-082）：slug + 纯文本正文，空行分段。 */
+export const themeMicroPage = pgTable("theme_micro_page", {
+  id: text("id").primaryKey(),
+  slug: text("slug").notNull(),
+  title: text("title").notNull(),
+  content: text("content").notNull().default(""),
+  isPublished: boolean("is_published").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
 /** 首页轮播图（ADR-080）：装修的第二块能力，图片走 file 模块。 */
 export const themeBanner = pgTable("theme_banner", {
   id: text("id").primaryKey(),

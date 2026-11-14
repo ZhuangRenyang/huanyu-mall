@@ -59,6 +59,20 @@ export interface ThemeRepository {
     patch: { imageFileId?: string; link?: string | null; sortOrder?: number; isActive?: boolean },
   ): Promise<BannerDTO | null>;
   softDeleteBanner(id: string): Promise<void>;
+  listMicroPages(): Promise<MicroPageDTO[]>;
+  findMicroPageBySlug(slug: string, publishedOnly: boolean): Promise<MicroPageDTO | null>;
+  insertMicroPage(row: {
+    id: string;
+    slug: string;
+    title: string;
+    content: string;
+    isPublished: boolean;
+  }): Promise<MicroPageDTO>;
+  updateMicroPage(
+    id: string,
+    patch: { slug?: string; title?: string; content?: string; isPublished?: boolean },
+  ): Promise<MicroPageDTO | null>;
+  softDeleteMicroPage(id: string): Promise<void>;
 }
 
 /** 首页轮播图（ADR-080）。 */
@@ -78,6 +92,22 @@ export interface BannerInput {
   is_active?: boolean;
 }
 
+/** 微页面（ADR-082）。 */
+export interface MicroPageDTO {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  is_published: boolean;
+}
+
+export interface MicroPageInput {
+  slug: string;
+  title: string;
+  content?: string;
+  is_published?: boolean;
+}
+
 export interface IThemeModuleService {
   getSettings(): Promise<ThemeSettingsDTO>;
   updateSettings(patch: Partial<ThemeSettingsDTO>): Promise<ThemeSettingsDTO>;
@@ -86,4 +116,10 @@ export interface IThemeModuleService {
   createBanner(input: BannerInput): Promise<BannerDTO>;
   updateBanner(id: string, patch: Partial<BannerInput>): Promise<BannerDTO>;
   deleteBanner(id: string): Promise<void>;
+  listMicroPages(): Promise<MicroPageDTO[]>;
+  /** 店面按 slug 取已发布的；草稿不给。 */
+  getPublishedMicroPage(slug: string): Promise<MicroPageDTO | null>;
+  createMicroPage(input: MicroPageInput): Promise<MicroPageDTO>;
+  updateMicroPage(id: string, patch: Partial<MicroPageInput>): Promise<MicroPageDTO>;
+  deleteMicroPage(id: string): Promise<void>;
 }

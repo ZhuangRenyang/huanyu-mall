@@ -112,6 +112,73 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
    * 之前只有 PUT，没有 GET：后台读外观设置会 404，而前端 catch 后静默返回默认值 ——
    * 商家改完保存成功、刷新又看到默认配色，以为没保存（ADR-046）。
    */
+  /** 微页面（ADR-082）：标题 + 纯文本正文，空行分段。 */
+  const pageBody = z
+    .object({
+      slug: z
+        .string()
+        .min(2)
+        .max(60)
+        .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "地址只能用小写字母、数字与连字符"),
+      title: z.string().trim().min(1).max(80),
+      content: z.string().max(20000).optional(),
+      is_published: z.boolean().optional(),
+    })
+    .strict();
+
+  app.get("/api/v1/admin/settings/pages", { preHandler: guard }, async (_req, reply) => {
+    const items = await deps.services.theme.listMicroPages();
+    reply.ok({ items, count: items.length });
+  });
+
+  app.post(
+    "/api/v1/admin/settings/pages",
+    { preHandler: guard, schema: { body: pageBody } },
+    async (req, reply) => {
+      const created = await deps.services.theme.createMicroPage(req.body as never);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "theme.page.create",
+          entityType: "micro_page",
+          entityId: created.id,
+          after: created,
+        }),
+      );
+      reply.code(201).ok(created);
+    },
+  );
+
+  app.patch(
+    "/api/v1/admin/settings/pages/:id",
+    { preHandler: guard, schema: { body: pageBody.partial() } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const updated = await deps.services.theme.updateMicroPage(id, req.body as never);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "theme.page.update",
+          entityType: "micro_page",
+          entityId: id,
+          after: updated,
+        }),
+      );
+      reply.ok(updated);
+    },
+  );
+
+  app.delete(
+    "/api/v1/admin/settings/pages/:id",
+    { preHandler: guard },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      await deps.services.theme.deleteMicroPage(id);
+      await deps.audit.record(
+        auditEntry(req, { action: "theme.page.delete", entityType: "micro_page", entityId: id }),
+      );
+      reply.ok({ id });
+    },
+  );
+
   /**
    * 链接选择器（ADR-081）。
    *
@@ -121,7 +188,8 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
    */
   app.get("/api/v1/admin/settings/link-targets", { preHandler: guard }, async (req, reply) => {
     const query = req.query as { type?: string; q?: string };
-    const type = query.type === "category" ? "category" : "product";
+    const type =
+      query.type === "category" ? "category" : query.type === "page" ? "page" : "product";
     const needle = (query.q ?? "").trim().toLowerCase();
 
     // 首选启用中的渠道：路径必须带 locale 与 channel，否则店面 404
@@ -140,6 +208,18 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
           label: p.title,
           href: `${base}/products/${p.handle}`,
         })),
+      });
+      return;
+    }
+
+    if (type === "page") {
+      // 只给已发布的：链接到草稿等于给顾客一个 404
+      const pages = (await deps.services.theme.listMicroPages()).filter((p) => p.is_published);
+      reply.ok({
+        items: pages
+          .filter((p) => (needle ? p.title.toLowerCase().includes(needle) : true))
+          .slice(0, 10)
+          .map((p) => ({ id: p.id, label: p.title, href: `${base}/p/${p.slug}` })),
       });
       return;
     }

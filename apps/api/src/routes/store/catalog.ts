@@ -120,6 +120,15 @@ export async function mapStoreProductSummaries(
 /** GET /store/products + /store/products/{handle} + /store/categories（openapi 686/720/741）。 */
 export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
   const auth = makeAuthHelpers(deps);
+
+  /** 微页面（ADR-082）：只返回已发布的；草稿按 404，不泄露未上线内容。 */
+  app.get("/api/v1/store/pages/:slug", async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const page = await deps.services.theme.getPublishedMicroPage(slug);
+    if (!page) throw errors.notFound(`page not found: ${slug}`);
+    reply.ok({ slug: page.slug, title: page.title, content: page.content });
+  });
+
   app.get(
     "/api/v1/store/products",
     { schema: { querystring: productListQuery } },

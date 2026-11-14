@@ -1,7 +1,7 @@
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
-import { DEFAULT_THEME, type BannerDTO, type ThemeRepository, type ThemeSettingsDTO } from "../types.js";
+import { DEFAULT_THEME, type BannerDTO, type MicroPageDTO, type ThemeRepository, type ThemeSettingsDTO } from "../types.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -79,6 +79,60 @@ export class DrizzleThemeRepository implements ThemeRepository {
       .where(eq(schema.themeBanner.id, id));
   }
 
+  async listMicroPages(): Promise<MicroPageDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.themeMicroPage)
+      .where(isNull(schema.themeMicroPage.deletedAt))
+      .orderBy(desc(schema.themeMicroPage.updatedAt));
+    return rows.map(toPage);
+  }
+
+  async findMicroPageBySlug(slug: string, publishedOnly: boolean): Promise<MicroPageDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.themeMicroPage)
+      .where(
+        and(
+          eq(schema.themeMicroPage.slug, slug),
+          isNull(schema.themeMicroPage.deletedAt),
+          publishedOnly ? eq(schema.themeMicroPage.isPublished, true) : undefined,
+        ),
+      )
+      .limit(1);
+    return rows[0] ? toPage(rows[0]) : null;
+  }
+
+  async insertMicroPage(row: {
+    id: string;
+    slug: string;
+    title: string;
+    content: string;
+    isPublished: boolean;
+  }): Promise<MicroPageDTO> {
+    const rows = await this.db.insert(schema.themeMicroPage).values(row).returning();
+    return toPage(rows[0]!);
+  }
+
+  async updateMicroPage(
+    id: string,
+    patch: { slug?: string; title?: string; content?: string; isPublished?: boolean },
+  ): Promise<MicroPageDTO | null> {
+    const rows = await this.db
+      .update(schema.themeMicroPage)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(schema.themeMicroPage.id, id), isNull(schema.themeMicroPage.deletedAt)))
+      .returning();
+    return rows[0] ? toPage(rows[0]) : null;
+  }
+
+  async softDeleteMicroPage(id: string): Promise<void> {
+    await this.db
+      .update(schema.themeMicroPage)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.themeMicroPage.id, id));
+  }
+
   async getSettings(): Promise<ThemeSettingsDTO | null> {
     const rows = await this.db.select().from(schema.themeSettings).limit(1);
     return rows[0] ? toThemeDTO(rows[0]) : null;
@@ -144,5 +198,15 @@ function toThemeDTO(r: typeof schema.themeSettings.$inferSelect): ThemeSettingsD
     announcement: r.announcement ?? null,
     return_address: r.returnAddress ?? null,
     metadata: (r.metadata as Record<string, unknown> | null) ?? null,
+  };
+}
+
+function toPage(r: typeof schema.themeMicroPage.$inferSelect): MicroPageDTO {
+  return {
+    id: r.id,
+    slug: r.slug,
+    title: r.title,
+    content: r.content,
+    is_published: r.isPublished,
   };
 }

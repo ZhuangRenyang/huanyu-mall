@@ -1513,6 +1513,21 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       };
     })(),
     theme: {
+      // 微页面（ADR-082）：固定两条，够验「已发布可见 / 草稿 404」
+      listMicroPages: async () => [],
+      getPublishedMicroPage: async (slug: string) =>
+        slug === "about"
+          ? { id: "page_1", slug: "about", title: "关于我们", content: "第一段\n\n第二段", is_published: true }
+          : null,
+      createMicroPage: async (input: { slug: string; title: string }) => ({
+        id: "page_2",
+        slug: input.slug,
+        title: input.title,
+        content: "",
+        is_published: false,
+      }),
+      updateMicroPage: async () => null,
+      deleteMicroPage: async () => {},
       // 轮播图（ADR-080）：内存空列表，够 bootstrap 与后台接口跑通
       listBanners: async () => [],
       createBanner: async () => ({ id: "bnr_1", image_file_id: "file_1", link: null, sort_order: 0, is_active: true }),

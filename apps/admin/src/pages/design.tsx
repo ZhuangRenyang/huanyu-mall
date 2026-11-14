@@ -4,10 +4,14 @@ import { Badge, Button } from '@mall/ui';
 import { ThemeSettings } from '@/components/settings-theme';
 import {
   addBanner,
+  createMicroPage,
   getHomeModules,
+  listMicroPages,
   listBanners,
   removeBanner,
+  removeMicroPage,
   saveHomeModules,
+  setMicroPagePublished,
   searchLinkTargets,
   setBannerActive,
   type BannerView,
@@ -156,6 +160,8 @@ export function DesignPage() {
       </section>
 
       <BannerSection />
+
+      <MicroPageSection />
     </div>
   );
 }
@@ -169,7 +175,7 @@ function BannerSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** 链接选择器（ADR-081）：先搜再点，不让商家手打前缀。 */
-  const [targetType, setTargetType] = useState<'product' | 'category'>('product');
+  const [targetType, setTargetType] = useState<'product' | 'category' | 'page'>('product');
   const [keyword, setKeyword] = useState('');
   const [targets, setTargets] = useState<Array<{ id: string; label: string; href: string }>>([]);
 
@@ -271,12 +277,13 @@ function BannerSection() {
         <div className="flex flex-wrap items-center gap-2">
           <select
             value={targetType}
-            onChange={(e) => setTargetType(e.target.value as 'product' | 'category')}
+            onChange={(e) => setTargetType(e.target.value as 'product' | 'category' | 'page')}
             className="rounded-md border border-border px-2 py-1.5 text-xs"
             aria-label="链接类型"
           >
             <option value="product">商品</option>
             <option value="category">分类</option>
+            <option value="page">微页面</option>
           </select>
           <input
             value={keyword}
@@ -318,6 +325,123 @@ function BannerSection() {
         <div className="flex items-center gap-2">
           <Button onClick={() => void add()} disabled={busy}>
             {busy ? '添加中…' : '添加轮播图'}
+          </Button>
+          {error && (
+            <span className="text-xs text-destructive" role="alert">
+              {error}
+            </span>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** 微页面（ADR-082）：标题 + 纯文本正文，空行分段；发布后走 /p/{slug}。 */
+function MicroPageSection() {
+  const [pages, setPages] = useState<Array<{ id: string; slug: string; title: string; content: string; published: boolean }>>([]);
+  const [title, setTitle] = useState('');
+  const [slug, setSlug] = useState('');
+  const [content, setContent] = useState('');
+  const [published, setPublished] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setPages(await listMicroPages());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '读取微页面失败');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const create = async () => {
+    setError(null);
+    try {
+      await createMicroPage({ title, slug, content, published });
+      setTitle('');
+      setSlug('');
+      setContent('');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建失败');
+    }
+  };
+
+  return (
+    <section aria-labelledby="micro-page-heading" className="max-w-2xl rounded-lg border border-border bg-card p-4">
+      <h2 id="micro-page-heading" className="text-sm font-semibold text-foreground">
+        微页面
+      </h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        用于「关于我们」「售后说明」这类单页。正文按空行分段；发布后可被轮播与微页面链接引用。
+      </p>
+
+      <ul className="mt-3 space-y-2">
+        {pages.map((p) => (
+          <li key={p.id} className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm text-foreground">{p.title}</p>
+              <p className="truncate text-xs text-muted-foreground">/p/{p.slug}</p>
+            </div>
+            <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={p.published}
+                onChange={(e) => void setMicroPagePublished(p.id, e.target.checked).then(load)}
+                className="size-4 accent-primary"
+              />
+              发布
+            </label>
+            <button
+              type="button"
+              onClick={() => void removeMicroPage(p.id).then(load)}
+              className="text-xs text-destructive hover:underline"
+            >
+              删除
+            </button>
+          </li>
+        ))}
+        {pages.length === 0 && <li className="text-xs text-muted-foreground">还没有微页面。</li>}
+      </ul>
+
+      <div className="mt-4 space-y-2 border-t border-border pt-4">
+        <div className="flex gap-2">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="标题（如：售后说明）"
+            className="flex-1 rounded-md border border-border px-3 py-2 text-sm"
+          />
+          <input
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder="地址（after-sales）"
+            className="w-40 rounded-md border border-border px-3 py-2 text-sm"
+          />
+        </div>
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={4}
+          placeholder="正文，空行分段"
+          className="w-full rounded-md border border-border px-3 py-2 text-sm"
+        />
+        <div className="flex items-center gap-3">
+          <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={published}
+              onChange={(e) => setPublished(e.target.checked)}
+              className="size-4 accent-primary"
+            />
+            立即发布
+          </label>
+          <Button onClick={() => void create()} disabled={!title.trim() || !slug.trim()}>
+            创建微页面
           </Button>
           {error && (
             <span className="text-xs text-destructive" role="alert">

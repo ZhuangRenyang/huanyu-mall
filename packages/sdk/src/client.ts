@@ -169,6 +169,8 @@ export function createStoreClient(opts: ClientOptions) {
     collectVoucher: (id: string) => post(`/api/v1/store/vouchers/${id}/collect`, {}),
     /** 我的卡券（未用在前）。 */
     listMyVouchers: () => get("/api/v1/store/customer/vouchers"),
+    /** 微页面（ADR-082）：只取已发布。 */
+    getStorePage: (slug: string) => get(`/api/v1/store/pages/${slug}`),
     /** 商品评价（匿名可读）。 */
     listProductReviews: (handle: string, q?: Query) =>
       get(`/api/v1/store/products/${handle}/reviews`, q),
@@ -326,8 +328,19 @@ export function createAdminClient(opts: ClientOptions) {
       post("/api/v1/admin/auth/change-password", b),
     /** 工作台：今日支付、待发货、待退款、最近订单（ADR-030）。 */
     getDashboard: () => get("/api/v1/admin/dashboard"),
+    /** 微页面（ADR-082）。 */
+    listMicroPages: () => get("/api/v1/admin/settings/pages"),
+    createMicroPage: (b: { slug: string; title: string; content?: string; is_published?: boolean }) =>
+      post("/api/v1/admin/settings/pages", b),
+    updateMicroPage: (
+      id: string,
+      b: { slug?: string; title?: string; content?: string; is_published?: boolean },
+    ) => patch(`/api/v1/admin/settings/pages/${id}`, b),
+    deleteMicroPage: (id: string) => del(`/api/v1/admin/settings/pages/${id}`),
+    /** 店面微页面（只给已发布）。 */
+    getStorePage: (slug: string) => get(`/api/v1/store/pages/${slug}`),
     /** 链接选择器（ADR-081）：按关键字找商品/分类，返回可直接用的站内路径。 */
-    listLinkTargets: (q: { type: "product" | "category"; q?: string }) =>
+    listLinkTargets: (q: { type: "product" | "category" | "page"; q?: string }) =>
       get("/api/v1/admin/settings/link-targets", q),
     /** 轮播图（ADR-080）：装修入口管理首页大图。 */
     listBanners: () => get("/api/v1/admin/settings/banners"),
