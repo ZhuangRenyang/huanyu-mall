@@ -3,11 +3,17 @@ import { ArrowDown, ArrowUp, Palette } from 'lucide-react';
 import { Badge, Button } from '@mall/ui';
 import { ThemeSettings } from '@/components/settings-theme';
 import {
+  addBanner,
   getHomeModules,
+  listBanners,
+  removeBanner,
   saveHomeModules,
+  setBannerActive,
+  type BannerView,
   type HomeModuleId,
   type HomeModuleView,
 } from '@/lib/admin-settings';
+import { uploadImageAsset } from '@/lib/admin-catalog';
 
 /**
  * 装修（ADR-077 / ADR-079）。
@@ -147,7 +153,134 @@ export function DesignPage() {
           )}
         </div>
       </section>
+
+      <BannerSection />
     </div>
+  );
+}
+
+/** 首页轮播（ADR-080）：上传图 + 站内路径/https 链接；链接白名单在服务端。 */
+function BannerSection() {
+  const [banners, setBanners] = useState<BannerView[]>([]);
+  const [fileId, setFileId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [link, setLink] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setBanners(await listBanners());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '读取轮播图失败');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    try {
+      const uploaded = await uploadImageAsset(file);
+      setFileId(uploaded.fileId);
+      setPreview(uploaded.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '上传失败');
+    }
+  };
+
+  const add = async () => {
+    if (!fileId) {
+      setError('先选一张图片');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await addBanner(fileId, link);
+      setFileId(null);
+      setPreview(null);
+      setLink('');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '添加失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="banner-heading" className="max-w-2xl rounded-lg border border-border bg-card p-4">
+      <h2 id="banner-heading" className="text-sm font-semibold text-foreground">
+        首页轮播
+      </h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        显示在搜索框下方。链接只接受站内路径（以 / 开头）或 https 外链，留空则不可点。
+      </p>
+
+      <ul className="mt-3 space-y-2">
+        {banners.map((b) => (
+          <li key={b.id} className="flex items-center gap-3 rounded-md border border-border p-2">
+            {b.imageUrl ? (
+              <img src={b.imageUrl} alt="" className="h-14 w-24 rounded object-cover" />
+            ) : (
+              <div className="h-14 w-24 rounded bg-muted" aria-hidden="true" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs text-muted-foreground">{b.link ?? '不可点'}</p>
+            </div>
+            <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={b.isActive}
+                onChange={(e) => void setBannerActive(b.id, e.target.checked).then(load)}
+                className="size-4 accent-primary"
+              />
+              显示
+            </label>
+            <button
+              type="button"
+              onClick={() => void removeBanner(b.id).then(load)}
+              className="text-xs text-destructive hover:underline"
+            >
+              删除
+            </button>
+          </li>
+        ))}
+        {banners.length === 0 && <li className="text-xs text-muted-foreground">还没有轮播图。</li>}
+      </ul>
+
+      <div className="mt-4 space-y-2 border-t border-border pt-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => void pick(e.target.files?.[0])}
+            className="text-xs text-muted-foreground"
+          />
+          {preview && <img src={preview} alt="" className="h-12 w-20 rounded object-cover" />}
+        </div>
+        <input
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+          placeholder="链接：/zh-CN/cn/products 或 https://…（可留空）"
+          className="w-full rounded-md border border-border px-3 py-2 text-sm"
+        />
+        <div className="flex items-center gap-2">
+          <Button onClick={() => void add()} disabled={busy}>
+            {busy ? '添加中…' : '添加轮播图'}
+          </Button>
+          {error && (
+            <span className="text-xs text-destructive" role="alert">
+              {error}
+            </span>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

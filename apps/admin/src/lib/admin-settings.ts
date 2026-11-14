@@ -149,3 +149,56 @@ export async function saveProviders(providers: ProviderConfig[]): Promise<void> 
     await client.updatePaymentProvider(p.id, { is_enabled: p.enabled });
   }
 }
+
+/** 轮播图（ADR-080）。 */
+export interface BannerView {
+  id: string;
+  imageUrl: string | null;
+  link: string | null;
+  isActive: boolean;
+}
+
+const BANNER_KEY = 'admin:banners';
+
+export async function listBanners(): Promise<BannerView[]> {
+  if (getAdminApiMode() !== 'live') {
+    try {
+      return JSON.parse(window.localStorage.getItem(BANNER_KEY) ?? '[]') as BannerView[];
+    } catch {
+      return [];
+    }
+  }
+  const res = (await adminClient().listBanners()) as {
+    items?: Array<{ id: string; image_url?: string | null; link?: string | null; is_active?: boolean }>;
+  };
+  return (res.items ?? []).map((b) => ({
+    id: b.id,
+    imageUrl: b.image_url ?? null,
+    link: b.link ?? null,
+    isActive: b.is_active !== false,
+  }));
+}
+
+export async function addBanner(imageFileId: string, link: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const list = await listBanners();
+    list.push({ id: `bnr_${Date.now()}`, imageUrl: null, link: link || null, isActive: true });
+    window.localStorage.setItem(BANNER_KEY, JSON.stringify(list));
+    return;
+  }
+  await adminClient().createBanner({ image_file_id: imageFileId, link: link.trim() || null });
+}
+
+export async function setBannerActive(id: string, isActive: boolean): Promise<void> {
+  if (getAdminApiMode() !== 'live') return;
+  await adminClient().updateBanner(id, { is_active: isActive });
+}
+
+export async function removeBanner(id: string): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    const list = (await listBanners()).filter((b) => b.id !== id);
+    window.localStorage.setItem(BANNER_KEY, JSON.stringify(list));
+    return;
+  }
+  await adminClient().deleteBanner(id);
+}

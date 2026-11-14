@@ -326,6 +326,13 @@ export function createAdminClient(opts: ClientOptions) {
       post("/api/v1/admin/auth/change-password", b),
     /** 工作台：今日支付、待发货、待退款、最近订单（ADR-030）。 */
     getDashboard: () => get("/api/v1/admin/dashboard"),
+    /** 轮播图（ADR-080）：装修入口管理首页大图。 */
+    listBanners: () => get("/api/v1/admin/settings/banners"),
+    createBanner: (b: { image_file_id: string; link?: string | null; sort_order?: number }) =>
+      post("/api/v1/admin/settings/banners", b),
+    updateBanner: (id: string, b: { image_file_id?: string; link?: string | null; is_active?: boolean }) =>
+      patch(`/api/v1/admin/settings/banners/${id}`, b),
+    deleteBanner: (id: string) => del(`/api/v1/admin/settings/banners/${id}`),
     /** 维护：系统探针 + 邮件队列 + 数据规模 + 最近审计（ADR-076）。 */
     getMaintenanceStatus: () => get("/api/v1/admin/maintenance/status"),
     /** 评价管理（ADR-042）。 */

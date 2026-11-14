@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 /** M17 Theme：设计变量单一事实来源（单例表，一行）+ 版本留痕。 */
 export const themeSettings = pgTable("theme_settings", {
@@ -22,6 +22,18 @@ export const themeSettings = pgTable("theme_settings", {
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** 首页轮播图（ADR-080）：装修的第二块能力，图片走 file 模块。 */
+export const themeBanner = pgTable("theme_banner", {
+  id: text("id").primaryKey(),
+  imageFileId: text("image_file_id").notNull(),
+  link: text("link"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 export const themeRevision = pgTable(

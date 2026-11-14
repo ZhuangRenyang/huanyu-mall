@@ -156,6 +156,8 @@ export interface StoreProfile {
   returnAddress: string | null;
   /** 首页模块顺序（ADR-079）：服务端已归一化，前端只按顺序渲染。 */
   homeModules: Array<{ id: 'categories' | 'vouchers' | 'featured'; enabled: boolean }>;
+  /** 首页轮播（ADR-080）：服务端已把 file_id 解析成 URL。 */
+  banners: Array<{ id: string; imageUrl: string; link: string | null }>;
 }
 
 const DEFAULT_PROFILE: StoreProfile = {
@@ -169,6 +171,7 @@ const DEFAULT_PROFILE: StoreProfile = {
     { id: 'vouchers', enabled: true },
     { id: 'featured', enabled: true },
   ],
+  banners: [],
 };
 
 /**
@@ -181,6 +184,7 @@ export async function getStoreProfile(): Promise<StoreProfile> {
   if (getApiMode() !== 'live') return DEFAULT_PROFILE;
   try {
     const raw = (await getStoreClient().bootstrap()) as {
+      banners?: Array<{ id?: string; image_url?: string | null; link?: string | null }>;
       theme?: {
         store_name?: string;
         support_phone?: string | null;
@@ -200,6 +204,11 @@ export async function getStoreProfile(): Promise<StoreProfile> {
         raw.theme?.home_modules && raw.theme.home_modules.length > 0
           ? raw.theme.home_modules
           : DEFAULT_PROFILE.homeModules,
+      banners: (raw.banners ?? [])
+        .filter((b): b is { id: string; image_url: string; link: string | null } =>
+          Boolean(b.id && b.image_url),
+        )
+        .map((b) => ({ id: b.id, imageUrl: b.image_url, link: b.link ?? null })),
     };
   } catch {
     return DEFAULT_PROFILE;

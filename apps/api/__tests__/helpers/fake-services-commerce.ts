@@ -1513,6 +1513,11 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
       };
     })(),
     theme: {
+      // 轮播图（ADR-080）：内存空列表，够 bootstrap 与后台接口跑通
+      listBanners: async () => [],
+      createBanner: async () => ({ id: "bnr_1", image_file_id: "file_1", link: null, sort_order: 0, is_active: true }),
+      updateBanner: async () => ({ id: "bnr_1", image_file_id: "file_1", link: null, sort_order: 0, is_active: true }),
+      deleteBanner: async () => {},
       getSettings: async () => ({ ...state.theme }),
       updateSettings: async (patch: Record<string, unknown>) => {
         state.theme = { ...state.theme, ...patch };

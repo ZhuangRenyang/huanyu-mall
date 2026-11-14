@@ -1,12 +1,83 @@
-import { eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import * as schema from "../models/index.js";
-import { DEFAULT_THEME, type ThemeRepository, type ThemeSettingsDTO } from "../types.js";
+import { DEFAULT_THEME, type BannerDTO, type ThemeRepository, type ThemeSettingsDTO } from "../types.js";
 
 type Db = NodePgDatabase<typeof schema>;
 
 export class DrizzleThemeRepository implements ThemeRepository {
   constructor(private readonly db: Db) {}
+
+  async listBanners(activeOnly: boolean): Promise<BannerDTO[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.themeBanner)
+      .where(
+        and(
+          isNull(schema.themeBanner.deletedAt),
+          activeOnly ? eq(schema.themeBanner.isActive, true) : undefined,
+        ),
+      )
+      .orderBy(asc(schema.themeBanner.sortOrder), asc(schema.themeBanner.createdAt));
+    return rows.map((r) => ({
+      id: r.id,
+      image_file_id: r.imageFileId,
+      link: r.link,
+      sort_order: r.sortOrder,
+      is_active: r.isActive,
+    }));
+  }
+
+  async insertBanner(row: {
+    id: string;
+    imageFileId: string;
+    link: string | null;
+    sortOrder: number;
+    isActive: boolean;
+  }): Promise<BannerDTO> {
+    const rows = await this.db.insert(schema.themeBanner).values(row).returning();
+    const r = rows[0]!;
+    return {
+      id: r.id,
+      image_file_id: r.imageFileId,
+      link: r.link,
+      sort_order: r.sortOrder,
+      is_active: r.isActive,
+    };
+  }
+
+  async updateBanner(
+    id: string,
+    patch: {
+      imageFileId?: string;
+      link?: string | null;
+      sortOrder?: number;
+      isActive?: boolean;
+    },
+  ): Promise<BannerDTO | null> {
+    const rows = await this.db
+      .update(schema.themeBanner)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(and(eq(schema.themeBanner.id, id), isNull(schema.themeBanner.deletedAt)))
+      .returning();
+    const r = rows[0];
+    return r
+      ? {
+          id: r.id,
+          image_file_id: r.imageFileId,
+          link: r.link,
+          sort_order: r.sortOrder,
+          is_active: r.isActive,
+        }
+      : null;
+  }
+
+  async softDeleteBanner(id: string): Promise<void> {
+    await this.db
+      .update(schema.themeBanner)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(eq(schema.themeBanner.id, id));
+  }
 
   async getSettings(): Promise<ThemeSettingsDTO | null> {
     const rows = await this.db.select().from(schema.themeSettings).limit(1);

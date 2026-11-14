@@ -112,6 +112,79 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
    * 之前只有 PUT，没有 GET：后台读外观设置会 404，而前端 catch 后静默返回默认值 ——
    * 商家改完保存成功、刷新又看到默认配色，以为没保存（ADR-046）。
    */
+  /**
+   * 轮播图（ADR-080）。
+   *
+   * 链接在服务层过白名单（站内 / 或 https），路由只做长度校验；
+   * 图片走 file 模块的 file_id，和商品图同一套上传，不另建一套存储。
+   */
+  const bannerBody = z
+    .object({
+      image_file_id: z.string().min(1),
+      link: z.string().max(500).nullable().optional(),
+      sort_order: z.number().int().optional(),
+      is_active: z.boolean().optional(),
+    })
+    .strict();
+
+  app.get("/api/v1/admin/settings/banners", { preHandler: guard }, async (_req, reply) => {
+    const items = await deps.services.theme.listBanners(false);
+    const urls = await deps.services.file.getPublicUrls(items.map((b) => b.image_file_id));
+    reply.ok({
+      items: items.map((b) => ({ ...b, image_url: urls[b.image_file_id] ?? null })),
+      count: items.length,
+    });
+  });
+
+  app.post(
+    "/api/v1/admin/settings/banners",
+    { preHandler: guard, schema: { body: bannerBody } },
+    async (req, reply) => {
+      const b = req.body as z.infer<typeof bannerBody>;
+      const created = await deps.services.theme.createBanner(b);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "theme.banner.create",
+          entityType: "theme_banner",
+          entityId: created.id,
+          after: created,
+        }),
+      );
+      reply.code(201).ok(created);
+    },
+  );
+
+  app.patch(
+    "/api/v1/admin/settings/banners/:id",
+    { preHandler: guard, schema: { body: bannerBody.partial() } },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const updated = await deps.services.theme.updateBanner(id, req.body as never);
+      await deps.audit.record(
+        auditEntry(req, {
+          action: "theme.banner.update",
+          entityType: "theme_banner",
+          entityId: id,
+          after: updated,
+        }),
+      );
+      reply.ok(updated);
+    },
+  );
+
+  app.delete(
+    "/api/v1/admin/settings/banners/:id",
+    { preHandler: guard },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      await deps.services.theme.deleteBanner(id);
+      await deps.audit.record(
+        auditEntry(req, { action: "theme.banner.delete", entityType: "theme_banner", entityId: id }),
+      );
+      reply.ok({ id });
+    },
+  );
+
   app.get("/api/v1/admin/settings/theme", { preHandler: guard }, async (_req, reply) => {
     const theme = await deps.services.theme.getSettings();
     const logoUrl = theme.logo_file_id

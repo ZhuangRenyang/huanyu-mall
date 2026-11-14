@@ -31,6 +31,15 @@ export function bootstrapRoutes(app: FastifyInstance, deps: AppDeps): void {
       // logo_url 与 theme 平铺：前端不该知道 file_id 与 URL 的区别
       // home_modules 由服务端归一化后下发：前端不复制一套默认顺序与容错逻辑（ADR-079）
       theme: { ...theme, logo_url: logoUrl, home_modules: normalizeHomeModules(theme.metadata) },
+      // 轮播图（ADR-080）：URL 由 file 模块解析，店面只拿能直接用的地址
+      banners: await (async () => {
+        const items = await deps.services.theme.listBanners(true);
+        if (items.length === 0) return [];
+        const urls = await deps.services.file.getPublicUrls(items.map((b) => b.image_file_id));
+        return items
+          .map((b) => ({ id: b.id, image_url: urls[b.image_file_id] ?? null, link: b.link }))
+          .filter((b): b is { id: string; image_url: string; link: string | null } => Boolean(b.image_url));
+      })(),
     });
   });
 }

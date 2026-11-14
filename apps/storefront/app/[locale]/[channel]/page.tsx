@@ -36,6 +36,28 @@ export default async function HomePage({
         <HomeSearch basePath={base} />
       </section>
 
+      {/* 轮播（ADR-080）：装修里配了才出现，没配不留空档 */}
+      {profile.banners.length > 0 && (
+        <div className="mb-8 space-y-2 md:mb-10">
+          {profile.banners.map((banner) => {
+            const image = (
+              <img
+                src={banner.imageUrl}
+                alt=""
+                className="aspect-[16/6] w-full rounded-lg object-cover"
+              />
+            );
+            return banner.link ? (
+              <a key={banner.id} href={banner.link} className="block">
+                {image}
+              </a>
+            ) : (
+              <div key={banner.id}>{image}</div>
+            );
+          })}
+        </div>
+      )}
+
       {modules.map((module) => {
         if (module.id === 'categories') {
           if (categories.length === 0) return null;

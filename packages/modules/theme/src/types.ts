@@ -46,9 +46,44 @@ export interface ThemeRepository {
   upsertSettings(patch: Partial<ThemeSettingsDTO>): Promise<ThemeSettingsDTO>;
   nextVersion(): Promise<number>;
   insertRevision(version: number, settings: ThemeSettingsDTO): Promise<void>;
+  listBanners(activeOnly: boolean): Promise<BannerDTO[]>;
+  insertBanner(row: {
+    id: string;
+    imageFileId: string;
+    link: string | null;
+    sortOrder: number;
+    isActive: boolean;
+  }): Promise<BannerDTO>;
+  updateBanner(
+    id: string,
+    patch: { imageFileId?: string; link?: string | null; sortOrder?: number; isActive?: boolean },
+  ): Promise<BannerDTO | null>;
+  softDeleteBanner(id: string): Promise<void>;
+}
+
+/** 首页轮播图（ADR-080）。 */
+export interface BannerDTO {
+  id: string;
+  image_file_id: string;
+  /** 站内路径或 https 外链；null = 不可点。 */
+  link: string | null;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface BannerInput {
+  image_file_id: string;
+  link?: string | null;
+  sort_order?: number;
+  is_active?: boolean;
 }
 
 export interface IThemeModuleService {
   getSettings(): Promise<ThemeSettingsDTO>;
   updateSettings(patch: Partial<ThemeSettingsDTO>): Promise<ThemeSettingsDTO>;
+  /** 轮播图（ADR-080）：activeOnly=true 供店面，false 供后台。 */
+  listBanners(activeOnly?: boolean): Promise<BannerDTO[]>;
+  createBanner(input: BannerInput): Promise<BannerDTO>;
+  updateBanner(id: string, patch: Partial<BannerInput>): Promise<BannerDTO>;
+  deleteBanner(id: string): Promise<void>;
 }
