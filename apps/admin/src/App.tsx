@@ -20,6 +20,7 @@ import { StatisticsPage } from './pages/statistics';
 import { InvoicesPage } from './pages/invoices';
 import { FlashSalesPage } from './pages/flash-sales';
 import { GroupBuysPage } from './pages/group-buys';
+import { AffiliatesPage } from './pages/affiliates';
 import {
   MarketingGiftCardsPage,
   MarketingPromotionsPage,
@@ -60,6 +61,7 @@ export function App() {
           <Route path="invoices" element={<InvoicesPage />} />
           <Route path="flash-sales" element={<FlashSalesPage />} />
           <Route path="group-buys" element={<GroupBuysPage />} />
+          <Route path="affiliates" element={<AffiliatesPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -16,6 +16,7 @@ export default Module("order", {
     new OrderService(new DrizzleOrderRepository(createDbFor(ctx.resolve<Pool>("pool"), schema))),
   migrations: ["migrations/0001_init.sql", "migrations/0002_order_discount.sql", "migrations/0003_merchant_note.sql", "migrations/0004_refund_request.sql", "migrations/0005_refund_pending.sql", "migrations/0006_customer_index.sql", "migrations/0007_customer_note.sql", "migrations/0008_return_refund.sql", "migrations/0009_return_address_snapshot.sql",
     "migrations/0010_exchange.sql",
-    "migrations/0011_invoice.sql"],
+    "migrations/0011_invoice.sql",
+    "migrations/0012_affiliate.sql"],
   linkable,
 });

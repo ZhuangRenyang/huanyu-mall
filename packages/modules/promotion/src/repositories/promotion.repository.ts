@@ -3,7 +3,11 @@ import { prefixedUlid, type NodePgDatabase } from "@mall/core";
 import { giftCardNotFound, voucherCodeNotFound } from "../errors.js";
 import * as schema from "../models/index.js";
 import type {
+  AffiliateCommissionDTO,
+  AffiliateDTO,
+  AffiliateStatus,
   CollectedVoucherDTO,
+  CommissionStatus,
   FlashSaleDTO,
   FlashSaleItemDTO,
   GroupBuyDTO,
@@ -751,6 +755,180 @@ export class DrizzlePromotionRepository implements PromotionRepository {
     return rows.map(toGiftCardEventDTO);
   }
 
+  // —— affiliate（ADR-101）——
+
+  async insertAffiliate(row: {
+    id: string;
+    customerId: string;
+    code: string;
+    commissionBps: number;
+  }): Promise<AffiliateDTO> {
+    const rows = await this.db
+      .insert(schema.affiliate)
+      .values({
+        id: row.id,
+        customerId: row.customerId,
+        code: row.code,
+        commissionBps: row.commissionBps,
+      })
+      .returning();
+    return toAffiliateDTO(rows[0]!);
+  }
+
+  async findAffiliateById(id: string): Promise<AffiliateDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.affiliate)
+      .where(eq(schema.affiliate.id, id))
+      .limit(1);
+    return rows[0] ? toAffiliateDTO(rows[0]) : null;
+  }
+
+  async findAffiliateByCustomer(customerId: string): Promise<AffiliateDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.affiliate)
+      .where(eq(schema.affiliate.customerId, customerId))
+      .limit(1);
+    return rows[0] ? toAffiliateDTO(rows[0]) : null;
+  }
+
+  async findAffiliateByCode(code: string): Promise<AffiliateDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.affiliate)
+      .where(eq(schema.affiliate.code, code))
+      .limit(1);
+    return rows[0] ? toAffiliateDTO(rows[0]) : null;
+  }
+
+  async listAffiliates(q: {
+    limit: number;
+    offset: number;
+  }): Promise<{ items: AffiliateDTO[]; count: number }> {
+    const rows = await this.db
+      .select()
+      .from(schema.affiliate)
+      .orderBy(desc(schema.affiliate.createdAt))
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db.select({ count: sql<number>`count(*)::int` }).from(schema.affiliate);
+    return { items: rows.map(toAffiliateDTO), count: countRows[0]?.count ?? 0 };
+  }
+
+  async updateAffiliateStatus(id: string, status: AffiliateStatus): Promise<AffiliateDTO | null> {
+    const rows = await this.db
+      .update(schema.affiliate)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(schema.affiliate.id, id))
+      .returning();
+    return rows[0] ? toAffiliateDTO(rows[0]) : null;
+  }
+
+  async insertCommission(row: {
+    id: string;
+    affiliateId: string;
+    orderId: string;
+    orderTotalMinor: bigint;
+    commissionMinor: bigint;
+  }): Promise<AffiliateCommissionDTO> {
+    const rows = await this.db
+      .insert(schema.affiliateCommission)
+      .values({
+        id: row.id,
+        affiliateId: row.affiliateId,
+        orderId: row.orderId,
+        orderTotalMinor: row.orderTotalMinor,
+        commissionMinor: row.commissionMinor,
+      })
+      .returning();
+    return toCommissionDTO(rows[0]!);
+  }
+
+  async findCommissionByOrder(orderId: string): Promise<AffiliateCommissionDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.affiliateCommission)
+      .where(eq(schema.affiliateCommission.orderId, orderId))
+      .limit(1);
+    return rows[0] ? toCommissionDTO(rows[0]) : null;
+  }
+
+  async findCommissionById(id: string): Promise<AffiliateCommissionDTO | null> {
+    const rows = await this.db
+      .select()
+      .from(schema.affiliateCommission)
+      .where(eq(schema.affiliateCommission.id, id))
+      .limit(1);
+    return rows[0] ? toCommissionDTO(rows[0]) : null;
+  }
+
+  async listCommissions(q: {
+    affiliateId?: string;
+    status?: CommissionStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: AffiliateCommissionDTO[]; count: number }> {
+    const conds = [
+      ...(q.affiliateId ? [eq(schema.affiliateCommission.affiliateId, q.affiliateId)] : []),
+      ...(q.status ? [eq(schema.affiliateCommission.status, q.status)] : []),
+    ];
+    const where = conds.length > 0 ? and(...conds) : undefined;
+    const rows = await this.db
+      .select()
+      .from(schema.affiliateCommission)
+      .where(where)
+      .orderBy(desc(schema.affiliateCommission.createdAt))
+      .limit(q.limit)
+      .offset(q.offset);
+    const countRows = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.affiliateCommission)
+      .where(where);
+    return { items: rows.map(toCommissionDTO), count: countRows[0]?.count ?? 0 };
+  }
+
+  async markCommissionSettled(id: string, settledAt: Date): Promise<AffiliateCommissionDTO | null> {
+    const rows = await this.db
+      .update(schema.affiliateCommission)
+      .set({ status: "settled", settledAt, updatedAt: new Date() })
+      .where(eq(schema.affiliateCommission.id, id))
+      .returning();
+    return rows[0] ? toCommissionDTO(rows[0]) : null;
+  }
+
+  async markCommissionCanceled(id: string, reason: string): Promise<AffiliateCommissionDTO | null> {
+    const rows = await this.db
+      .update(schema.affiliateCommission)
+      .set({ status: "canceled", canceledReason: reason, updatedAt: new Date() })
+      .where(eq(schema.affiliateCommission.id, id))
+      .returning();
+    return rows[0] ? toCommissionDTO(rows[0]) : null;
+  }
+
+  async summarizeCommissions(
+    affiliateId: string,
+  ): Promise<{ pendingMinor: bigint; settledMinor: bigint; count: number }> {
+    const rows = await this.db
+      .select({
+        status: schema.affiliateCommission.status,
+        amount: sql<string>`coalesce(sum(${schema.affiliateCommission.commissionMinor}), 0)::text`,
+        n: sql<number>`count(*)::int`,
+      })
+      .from(schema.affiliateCommission)
+      .where(eq(schema.affiliateCommission.affiliateId, affiliateId))
+      .groupBy(schema.affiliateCommission.status);
+    let pendingMinor = 0n;
+    let settledMinor = 0n;
+    let count = 0;
+    for (const r of rows) {
+      count += Number(r.n);
+      if (r.status === "pending") pendingMinor = BigInt(r.amount);
+      if (r.status === "settled") settledMinor = BigInt(r.amount);
+    }
+    return { pendingMinor, settledMinor, count };
+  }
+
   // —— group_buy（ADR-100）——
 
   async insertGroupBuy(row: {
@@ -1182,6 +1360,33 @@ export class DrizzlePromotionRepository implements PromotionRepository {
       .orderBy(asc(schema.pointLedger.createdAt));
     return rows.map(toPointLedgerDTO);
   }
+}
+
+function toAffiliateDTO(r: typeof schema.affiliate.$inferSelect): AffiliateDTO {
+  return {
+    id: r.id,
+    customer_id: r.customerId,
+    code: r.code,
+    commission_bps: r.commissionBps,
+    status: (r.status as AffiliateStatus) ?? "active",
+    created_at: r.createdAt.toISOString(),
+  };
+}
+
+function toCommissionDTO(
+  r: typeof schema.affiliateCommission.$inferSelect,
+): AffiliateCommissionDTO {
+  return {
+    id: r.id,
+    affiliate_id: r.affiliateId,
+    order_id: r.orderId,
+    order_total_minor: r.orderTotalMinor,
+    commission_minor: r.commissionMinor,
+    status: (r.status as CommissionStatus) ?? "pending",
+    settled_at: r.settledAt ? r.settledAt.toISOString() : null,
+    canceled_reason: r.canceledReason ?? null,
+    created_at: r.createdAt.toISOString(),
+  };
 }
 
 function toGroupBuyDTO(r: typeof schema.groupBuy.$inferSelect): GroupBuyDTO {

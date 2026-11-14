@@ -167,6 +167,8 @@ export function createStoreClient(opts: ClientOptions) {
     joinGroupBuy: (id: string) => post(`/api/v1/store/group-buys/${id}/join`),
     listMyGroupBuys: () => get("/api/v1/store/group-buys/mine"),
     claimGroupBuyVoucher: (id: string) => post(`/api/v1/store/group-buys/${id}/voucher`),
+    /** 我的推广（ADR-101）：推广码 + 待结算/已结算 + 流水。 */
+    getMyAffiliate: () => get("/api/v1/store/affiliate/me"),
     /** 我的积分（ADR-093）：余额 + 最近流水。 */
     getStorePoints: () => get("/api/v1/store/points"),
     /** 可领取的店铺券（匿名可读；登录后带 collected 标记）。 */
@@ -449,6 +451,14 @@ export function createAdminClient(opts: ClientOptions) {
       post(`/api/v1/admin/refund-requests/${id}/ship-exchange`, b),
     // —— 发票管理（ADR-098）——
     // —— 限时秒杀（ADR-099）——
+    // —— 分销（ADR-101）——
+    listAffiliates: (q?: Query) => get("/api/v1/admin/affiliates", q),
+    registerAffiliate: (b: { customer_id: string; code?: string; commission_bps: number }) =>
+      post("/api/v1/admin/affiliates", b),
+    setAffiliateStatus: (id: string, status: "active" | "disabled") =>
+      post(`/api/v1/admin/affiliates/${id}/status`, { status }),
+    listCommissions: (q?: Query) => get("/api/v1/admin/commissions", q),
+    settleCommission: (id: string) => post(`/api/v1/admin/commissions/${id}/settle`),
     // —— 拼团（ADR-100）——
     listGroupBuys: (q?: Query) => get("/api/v1/admin/group-buys", q),
     createGroupBuy: (b: {

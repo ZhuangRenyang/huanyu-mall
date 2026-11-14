@@ -34,6 +34,13 @@ const completeBody = z
      * 1000 只是防滥用的粗护栏，别让请求体无上限。
      */
     customer_note: z.string().max(1000).nullish(),
+    /**
+     * 推广码（分销归因，ADR-101）。
+     *
+     * 只收**码**不收 affiliate_id：id 是内部标识，客户端传什么就是什么，
+     * 等于让任何人把订单挂到别人名下。码要服务端查表并校验状态。
+     */
+    affiliate_code: z.string().max(32).nullish(),
   })
   // nullish 而不是 optional：无 body 时 Fastify 传的是 null，
   // 只写 optional 会让老客户端（不带 body 直接 complete）全部 400。
@@ -120,6 +127,15 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
     const shippingAddress = { ...provided, country };
     // 仓选择只由后端 inventory 模块决定（ADR-013 §5 / 铁律 13）：路由不再取仓、不再下发 locationId。
 
+    /*
+     * 分销归因（ADR-101）：推广码只在服务端解析。
+     * 码无效/已停用 → 静默按自然流量处理，不挡住下单 ——
+     * 顾客不该因为别人发了个过期码就买不了东西。
+     */
+    const affiliate = body?.affiliate_code
+      ? await deps.services.promotion.resolveAffiliateByCode(body.affiliate_code)
+      : null;
+
     const input = {
       cartId: id,
       email: cart.email ?? "guest@example.com",
@@ -143,6 +159,8 @@ export function checkoutRoutes(app: FastifyInstance, deps: AppDeps): void {
         code: d.code,
         amountMinor: d.amount_minor,
       })),
+      // 推广归类（ADR-101）：只记归属，不影响金额
+      affiliateId: affiliate?.id ?? null,
       // 秒杀行（ADR-099）：下单成功后按它扣活动库存（卖完即止，售罄整单回滚）
       flashItems: (cart.flash_items ?? []).map((f) => ({
         flashSaleItemId: f.flash_sale_item_id,

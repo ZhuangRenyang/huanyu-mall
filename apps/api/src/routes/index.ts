@@ -27,6 +27,8 @@ import { adminAuditLogRoutes } from "./admin/audit-logs.js";
 import { adminPromotionRoutes } from "./admin/promotions.js";
 import { adminFlashSaleRoutes } from "./admin/flash-sales.js";
 import { adminGroupBuyRoutes } from "./admin/group-buys.js";
+import { adminAffiliateRoutes } from "./admin/affiliates.js";
+import { storeAffiliateRoutes } from "./store/affiliate.js";
 import { storeGroupBuyRoutes } from "./store/group-buys.js";
 import { storeFlashSaleRoutes } from "./store/flash-sales.js";
 import { adminNotificationRoutes } from "./admin/notifications.js";
@@ -78,6 +80,8 @@ export function registerRoutes(app: FastifyInstance, deps: AppDeps): void {
   adminInvoiceRoutes(app, deps);
   adminFlashSaleRoutes(app, deps);
   adminGroupBuyRoutes(app, deps);
+  adminAffiliateRoutes(app, deps);
+  storeAffiliateRoutes(app, deps);
   storeGroupBuyRoutes(app, deps);
   storeFlashSaleRoutes(app, deps);
   adminTaxRoutes(app, deps);

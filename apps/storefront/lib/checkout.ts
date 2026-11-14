@@ -385,12 +385,17 @@ export async function completeLiveOrder(
   shippingAddress?: ShippingAddressInput,
   /** 给卖家留言（ADR-050）：空白就不下发，别把一串空格存进订单。 */
   customerNote?: string,
+  /** 推广码（分销归因，ADR-101）：来自落地页 ?ref=，只传码不传金额。 */
+  affiliateCode?: string | null,
 ): Promise<Order> {
   const note = customerNote?.trim();
+  const ref = affiliateCode?.trim().toUpperCase();
   return (
     (await getStoreClient().completeCart(cartId, idempotencyKey, {
       ...(shippingAddress ? { shipping_address: shippingAddress } : {}),
       ...(note ? { customer_note: note } : {}),
+      // 分销归因（ADR-101）：只传推广码，服务端查表校验；过期/无效码静默忽略
+      ...(ref ? { affiliate_code: ref } : {}),
     })) as Order
   );
 }
@@ -457,6 +462,8 @@ export async function submitLiveCheckout(input: {
   shippingAddress?: ShippingAddressInput;
   /** 给卖家留言（ADR-050）。 */
   customerNote?: string;
+  /** 推广码（ADR-101）：来自落地页 ?ref=，只在服务端校验。 */
+  affiliateCode?: string | null;
 }): Promise<{ order: Order; session: LivePaymentSession }> {
   // 运费由后端按收货国家自动选并算进购物车（ADR-019），前端不再设置运费方案
   const order = await completeLiveOrder(
@@ -464,6 +471,7 @@ export async function submitLiveCheckout(input: {
     input.idempotencyKey,
     input.shippingAddress,
     input.customerNote,
+    input.affiliateCode,
   );
   const session = await createLivePaymentSession({
     cartId: input.cartId,

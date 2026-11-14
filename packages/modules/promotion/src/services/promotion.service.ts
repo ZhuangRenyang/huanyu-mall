@@ -12,7 +12,12 @@ import {
   voucherUsageLimitReached,
 } from "../errors.js";
 import type {
+  AffiliateCommissionDTO,
+  AffiliateDTO,
+  AffiliateStatus,
   CollectedVoucherDTO,
+  CommissionStatus,
+  RegisterAffiliateInput,
   ComputeDiscountsInput,
   CreateFlashSaleInput,
   CreateGroupBuyInput,
@@ -629,6 +634,188 @@ export class PromotionService implements IPromotionModuleService {
         });
       }
     }
+  }
+
+  // —— affiliate（ADR-101）——
+
+  /**
+   * 把某个顾客设为推广员。
+   *
+   * 推广员是**顾客**，不是后台员工：他有自己的推广码，带码成交后记佣金。
+   * 佣金比例上限 30%：再高就不是分销，是清仓。
+   */
+  async registerAffiliate(input: RegisterAffiliateInput): Promise<AffiliateDTO> {
+    const bps = input.commissionBps;
+    if (!Number.isInteger(bps) || bps <= 0 || bps > 3000) {
+      throw new DomainError({ code: 20001, message: "佣金比例需在 0.01%–30% 之间" });
+    }
+
+    const existing = await this.repo.findAffiliateByCustomer(input.customerId);
+    if (existing) {
+      throw new DomainError({ code: 30002, message: "该客户已经是推广员" });
+    }
+
+    const code = await this.generateAffiliateCode(input.code);
+    return this.repo.insertAffiliate({
+      id: prefixedUlid("aff"),
+      customerId: input.customerId,
+      code,
+      commissionBps: bps,
+    });
+  }
+
+  async listAffiliates(q: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: AffiliateDTO[]; count: number }> {
+    return this.repo.listAffiliates({ limit: q.limit ?? 20, offset: q.offset ?? 0 });
+  }
+
+  async setAffiliateStatus(id: string, status: AffiliateStatus): Promise<AffiliateDTO> {
+    const affiliate = await this.repo.findAffiliateById(id);
+    if (!affiliate) throw new DomainError({ code: 30001, message: `推广员不存在：${id}` });
+    if (affiliate.status === status) return affiliate;
+    const updated = await this.repo.updateAffiliateStatus(id, status);
+    return updated!;
+  }
+
+  /** 按推广码解析推广员：停用的码不生效（停用即时生效）。 */
+  async resolveAffiliateByCode(code: string): Promise<AffiliateDTO | null> {
+    const normalized = code?.trim().toUpperCase() ?? "";
+    if (normalized === "") return null;
+    const affiliate = await this.repo.findAffiliateByCode(normalized);
+    if (!affiliate || affiliate.status !== "active") return null;
+    return affiliate;
+  }
+
+  /**
+   * 订单完成时计提佣金。
+   *
+   * 三条硬规则：
+   * 1. **自推不计**：推广员自己下单不给佣金（否则就是给自己打折）；
+   * 2. **一单一笔**：唯一索引兜底，重复确认收货不会重复计提；
+   * 3. **只记账不打款**：流水进 pending，结算由商家人工操作（ADR-023）。
+   *
+   * 基数用订单**实付**：佣金永远不超过顾客付出的钱，这是资金安全的硬边界。
+   */
+  async createCommissionForOrder(input: {
+    orderId: string;
+    orderTotalMinor: bigint;
+    affiliateId: string | null;
+    buyerCustomerId: string | null;
+  }): Promise<AffiliateCommissionDTO | null> {
+    if (!input.affiliateId) return null;
+    const affiliate = await this.repo.findAffiliateById(input.affiliateId);
+    if (!affiliate || affiliate.status !== "active") return null;
+    // 自推不计
+    if (input.buyerCustomerId && affiliate.customer_id === input.buyerCustomerId) return null;
+
+    const existing = await this.repo.findCommissionByOrder(input.orderId);
+    if (existing) return existing; // 幂等
+
+    const commissionMinor = (input.orderTotalMinor * BigInt(affiliate.commission_bps)) / 10000n;
+    if (commissionMinor <= 0n) return null;
+
+    return this.repo.insertCommission({
+      id: prefixedUlid("cm"),
+      affiliateId: affiliate.id,
+      orderId: input.orderId,
+      orderTotalMinor: input.orderTotalMinor,
+      commissionMinor,
+    });
+  }
+
+  /**
+   * 退款作废佣金（只改流水，不动钱）。
+   *
+   * **已结算的不动**：钱可能已经打给推广员了，自动作废只会让账更乱，
+   * 这种情况留给商家人工处理（追回或协商）。
+   */
+  async cancelCommissionByOrder(orderId: string, reason: string): Promise<void> {
+    const commission = await this.repo.findCommissionByOrder(orderId);
+    if (!commission) return;
+    if (commission.status === "canceled") return;
+    if (commission.status === "settled") return;
+    await this.repo.markCommissionCanceled(commission.id, reason);
+  }
+
+  async listCommissions(q: {
+    affiliateId?: string;
+    status?: CommissionStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: AffiliateCommissionDTO[]; count: number }> {
+    return this.repo.listCommissions({
+      affiliateId: q.affiliateId,
+      status: q.status,
+      limit: q.limit ?? 20,
+      offset: q.offset ?? 0,
+    });
+  }
+
+  /**
+   * 标记「已结算」。
+   *
+   * 系统不触发任何转账：商家线下打款（微信/支付宝/银行）之后来这里点一下，
+   * 这笔佣金才算结清。**不做「点结算自动打款」**，那是 ADR-023 的红线。
+   */
+  async settleCommission(id: string): Promise<AffiliateCommissionDTO> {
+    const commission = await this.repo.findCommissionById(id);
+    if (!commission) throw new DomainError({ code: 30001, message: `佣金流水不存在：${id}` });
+    if (commission.status !== "pending") {
+      throw new DomainError({
+        code: 30002,
+        message: `当前状态（${commission.status}）不能结算`,
+      });
+    }
+    const updated = await this.repo.markCommissionSettled(id, new Date());
+    return updated!;
+  }
+
+  /** 我的推广（推广员自己看）：有没有资格、待结算多少、累计结算多少。 */
+  async getAffiliateSummary(customerId: string): Promise<{
+    affiliate: AffiliateDTO | null;
+    pending_minor: bigint;
+    settled_minor: bigint;
+    count: number;
+  }> {
+    const affiliate = await this.repo.findAffiliateByCustomer(customerId);
+    if (!affiliate) {
+      return { affiliate: null, pending_minor: 0n, settled_minor: 0n, count: 0 };
+    }
+    const sum = await this.repo.summarizeCommissions(affiliate.id);
+    return {
+      affiliate,
+      pending_minor: sum.pendingMinor,
+      settled_minor: sum.settledMinor,
+      count: sum.count,
+    };
+  }
+
+  /** 生成推广码：8 位大写字母数字（去掉易混的 I/O/0/1）。 */
+  private async generateAffiliateCode(preferred?: string): Promise<string> {
+    const normalize = (raw: string) => raw.trim().toUpperCase();
+    if (preferred && preferred.trim() !== "") {
+      const code = normalize(preferred);
+      if (!/^[A-Z0-9]{4,16}$/.test(code)) {
+        throw new DomainError({ code: 20001, message: "推广码只能是 4–16 位字母或数字" });
+      }
+      const exists = await this.repo.findAffiliateByCode(code);
+      if (exists) throw new DomainError({ code: 20001, message: "推广码已被占用" });
+      return code;
+    }
+
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const bytes = randomBytes(8);
+      let code = "";
+      for (const b of bytes) code += alphabet[b % alphabet.length];
+      const exists = await this.repo.findAffiliateByCode(code);
+      if (exists) continue;
+      return code;
+    }
+    // 8 次都撞上（几乎不可能）：宁可报错也不要发重复码
+    throw new DomainError({ code: 20001, message: "推广码生成失败，请重试" });
   }
 
   // —— group_buy（ADR-100）——

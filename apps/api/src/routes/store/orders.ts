@@ -6,6 +6,7 @@ import type { AppDeps } from "../../deps.js";
 import { mapOrder } from "../mappers.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { cancelOrderAndReleaseStock } from "../../lib/cancel-order.js";
+import { awardCommissionSafely } from "../../lib/affiliate.js";
 
 const refundRequestBody = z.object({
   /** 顾客只说明原因；金额一律由服务端按订单实付取（铁律 13，客户端不传金额）。 */
@@ -204,6 +205,11 @@ export function storeOrderRoutes(app: FastifyInstance, deps: AppDeps): void {
           req.log.warn({ err, orderId: id }, "订单完成发放积分失败");
         }
       }
+      /*
+       * 分销佣金（ADR-101）：订单完成才计提，只写流水不打款。
+       * 自推不计、一单一笔、失败只记日志 —— 与积分同一套纪律。
+       */
+      await awardCommissionSafely(deps, req.log, order);
       // 重新取一次：transition 返回的 DTO 不带行项，前端要整单渲染
       reply.ok(mapOrder(await deps.services.order.retrieveOrder(id)));
     },

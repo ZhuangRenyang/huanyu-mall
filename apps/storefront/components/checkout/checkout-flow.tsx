@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { Button, IconButton, Skeleton, formatMoney } from '@mall/ui';
 import { useCart } from '@/lib/cart-store';
+import { readAffiliateRef } from '@/components/affiliate-capture';
 import { getApiMode } from '@/lib/api';
 import { getLiveCartId, markCartOrdered, prepareCartForOrder, withLiveCartLock } from '@/lib/live-cart';
 import {
@@ -421,6 +422,8 @@ export function CheckoutFlow({ locale, channel }: { locale: string; channel: str
         shippingAddress: toShippingAddress(form),
         // 给卖家留言：与地址同一条请求带下去，别单独再发一次（少一次可失败的调用）
         customerNote: form.note,
+        // 分销归因（ADR-101）：只传落地时记下的推广码，金额一律服务端算
+        affiliateCode: readAffiliateRef(),
       });
       // 记下「这辆车按此内容出过单」：重试同一内容复用这辆车，内容变了才换车。
       markCartOrdered(fingerprint);

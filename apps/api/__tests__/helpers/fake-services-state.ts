@@ -47,6 +47,8 @@ export interface FakeServicesState {
   orderCustomerId?: string | null;
   /** 订单收款状态（ADR-098 开票要求 captured）：不配 = unpaid。 */
   orderPaymentStatus?: string;
+  /** 订单归因推广员（ADR-101 佣金）：不配 = 自然流量。 */
+  orderAffiliateId?: string | null;
   /** 某订单的库存预留（ADR-075 取消订单用）：用例可配「在占用 / 已释放」两种。 */
   orderReservations?: Array<{ id: string; status: string }>;
   /** 商品分类（ADR-028）：改完能读回来，测试才能断言「保存真的生效」。 */

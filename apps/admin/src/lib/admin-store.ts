@@ -4,6 +4,8 @@ import {
   DEFAULT_THEME,
   SEED_ORDERS,
   SEED_PRODUCTS,
+  type AdminAffiliate,
+  type AdminCommission,
   type AdminFlashSale,
   type AdminGroupBuy,
   type AdminInvoice,
@@ -23,6 +25,8 @@ const KEYS = {
   invoices: 'admin:invoices',
   flashSales: 'admin:flash-sales',
   groupBuys: 'admin:group-buys',
+  affiliates: 'admin:affiliates',
+  commissions: 'admin:commissions',
   theme: 'admin:theme',
   providers: 'admin:providers',
   password: 'admin:password',
@@ -367,6 +371,100 @@ export function shipExchange(id: string, carrier: string, trackingNumber: string
 export function listRefunds(status?: string): AdminRefundRequest[] {
   const all = read<AdminRefundRequest[]>(KEYS.refunds, []);
   return status ? all.filter((r) => r.status === status) : all;
+}
+
+// ---- 分销（ADR-101）----
+
+/** mock：推广员列表。首次访问按第一个客户造一个演示推广员。 */
+export function listAffiliates(): AdminAffiliate[] {
+  const raw = read<AdminAffiliate[] | null>(KEYS.affiliates, null);
+  if (raw) return raw;
+  const customers = read<Array<{ id: string }>>(KEYS.orders, []);
+  void customers;
+  const seed: AdminAffiliate[] = [
+    {
+      id: 'aff_demo_1',
+      customerId: 'cust_1',
+      code: 'HUANYU01',
+      commissionBps: 500,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+    },
+  ];
+  write(KEYS.affiliates, seed);
+  return seed;
+}
+
+export function registerAffiliate(input: {
+  customerId: string;
+  code?: string;
+  commissionBps: number;
+}): void {
+  const list = listAffiliates();
+  list.unshift({
+    id: `aff_${Date.now()}`,
+    customerId: input.customerId,
+    code: (input.code?.trim() || `AFF${String(Date.now()).slice(-6)}`).toUpperCase(),
+    commissionBps: input.commissionBps,
+    status: 'active',
+    createdAt: new Date().toISOString(),
+  });
+  write(KEYS.affiliates, list);
+}
+
+export function setAffiliateStatus(id: string, status: 'active' | 'disabled'): void {
+  const list = listAffiliates();
+  const a = list.find((x) => x.id === id);
+  if (!a) return;
+  a.status = status;
+  write(KEYS.affiliates, list);
+}
+
+/** mock：佣金流水（首次访问造两条演示数据：一条待结算、一条已结算）。 */
+export function listCommissions(status?: string): AdminCommission[] {
+  const raw = read<AdminCommission[] | null>(KEYS.commissions, null);
+  const all = raw ?? seedCommissions();
+  return status ? all.filter((c) => c.status === status) : all;
+}
+
+function seedCommissions(): AdminCommission[] {
+  const now = Date.now();
+  const seed: AdminCommission[] = [
+    {
+      id: 'cm_demo_1',
+      affiliateId: 'aff_demo_1',
+      orderId: 'ord_2401',
+      orderTotalMinor: 89900,
+      commissionMinor: 4495,
+      status: 'pending',
+      settledAt: null,
+      canceledReason: null,
+      createdAt: new Date(now - 3_600_000).toISOString(),
+    },
+    {
+      id: 'cm_demo_2',
+      affiliateId: 'aff_demo_1',
+      orderId: 'ord_2402',
+      orderTotalMinor: 25900,
+      commissionMinor: 1295,
+      status: 'settled',
+      settledAt: new Date(now - 86_400_000).toISOString(),
+      canceledReason: null,
+      createdAt: new Date(now - 2 * 86_400_000).toISOString(),
+    },
+  ];
+  write(KEYS.commissions, seed);
+  return seed;
+}
+
+/** mock：标记已结算（系统不转账，商家线下打款后点这里）。 */
+export function settleCommission(id: string): void {
+  const list = listCommissions();
+  const c = list.find((x) => x.id === id);
+  if (!c || c.status !== 'pending') return;
+  c.status = 'settled';
+  c.settledAt = new Date().toISOString();
+  write(KEYS.commissions, list);
 }
 
 // ---- 拼团（ADR-100）----

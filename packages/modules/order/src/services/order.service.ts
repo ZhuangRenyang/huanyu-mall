@@ -112,6 +112,8 @@ export class OrderService implements IOrderModuleService {
       billingAddress: input.billingAddress ?? null,
       paymentCollectionId: input.paymentCollectionId ?? null,
       customerNote: normalizeCustomerNote(input.customerNote),
+      // 推广归因（ADR-101）：由路由解析推广码后传入，服务层只负责落库
+      affiliateId: input.affiliateId ?? null,
     });
 
     const inserted = await this.repo.insertLineItems(

@@ -5,6 +5,7 @@ import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { auditEntry } from "../audit-context.js";
 import { approveExchange, releaseExchangeReservation, shipExchange } from "../../lib/exchange.js";
+import { cancelCommissionSafely } from "../../lib/affiliate.js";
 
 /**
  * 退款管理（对齐淘宝「交易 → 退款管理」）。
@@ -219,6 +220,8 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
       const after = await deps.services.order.approveRefundRequest(id, refundId, body.note ?? null);
       // 退款退回积分（ADR-095）：扣回该单发放的、退回该单抵扣的；失败不阻断退款
       await refundPointsSafely(deps, req, request.order_id);
+      // 退款作废分销佣金（ADR-101）：已结算的不动，留给人工
+      await cancelCommissionSafely(deps, req.log, request.order_id, "订单已退款");
       await notifyRefundUpdate(deps, req, {
         request,
         status: "refunded",
@@ -300,6 +303,8 @@ export function adminRefundRoutes(app: FastifyInstance, deps: AppDeps): void {
       );
       // 退款退回积分（ADR-095）
       await refundPointsSafely(deps, req, request.order_id);
+      // 退款作废分销佣金（ADR-101）
+      await cancelCommissionSafely(deps, req.log, request.order_id, "订单已退款");
       await notifyRefundUpdate(deps, req, {
         request,
         status: "refunded",

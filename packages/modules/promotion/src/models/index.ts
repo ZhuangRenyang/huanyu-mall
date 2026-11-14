@@ -184,6 +184,53 @@ export const giftCard = pgTable(
   ],
 );
 
+/** 推广员（ADR-101）：顾客身份 + 推广码 + 佣金比例。 */
+export const affiliate = pgTable(
+  "affiliate",
+  {
+    id: text("id").primaryKey(),
+    customerId: text("customer_id").notNull(),
+    /** 推广码（大写字母数字）。 */
+    code: text("code").notNull(),
+    /** 佣金比例（万分比）：500 = 5%。 */
+    commissionBps: integer("commission_bps").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_affiliate_customer").on(t.customerId),
+    uniqueIndex("uq_affiliate_code").on(t.code),
+  ],
+);
+
+/**
+ * 佣金流水（ADR-101）。
+ *
+ * pending（待结算）→ settled（商家线下打款后标记）/ canceled（退款作废）。
+ * 系统不自动打款：这里只是账本。
+ */
+export const affiliateCommission = pgTable(
+  "affiliate_commission",
+  {
+    id: text("id").primaryKey(),
+    affiliateId: text("affiliate_id").notNull(),
+    orderId: text("order_id").notNull(),
+    /** 基数快照（下单时实付）。 */
+    orderTotalMinor: bigint("order_total_minor", { mode: "bigint" }).notNull(),
+    commissionMinor: bigint("commission_minor", { mode: "bigint" }).notNull(),
+    status: text("status").notNull().default("pending"),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    canceledReason: text("canceled_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("uq_commission_order").on(t.orderId),
+    index("idx_commission_affiliate").on(t.affiliateId, t.status),
+  ],
+);
+
 /** 拼团活动（ADR-100）：参团免费、成团领券。 */
 export const groupBuy = pgTable(
   "group_buy",

@@ -8,7 +8,11 @@ import {
   voucherIncludesItem,
 } from "../src/services/promotion.service.js";
 import type {
+  AffiliateCommissionDTO,
+  AffiliateDTO,
+  AffiliateStatus,
   CollectedVoucherDTO,
+  CommissionStatus,
   CreateGiftCardInput,
   FlashSaleDTO,
   FlashSaleItemDTO,
@@ -501,7 +505,129 @@ class InMemoryPromotionRepository implements PromotionRepository {
   }
   async listPointLedgerByOrder(orderId: string): Promise<PointLedgerDTO[]> {
     return this.pointLedger.filter((l) => l.order_id === orderId);
-  }  // —— group_buy（ADR-100）——
+  }  // —— affiliate（ADR-101）——
+  private affiliates = new Map<string, AffiliateDTO>();
+  private commissions = new Map<string, AffiliateCommissionDTO>();
+
+  async insertAffiliate(row: {
+    id: string;
+    customerId: string;
+    code: string;
+    commissionBps: number;
+  }): Promise<AffiliateDTO> {
+    const dto: AffiliateDTO = {
+      id: row.id,
+      customer_id: row.customerId,
+      code: row.code,
+      commission_bps: row.commissionBps,
+      status: "active",
+      created_at: new Date().toISOString(),
+    };
+    this.affiliates.set(dto.id, dto);
+    return dto;
+  }
+
+  async findAffiliateById(id: string): Promise<AffiliateDTO | null> {
+    return this.affiliates.get(id) ?? null;
+  }
+
+  async findAffiliateByCustomer(customerId: string): Promise<AffiliateDTO | null> {
+    return [...this.affiliates.values()].find((a) => a.customer_id === customerId) ?? null;
+  }
+
+  async findAffiliateByCode(code: string): Promise<AffiliateDTO | null> {
+    return [...this.affiliates.values()].find((a) => a.code === code) ?? null;
+  }
+
+  async listAffiliates(q: {
+    limit: number;
+    offset: number;
+  }): Promise<{ items: AffiliateDTO[]; count: number }> {
+    const all = [...this.affiliates.values()];
+    return { items: all.slice(q.offset, q.offset + q.limit), count: all.length };
+  }
+
+  async updateAffiliateStatus(id: string, status: AffiliateStatus): Promise<AffiliateDTO | null> {
+    const a = this.affiliates.get(id);
+    if (!a) return null;
+    a.status = status;
+    return a;
+  }
+
+  async insertCommission(row: {
+    id: string;
+    affiliateId: string;
+    orderId: string;
+    orderTotalMinor: bigint;
+    commissionMinor: bigint;
+  }): Promise<AffiliateCommissionDTO> {
+    const dto: AffiliateCommissionDTO = {
+      id: row.id,
+      affiliate_id: row.affiliateId,
+      order_id: row.orderId,
+      order_total_minor: row.orderTotalMinor,
+      commission_minor: row.commissionMinor,
+      status: "pending",
+      settled_at: null,
+      canceled_reason: null,
+      created_at: new Date().toISOString(),
+    };
+    this.commissions.set(dto.id, dto);
+    return dto;
+  }
+
+  async findCommissionByOrder(orderId: string): Promise<AffiliateCommissionDTO | null> {
+    return [...this.commissions.values()].find((c) => c.order_id === orderId) ?? null;
+  }
+
+  async findCommissionById(id: string): Promise<AffiliateCommissionDTO | null> {
+    return this.commissions.get(id) ?? null;
+  }
+
+  async listCommissions(q: {
+    affiliateId?: string;
+    status?: CommissionStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: AffiliateCommissionDTO[]; count: number }> {
+    const all = [...this.commissions.values()]
+      .filter((c) => (q.affiliateId ? c.affiliate_id === q.affiliateId : true))
+      .filter((c) => (q.status ? c.status === q.status : true));
+    return { items: all.slice(q.offset, q.offset + q.limit), count: all.length };
+  }
+
+  async markCommissionSettled(id: string, settledAt: Date): Promise<AffiliateCommissionDTO | null> {
+    const c = this.commissions.get(id);
+    if (!c) return null;
+    c.status = "settled";
+    c.settled_at = settledAt.toISOString();
+    return c;
+  }
+
+  async markCommissionCanceled(id: string, reason: string): Promise<AffiliateCommissionDTO | null> {
+    const c = this.commissions.get(id);
+    if (!c) return null;
+    c.status = "canceled";
+    c.canceled_reason = reason;
+    return c;
+  }
+
+  async summarizeCommissions(
+    affiliateId: string,
+  ): Promise<{ pendingMinor: bigint; settledMinor: bigint; count: number }> {
+    let pendingMinor = 0n;
+    let settledMinor = 0n;
+    let count = 0;
+    for (const c of this.commissions.values()) {
+      if (c.affiliate_id !== affiliateId) continue;
+      count += 1;
+      if (c.status === "pending") pendingMinor += c.commission_minor;
+      if (c.status === "settled") settledMinor += c.commission_minor;
+    }
+    return { pendingMinor, settledMinor, count };
+  }
+
+  // —— group_buy（ADR-100）——
   private groupBuys = new Map<string, GroupBuyDTO>();
   private gbTeams = new Map<string, GroupBuyTeamDTO>();
   private gbMembers = new Map<string, Array<{ customer_id: string; joined_at: string }>>();
@@ -2330,5 +2456,128 @@ describe("拼团（ADR-100）", () => {
     await expect(service.setGroupBuyStatus(activity.id, "active")).rejects.toThrow();
     // 结束的活动不能再参团
     await expect(service.joinGroupBuy(activity.id, "cust_1")).rejects.toThrow();
+  });
+});
+
+describe("分销（ADR-101）", () => {
+  async function seedAffiliate(service: PromotionService, bps = 500): Promise<AffiliateDTO> {
+    return service.registerAffiliate({ customerId: "cust_promoter", commissionBps: bps });
+  }
+
+  it("注册推广员：自动生成推广码；同一客户不能重复注册", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const a = await seedAffiliate(service);
+    expect(a.code).toMatch(/^[A-Z0-9]{8}$/);
+    expect(a.status).toBe("active");
+    await expect(seedAffiliate(service)).rejects.toThrow();
+  });
+
+  it("推广码可指定，但被占用要报错；比例超 30% 拒绝", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    await service.registerAffiliate({
+      customerId: "cust_a",
+      code: "huanyu01",
+      commissionBps: 500,
+    });
+    // 小写会被规范化成大写
+    expect((await service.resolveAffiliateByCode("huanyu01"))?.code).toBe("HUANYU01");
+    await expect(
+      service.registerAffiliate({ customerId: "cust_b", code: "HUANYU01", commissionBps: 500 }),
+    ).rejects.toThrow();
+    await expect(
+      service.registerAffiliate({ customerId: "cust_c", commissionBps: 3001 }),
+    ).rejects.toThrow();
+  });
+
+  it("佣金按实付 × 比例计提；一单一笔；自推不计", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const affiliate = await seedAffiliate(service);
+
+    // 100 元 × 5% = 5 元
+    const c = await service.createCommissionForOrder({
+      orderId: "ord_1",
+      orderTotalMinor: 10000n,
+      affiliateId: affiliate.id,
+      buyerCustomerId: "cust_buyer",
+    });
+    expect(c?.commission_minor).toBe(500n);
+    expect(c?.status).toBe("pending");
+
+    // 幂等：同订单再算一次返回原记录，不翻倍
+    const again = await service.createCommissionForOrder({
+      orderId: "ord_1",
+      orderTotalMinor: 10000n,
+      affiliateId: affiliate.id,
+      buyerCustomerId: "cust_buyer",
+    });
+    expect(again?.id).toBe(c?.id);
+
+    // 自推不计
+    const self = await service.createCommissionForOrder({
+      orderId: "ord_2",
+      orderTotalMinor: 10000n,
+      affiliateId: affiliate.id,
+      buyerCustomerId: "cust_promoter",
+    });
+    expect(self).toBeNull();
+
+    // 停用后不再计提
+    await service.setAffiliateStatus(affiliate.id, "disabled");
+    const afterDisable = await service.createCommissionForOrder({
+      orderId: "ord_3",
+      orderTotalMinor: 10000n,
+      affiliateId: affiliate.id,
+      buyerCustomerId: "cust_buyer",
+    });
+    expect(afterDisable).toBeNull();
+  });
+
+  it("退款作废佣金；已结算的不动", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const affiliate = await seedAffiliate(service);
+    const c1 = await service.createCommissionForOrder({
+      orderId: "ord_1",
+      orderTotalMinor: 10000n,
+      affiliateId: affiliate.id,
+      buyerCustomerId: "cust_buyer",
+    });
+    await service.cancelCommissionByOrder("ord_1", "订单已退款");
+    const list = await service.listCommissions({ affiliateId: affiliate.id });
+    expect(list.items.find((x) => x.id === c1!.id)!.status).toBe("canceled");
+
+    // 已结算的：退款不作废（钱可能已经打给推广员，留给人工）
+    const c2 = await service.createCommissionForOrder({
+      orderId: "ord_2",
+      orderTotalMinor: 20000n,
+      affiliateId: affiliate.id,
+      buyerCustomerId: "cust_buyer",
+    });
+    await service.settleCommission(c2!.id);
+    await service.cancelCommissionByOrder("ord_2", "订单已退款");
+    const list2 = await service.listCommissions({ affiliateId: affiliate.id });
+    expect(list2.items.find((x) => x.id === c2!.id)!.status).toBe("settled");
+  });
+
+  it("结算状态机：只有 pending 能结算；汇总待结算/已结算", async () => {
+    const service = new PromotionService(new InMemoryPromotionRepository());
+    const affiliate = await seedAffiliate(service);
+    const c = await service.createCommissionForOrder({
+      orderId: "ord_1",
+      orderTotalMinor: 10000n,
+      affiliateId: affiliate.id,
+      buyerCustomerId: "cust_buyer",
+    });
+    await service.settleCommission(c!.id);
+    await expect(service.settleCommission(c!.id)).rejects.toThrow();
+
+    const summary = await service.getAffiliateSummary("cust_promoter");
+    expect(summary.affiliate?.id).toBe(affiliate.id);
+    expect(summary.pending_minor).toBe(0n);
+    expect(summary.settled_minor).toBe(500n);
+    expect(summary.count).toBe(1);
+
+    // 不是推广员：返回 null，不抛错
+    const none = await service.getAffiliateSummary("cust_x");
+    expect(none.affiliate).toBeNull();
   });
 });

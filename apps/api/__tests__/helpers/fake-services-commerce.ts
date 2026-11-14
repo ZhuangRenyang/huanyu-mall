@@ -92,6 +92,26 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
   };
   // —— 领券（ADR-029）：内存版，够驱动路由层契约测试 ——
   const collections = new Map<string, { voucherId: string; customerId: string; code: string }>();
+  // 分销（ADR-101）：内存推广员 / 佣金流水
+  const affiliates: Array<{
+    id: string;
+    customer_id: string;
+    code: string;
+    commission_bps: number;
+    status: "active" | "disabled";
+    created_at: string;
+  }> = [];
+  const commissions: Array<{
+    id: string;
+    affiliate_id: string;
+    order_id: string;
+    order_total_minor: bigint;
+    commission_minor: bigint;
+    status: "pending" | "settled" | "canceled";
+    settled_at: string | null;
+    canceled_reason: string | null;
+    created_at: string;
+  }> = [];
   // 拼团（ADR-100）：内存活动 / 团 / 已领券，跨请求保留
   const groupBuys: Array<{
     id: string;
@@ -169,6 +189,110 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
      * 秒杀（ADR-099）：内存活动表。跨请求保留 —— 创建与上架是两次请求，
      * 每次新建数组的话第二次就查不到了。
      */
+    /*
+     * 分销（ADR-101）：内存推广员 + 佣金流水。
+     * 与真实服务同语义：停用码不解析、自推不计、一单一笔、只有 pending 能结算。
+     */
+    listAffiliates: async (q: { limit?: number; offset?: number }) => ({
+      items: affiliates.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 20)),
+      count: affiliates.length,
+    }),
+    registerAffiliate: async (input: { customerId: string; code?: string; commissionBps: number }) => {
+      if (input.commissionBps <= 0 || input.commissionBps > 3000) {
+        throw new DomainError({ code: 20001, message: "佣金比例需在 0.01%–30% 之间" });
+      }
+      if (affiliates.some((a) => a.customer_id === input.customerId)) {
+        throw new DomainError({ code: 30002, message: "该客户已经是推广员" });
+      }
+      const code = (input.code?.trim() || `AFF${String(affiliates.length + 1).padStart(5, "0")}`).toUpperCase();
+      if (affiliates.some((a) => a.code === code)) {
+        throw new DomainError({ code: 20001, message: "推广码已被占用" });
+      }
+      const dto = {
+        id: `aff_${affiliates.length + 1}`,
+        customer_id: input.customerId,
+        code,
+        commission_bps: input.commissionBps,
+        status: "active" as "active" | "disabled",
+        created_at: new Date().toISOString(),
+      };
+      affiliates.push(dto);
+      return dto;
+    },
+    setAffiliateStatus: async (id: string, status: "active" | "disabled") => {
+      const a = affiliates.find((x) => x.id === id);
+      if (!a) throw new DomainError({ code: 30001, message: `推广员不存在：${id}` });
+      a.status = status;
+      return a;
+    },
+    resolveAffiliateByCode: async (code: string) => {
+      const normalized = code?.trim().toUpperCase() ?? "";
+      return affiliates.find((a) => a.code === normalized && a.status === "active") ?? null;
+    },
+    createCommissionForOrder: async (input: {
+      orderId: string;
+      orderTotalMinor: bigint;
+      affiliateId: string | null;
+      buyerCustomerId: string | null;
+    }) => {
+      if (!input.affiliateId) return null;
+      const a = affiliates.find((x) => x.id === input.affiliateId);
+      if (!a || a.status !== "active") return null;
+      if (input.buyerCustomerId && a.customer_id === input.buyerCustomerId) return null;
+      const existing = commissions.find((c) => c.order_id === input.orderId);
+      if (existing) return existing;
+      const commissionMinor = (input.orderTotalMinor * BigInt(a.commission_bps)) / 10000n;
+      if (commissionMinor <= 0n) return null;
+      const dto = {
+        id: `cm_${commissions.length + 1}`,
+        affiliate_id: a.id,
+        order_id: input.orderId,
+        order_total_minor: input.orderTotalMinor,
+        commission_minor: commissionMinor,
+        status: "pending" as "pending" | "settled" | "canceled",
+        settled_at: null as string | null,
+        canceled_reason: null as string | null,
+        created_at: new Date().toISOString(),
+      };
+      commissions.push(dto);
+      return dto;
+    },
+    cancelCommissionByOrder: async (orderId: string, reason: string) => {
+      const c = commissions.find((x) => x.order_id === orderId);
+      if (!c || c.status !== "pending") return;
+      c.status = "canceled";
+      c.canceled_reason = reason;
+    },
+    listCommissions: async (q: { affiliateId?: string; status?: string; limit?: number; offset?: number }) => {
+      const all = commissions
+        .filter((c) => (q.affiliateId ? c.affiliate_id === q.affiliateId : true))
+        .filter((c) => (q.status ? c.status === q.status : true));
+      return { items: all.slice(q.offset ?? 0, (q.offset ?? 0) + (q.limit ?? 20)), count: all.length };
+    },
+    settleCommission: async (id: string) => {
+      const c = commissions.find((x) => x.id === id);
+      if (!c) throw new DomainError({ code: 30001, message: `佣金流水不存在：${id}` });
+      if (c.status !== "pending") {
+        throw new DomainError({ code: 30002, message: `当前状态（${c.status}）不能结算` });
+      }
+      c.status = "settled";
+      c.settled_at = new Date().toISOString();
+      return c;
+    },
+    getAffiliateSummary: async (customerId: string) => {
+      const a = affiliates.find((x) => x.customer_id === customerId) ?? null;
+      if (!a) return { affiliate: null, pending_minor: 0n, settled_minor: 0n, count: 0 };
+      let pending = 0n;
+      let settled = 0n;
+      let count = 0;
+      for (const c of commissions) {
+        if (c.affiliate_id !== a.id) continue;
+        count += 1;
+        if (c.status === "pending") pending += c.commission_minor;
+        if (c.status === "settled") settled += c.commission_minor;
+      }
+      return { affiliate: a, pending_minor: pending, settled_minor: settled, count };
+    },
     /*
      * 拼团（ADR-100）：内存活动 + 团 + 成员。
      * 语义与真实服务对齐：一人一活动只能在一个团、满员成团、成团才能领券。
@@ -1315,6 +1439,7 @@ export function makeFakeCommerceServices(state: FakeServicesState) {
           customer_id: state.orderCustomerId ?? base.customer_id ?? null,
           status: state.orderStatus ?? base.status,
           payment_status: state.orderPaymentStatus ?? base.payment_status,
+          affiliate_id: state.orderAffiliateId ?? base.affiliate_id ?? null,
           // 顾客留言：默认 null，测试可置值验「店面与后台看到同一段」
           customer_note: state.orderCustomerNote ?? base.customer_note,
         };

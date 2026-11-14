@@ -34,6 +34,8 @@ export interface CartCompleteInput {
     code: string | null;
     amountMinor: bigint;
   }>;
+  /** 推广员归因（ADR-101）：路由解析推广码后传入，不传 = 自然流量。 */
+  affiliateId?: string | null;
   /**
    * 秒杀行（ADR-099）：下单成功后按它扣活动库存。
    * 只传「活动商品 id + 件数」，金额已在 discounts 的 flash 明细里留痕。

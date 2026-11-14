@@ -42,6 +42,8 @@ export interface OrderDTO {
    * 顾客自己与商家都能看到，所以要下发店面；与 merchant_note 的可见范围相反。
    */
   customer_note: string | null;
+  /** 推广员 id（分销归因，ADR-101）；null = 自然流量。 */
+  affiliate_id: string | null;
 }
 
 /** 顾客留言上限（字符数）。淘宝同量级；服务端按此截断，前端也用同一常量做计数。 */
@@ -142,6 +144,13 @@ export interface CreateOrderInput {
    * 不抛错——顾客已经点了一次「下单」，为一个备注把他挡回去不值得。
    */
   customerNote?: string | null;
+  /**
+   * 推广员 id（分销归因，ADR-101）。
+   *
+   * 由服务端解析推广码得到，**不接受客户端直接传 id** —— 否则任何人都能把订单
+   * 挂到别人名下（或把自己刷成推广员业绩）。
+   */
+  affiliateId?: string | null;
 }
 
 export type RefundRequestStatus =
@@ -417,6 +426,8 @@ export interface OrderRepository {
     paymentCollectionId?: string | null;
     /** 顾客留言（已归一化：空串已转 null、超长已截断）。 */
     customerNote?: string | null;
+    /** 推广员归因（ADR-101）：路由解析推广码后传入。 */
+    affiliateId?: string | null;
   }): Promise<OrderDTO>;
   insertLineItems(
     orderId: string,

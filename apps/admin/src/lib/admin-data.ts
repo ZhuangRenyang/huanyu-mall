@@ -127,6 +127,30 @@ export interface AdminRefundRequest {
   exchangeTrackingNumber: string | null;
 }
 
+/** 推广员（ADR-101）。 */
+export interface AdminAffiliate {
+  id: string;
+  customerId: string;
+  code: string;
+  /** 佣金比例（万分比）：500 = 5%。 */
+  commissionBps: number;
+  status: 'active' | 'disabled';
+  createdAt: string;
+}
+
+/** 佣金流水（ADR-101）：pending → settled / canceled。 */
+export interface AdminCommission {
+  id: string;
+  affiliateId: string;
+  orderId: string;
+  orderTotalMinor: number;
+  commissionMinor: number;
+  status: 'pending' | 'settled' | 'canceled';
+  settledAt: string | null;
+  canceledReason: string | null;
+  createdAt: string;
+}
+
 /** 拼团活动（ADR-100）：参团免费、成团领券。 */
 export interface AdminGroupBuy {
   id: string;

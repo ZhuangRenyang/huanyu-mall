@@ -3,6 +3,7 @@ import {
   Banknote,
   BarChart3,
   Receipt,
+  Share2,
   Zap,
   ClipboardList,
   Gift,
@@ -82,6 +83,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavItem[] }> = [
       { to: '/marketing/gift-cards', label: '礼品卡', icon: Gift },
       { to: '/flash-sales', label: '秒杀', icon: Zap },
       { to: '/group-buys', label: '拼团', icon: Users },
+      { to: '/affiliates', label: '分销', icon: Share2 },
     ],
   },
   {

@@ -311,6 +311,47 @@ export interface ComputeDiscountsResult {
 }
 
 // —— Repository（drizzle 实现 + InMemory 测试桩）——
+/** 推广员状态（ADR-101）。 */
+export type AffiliateStatus = "active" | "disabled";
+/** 佣金状态（ADR-101）：待结算 / 已结算 / 已作废。 */
+export type CommissionStatus = "pending" | "settled" | "canceled";
+
+/** 推广员（ADR-101）。 */
+export interface AffiliateDTO {
+  id: string;
+  /** 推广员就是顾客：用 customer_id 关联。 */
+  customer_id: string;
+  /** 推广码（大写字母数字）。 */
+  code: string;
+  /** 佣金比例（万分比）：500 = 5%。 */
+  commission_bps: number;
+  status: AffiliateStatus;
+  created_at: string;
+}
+
+/** 佣金流水（ADR-101）：只是账本，系统不自动打款。 */
+export interface AffiliateCommissionDTO {
+  id: string;
+  affiliate_id: string;
+  order_id: string;
+  /** 基数快照（下单时实付）。 */
+  order_total_minor: bigint;
+  commission_minor: bigint;
+  status: CommissionStatus;
+  settled_at: string | null;
+  /** 作废原因（退款）。 */
+  canceled_reason: string | null;
+  created_at: string;
+}
+
+export interface RegisterAffiliateInput {
+  customerId: string;
+  /** 不传则由服务端生成。 */
+  code?: string;
+  /** 佣金比例（万分比），1–3000。 */
+  commissionBps: number;
+}
+
 /** 拼团活动状态（ADR-100）：draft → active → ended。 */
 export type GroupBuyStatus = "draft" | "active" | "ended";
 /** 团状态：等人 / 已成团 / 到期未满。 */
@@ -524,6 +565,39 @@ export interface PromotionRepository {
   }): Promise<GiftCardEventDTO>;
   listEventsByGiftCard(giftCardId: string): Promise<GiftCardEventDTO[]>;
 
+  // affiliate（ADR-101）
+  insertAffiliate(row: {
+    id: string;
+    customerId: string;
+    code: string;
+    commissionBps: number;
+  }): Promise<AffiliateDTO>;
+  findAffiliateById(id: string): Promise<AffiliateDTO | null>;
+  findAffiliateByCustomer(customerId: string): Promise<AffiliateDTO | null>;
+  findAffiliateByCode(code: string): Promise<AffiliateDTO | null>;
+  listAffiliates(q: { limit: number; offset: number }): Promise<{ items: AffiliateDTO[]; count: number }>;
+  updateAffiliateStatus(id: string, status: AffiliateStatus): Promise<AffiliateDTO | null>;
+  /** 写一笔佣金：一张订单最多一笔（唯一索引兜底）。 */
+  insertCommission(row: {
+    id: string;
+    affiliateId: string;
+    orderId: string;
+    orderTotalMinor: bigint;
+    commissionMinor: bigint;
+  }): Promise<AffiliateCommissionDTO>;
+  findCommissionByOrder(orderId: string): Promise<AffiliateCommissionDTO | null>;
+  findCommissionById(id: string): Promise<AffiliateCommissionDTO | null>;
+  listCommissions(q: {
+    affiliateId?: string;
+    status?: CommissionStatus;
+    limit: number;
+    offset: number;
+  }): Promise<{ items: AffiliateCommissionDTO[]; count: number }>;
+  markCommissionSettled(id: string, settledAt: Date): Promise<AffiliateCommissionDTO | null>;
+  markCommissionCanceled(id: string, reason: string): Promise<AffiliateCommissionDTO | null>;
+  /** 推广员维度的佣金汇总（待结算 / 已结算）。 */
+  summarizeCommissions(affiliateId: string): Promise<{ pendingMinor: bigint; settledMinor: bigint; count: number }>;
+
   // group_buy（ADR-100）
   insertGroupBuy(row: {
     id: string;
@@ -694,6 +768,42 @@ export interface IPromotionModuleService {
 
   // gift_card_event
   listGiftCardEvents(giftCardId: string): Promise<GiftCardEventDTO[]>;
+
+  // affiliate（ADR-101）
+  registerAffiliate(input: RegisterAffiliateInput): Promise<AffiliateDTO>;
+  listAffiliates(q: { limit?: number; offset?: number }): Promise<{ items: AffiliateDTO[]; count: number }>;
+  setAffiliateStatus(id: string, status: AffiliateStatus): Promise<AffiliateDTO>;
+  /** 按推广码解析推广员（下单归因用）；停用的码不生效。 */
+  resolveAffiliateByCode(code: string): Promise<AffiliateDTO | null>;
+  /**
+   * 订单完成时计提佣金（ADR-101）。
+   *
+   * 自推不计（推广员自己买自己的链接）；一张订单只计一次（唯一索引兜底）；
+   * 只写流水，不打款。
+   */
+  createCommissionForOrder(input: {
+    orderId: string;
+    orderTotalMinor: bigint;
+    affiliateId: string | null;
+    buyerCustomerId: string | null;
+  }): Promise<AffiliateCommissionDTO | null>;
+  /** 退款作废佣金（不动钱，只改流水状态）。 */
+  cancelCommissionByOrder(orderId: string, reason: string): Promise<void>;
+  listCommissions(q: {
+    affiliateId?: string;
+    status?: CommissionStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: AffiliateCommissionDTO[]; count: number }>;
+  /** 商家线下打款后标记「已结算」：系统不触发任何转账。 */
+  settleCommission(id: string): Promise<AffiliateCommissionDTO>;
+  /** 我的推广（推广员自己看）：推广码 + 汇总。 */
+  getAffiliateSummary(customerId: string): Promise<{
+    affiliate: AffiliateDTO | null;
+    pending_minor: bigint;
+    settled_minor: bigint;
+    count: number;
+  }>;
 
   // group_buy（ADR-100）
   /** 创建拼团活动（草稿），同时自动建一张「拼团专享券」。 */
