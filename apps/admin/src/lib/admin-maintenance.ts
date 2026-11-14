@@ -135,3 +135,13 @@ export async function getMaintenance(): Promise<MaintenanceView> {
     },
   };
 }
+
+/** 清理超时未付款订单（ADR-087）：人工触发，返回取消数量。 */
+export async function expireUnpaidOrders(minutes: number): Promise<{ scanned: number; canceled: number }> {
+  if (getAdminApiMode() !== 'live') return { scanned: 0, canceled: 0 };
+  const res = (await adminClient().expireUnpaidOrders({ minutes })) as {
+    scanned?: number;
+    canceled?: number;
+  };
+  return { scanned: Number(res.scanned ?? 0), canceled: Number(res.canceled ?? 0) };
+}

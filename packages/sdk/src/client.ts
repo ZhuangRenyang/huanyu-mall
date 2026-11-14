@@ -351,6 +351,9 @@ export function createAdminClient(opts: ClientOptions) {
     deleteBanner: (id: string) => del(`/api/v1/admin/settings/banners/${id}`),
     /** 应用接入状态（ADR-084）：支付/邮件/渠道。 */
     getAppsStatus: () => get("/api/v1/admin/apps/status"),
+    /** 清理超时未付款订单（ADR-087）：人工触发，释放库存。 */
+    expireUnpaidOrders: (b: { minutes?: number }) =>
+      post("/api/v1/admin/maintenance/expire-unpaid", b),
     /** 维护：系统探针 + 邮件队列 + 数据规模 + 最近审计（ADR-076）。 */
     getMaintenanceStatus: () => get("/api/v1/admin/maintenance/status"),
     /** 评价管理（ADR-042）。 */

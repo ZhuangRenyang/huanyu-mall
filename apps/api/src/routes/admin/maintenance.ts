@@ -2,6 +2,8 @@ import type { FastifyInstance } from "fastify";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers } from "../../plugins/auth.js";
 import { checkHealth } from "../../services/health.js";
+import { cancelOrderAndReleaseStock } from "../../lib/cancel-order.js";
+import { isStaleUnpaid } from "../../lib/stale-orders.js";
 
 /**
  * 维护（ADR-076）：对齐 CRMEB「设置 → 维护」那一组。
@@ -57,5 +59,45 @@ export function adminMaintenanceRoutes(app: FastifyInstance, deps: AppDeps): voi
         recent: audit.items,
       },
     });
+  });
+
+  /**
+   * 清理超时未付款订单（ADR-087）。
+   *
+   * 人工触发，不做定时任务：未付款取消只释放库存、不涉及钱，
+   * 但「无人值守改状态」仍要单独评估；现在是商家点一下、最多 100 单。
+   */
+  app.post("/api/v1/admin/maintenance/expire-unpaid", { preHandler: guard }, async (req, reply) => {
+    const body = (req.body ?? {}) as { minutes?: number };
+    const minutes = Math.min(Math.max(Math.floor(Number(body.minutes ?? 30)), 1), 43_200);
+    const now = new Date();
+
+    const res = await deps.services.order.listOrderSummaries({
+      statuses: ["pending", "awaiting_payment"],
+      limit: 100,
+      offset: 0,
+    });
+    const stale = res.items.filter((o) => isStaleUnpaid(o.status, o.placed_at, now, minutes));
+
+    let released = 0;
+    for (const order of stale) {
+      await cancelOrderAndReleaseStock(deps, order.id);
+      released += 1;
+    }
+
+    if (released > 0) {
+      await deps.audit.record({
+        actorType: "admin",
+        actorId: "maintenance",
+        action: "order.expire_unpaid",
+        entityType: "order",
+        entityId: null,
+        after: { released, minutes },
+        ip: null,
+        userAgent: null,
+        requestId: req.id,
+      });
+    }
+    reply.ok({ scanned: res.items.length, canceled: released, minutes });
   });
 }

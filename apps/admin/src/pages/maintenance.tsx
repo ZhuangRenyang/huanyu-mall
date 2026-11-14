@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Database, Mail, RefreshCw } from 'lucide-react';
 import { Badge, Button, Skeleton } from '@mall/ui';
-import { getMaintenance, type MaintenanceView, type ProbeState } from '@/lib/admin-maintenance';
+import {
+  expireUnpaidOrders,
+  getMaintenance,
+  type MaintenanceView,
+  type ProbeState,
+} from '@/lib/admin-maintenance';
 
 /**
  * 维护（ADR-076）。
@@ -181,6 +186,8 @@ export function MaintenancePage() {
         )}
       </section>
 
+      <UnpaidCleanup />
+
       <section aria-labelledby="backup-heading" className="rounded-lg border border-border bg-card p-4">
         <h2 id="backup-heading" className="text-sm font-semibold text-foreground">
           数据备份与恢复
@@ -248,4 +255,50 @@ function formatTime(iso: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN');
+}
+
+/** 超时未付款清理（ADR-087）：人工点，先看扫描/取消数量。 */
+function UnpaidCleanup() {
+  const [minutes, setMinutes] = useState('30');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await expireUnpaidOrders(Math.max(1, Math.floor(Number(minutes) || 30)));
+      setResult(`扫描 ${r.scanned} 单，取消 ${r.canceled} 单（库存已释放）`);
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : '清理失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <h2 className="text-sm font-semibold text-foreground">超时未付款清理</h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        把超过指定时间仍未付款的订单取消，并释放它们占用的库存。只动未付款订单，不涉及任何资金。
+      </p>
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <label className="text-sm text-foreground">
+          <span className="mb-1 block text-xs text-muted-foreground">超时分钟数</span>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={minutes}
+            onChange={(e) => setMinutes(e.target.value)}
+            className="w-32 rounded-md border border-border px-3 py-2 text-sm"
+          />
+        </label>
+        <Button variant="secondary" onClick={() => void run()} disabled={busy}>
+          {busy ? '清理中…' : '清理一次（最多 100 单）'}
+        </Button>
+        {result && <span className="text-xs text-muted-foreground">{result}</span>}
+      </div>
+    </section>
+  );
 }
