@@ -1,4 +1,5 @@
 import { prefixedUlid } from "@mall/core";
+import { normalizeContentFormat, sanitizeRichText } from "../rich-text.js";
 import {
   DEFAULT_THEME,
   type BannerDTO,
@@ -64,20 +65,29 @@ export class ThemeService implements IThemeModuleService {
   }
 
   async createMicroPage(input: MicroPageInput): Promise<MicroPageDTO> {
+    const format = normalizeContentFormat(input.content_format);
     return this.repo.insertMicroPage({
       id: prefixedUlid("page"),
       slug: normalizeSlug(input.slug),
       title: input.title.trim(),
-      content: input.content ?? "",
+      // 富文本入库前必须过白名单（ADR-091）：清洗是服务端铁律，前端编辑器只是体验
+      content: format === "html" ? sanitizeRichText(input.content ?? "") : (input.content ?? ""),
+      contentFormat: format,
       isPublished: input.is_published === true,
     });
   }
 
   async updateMicroPage(id: string, patch: Partial<MicroPageInput>): Promise<MicroPageDTO> {
+    const format = patch.content_format
+      ? normalizeContentFormat(patch.content_format)
+      : undefined;
     const updated = await this.repo.updateMicroPage(id, {
       ...(patch.slug !== undefined ? { slug: normalizeSlug(patch.slug) } : {}),
       ...(patch.title !== undefined ? { title: patch.title.trim() } : {}),
-      ...(patch.content !== undefined ? { content: patch.content } : {}),
+      ...(patch.content !== undefined
+        ? { content: format === "html" ? sanitizeRichText(patch.content) : patch.content }
+        : {}),
+      ...(format !== undefined ? { contentFormat: format } : {}),
       ...(patch.is_published !== undefined ? { isPublished: patch.is_published } : {}),
     });
     if (!updated) throw new Error(`micro page not found: ${id}`);

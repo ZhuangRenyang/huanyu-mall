@@ -122,6 +122,8 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
         .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "地址只能用小写字母、数字与连字符"),
       title: z.string().trim().min(1).max(80),
       content: z.string().max(20000).optional(),
+      /** 正文格式（ADR-091）：plain = 纯文本空行分段；html = 富文本（服务端清洗）。 */
+      content_format: z.enum(["plain", "html"]).optional(),
       is_published: z.boolean().optional(),
     })
     .strict();

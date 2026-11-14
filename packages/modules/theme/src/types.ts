@@ -66,11 +66,12 @@ export interface ThemeRepository {
     slug: string;
     title: string;
     content: string;
+    contentFormat: "plain" | "html";
     isPublished: boolean;
   }): Promise<MicroPageDTO>;
   updateMicroPage(
     id: string,
-    patch: { slug?: string; title?: string; content?: string; isPublished?: boolean },
+    patch: { slug?: string; title?: string; content?: string; contentFormat?: "plain" | "html"; isPublished?: boolean },
   ): Promise<MicroPageDTO | null>;
   softDeleteMicroPage(id: string): Promise<void>;
 }
@@ -98,6 +99,8 @@ export interface MicroPageDTO {
   slug: string;
   title: string;
   content: string;
+  /** 正文格式（ADR-091）：plain / html。 */
+  content_format: "plain" | "html";
   is_published: boolean;
 }
 
@@ -105,6 +108,7 @@ export interface MicroPageInput {
   slug: string;
   title: string;
   content?: string;
+  content_format?: "plain" | "html";
   is_published?: boolean;
 }
 

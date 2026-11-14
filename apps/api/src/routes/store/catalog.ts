@@ -126,7 +126,13 @@ export function productRoutes(app: FastifyInstance, deps: AppDeps): void {
     const { slug } = req.params as { slug: string };
     const page = await deps.services.theme.getPublishedMicroPage(slug);
     if (!page) throw errors.notFound(`page not found: ${slug}`);
-    reply.ok({ slug: page.slug, title: page.title, content: page.content });
+    reply.ok({
+      slug: page.slug,
+      title: page.title,
+      content: page.content,
+      // 前端据此决定「纯文本分段」还是「富文本渲染」（ADR-091）
+      content_format: page.content_format ?? "plain",
+    });
   });
 
   app.get(

@@ -30,6 +30,8 @@ export const themeMicroPage = pgTable("theme_micro_page", {
   slug: text("slug").notNull(),
   title: text("title").notNull(),
   content: text("content").notNull().default(""),
+  /** 正文格式（ADR-091）：plain = 纯文本空行分段；html = 已清洗富文本。 */
+  contentFormat: text("content_format").notNull().default("plain"),
   isPublished: boolean("is_published").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

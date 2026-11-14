@@ -14,12 +14,14 @@
   },
   "dependencies": {
     "@mall/core": "workspace:*",
-    "drizzle-orm": "catalog:"
+    "drizzle-orm": "catalog:",
+    "sanitize-html": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",
     "@types/node": "catalog:",
-    "@types/pg": "catalog:"
+    "@types/pg": "catalog:",
+    "@types/sanitize-html": "catalog:"
   },
   "mall": { "dependencies": [] }
 }

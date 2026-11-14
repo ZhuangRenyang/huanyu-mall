@@ -230,6 +230,8 @@ export interface MicroPageView {
   slug: string;
   title: string;
   content: string;
+  /** 正文格式（ADR-091）：plain / html。 */
+  contentFormat: 'plain' | 'html';
   published: boolean;
 }
 
@@ -244,13 +246,21 @@ export async function listMicroPages(): Promise<MicroPageView[]> {
     }
   }
   const res = (await adminClient().listMicroPages()) as {
-    items?: Array<{ id: string; slug: string; title: string; content?: string; is_published?: boolean }>;
+    items?: Array<{
+      id: string;
+      slug: string;
+      title: string;
+      content?: string;
+      content_format?: string;
+      is_published?: boolean;
+    }>;
   };
   return (res.items ?? []).map((p) => ({
     id: p.id,
     slug: p.slug,
     title: p.title,
     content: p.content ?? '',
+    contentFormat: p.content_format === 'html' ? 'html' : 'plain',
     published: p.is_published === true,
   }));
 }
@@ -259,6 +269,7 @@ export async function createMicroPage(input: {
   slug: string;
   title: string;
   content: string;
+  contentFormat: 'plain' | 'html';
   published: boolean;
 }): Promise<void> {
   if (getAdminApiMode() !== 'live') {
@@ -268,6 +279,7 @@ export async function createMicroPage(input: {
       slug: input.slug,
       title: input.title,
       content: input.content,
+      contentFormat: input.contentFormat,
       published: input.published,
     });
     window.localStorage.setItem(PAGE_KEY, JSON.stringify(list));
@@ -277,6 +289,7 @@ export async function createMicroPage(input: {
     slug: input.slug,
     title: input.title,
     content: input.content,
+    content_format: input.contentFormat,
     is_published: input.published,
   });
 }

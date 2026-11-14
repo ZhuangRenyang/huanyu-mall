@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Palette } from 'lucide-react';
 import { Badge, Button } from '@mall/ui';
 import { ThemeSettings } from '@/components/settings-theme';
@@ -17,6 +17,7 @@ import {
   type BannerView,
   type HomeModuleId,
   type HomeModuleView,
+  type MicroPageView,
 } from '@/lib/admin-settings';
 import { uploadImageAsset } from '@/lib/admin-catalog';
 
@@ -339,12 +340,16 @@ function BannerSection() {
 
 /** 微页面（ADR-082）：标题 + 纯文本正文，空行分段；发布后走 /p/{slug}。 */
 function MicroPageSection() {
-  const [pages, setPages] = useState<Array<{ id: string; slug: string; title: string; content: string; published: boolean }>>([]);
+  const [pages, setPages] = useState<MicroPageView[]>([]);
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [content, setContent] = useState('');
+  /** 正文格式（ADR-091）：纯文本空行分段 / 富文本。 */
+  const [format, setFormat] = useState<'plain' | 'html'>('plain');
   const [published, setPublished] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** contenteditable 的 DOM 引用：富文本编辑器非受控，靠它同步 HTML。 */
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -358,13 +363,47 @@ function MicroPageSection() {
     void load();
   }, [load]);
 
+  // 富文本编辑器：切换格式时把当前内容写进 contenteditable
+  useEffect(() => {
+    if (format === 'html' && editorRef.current && editorRef.current.innerHTML !== content) {
+      editorRef.current.innerHTML = content;
+    }
+  }, [format, content]);
+
+  const switchFormat = (next: 'plain' | 'html') => {
+    if (next === format) return;
+    if (next === 'html') {
+      // 纯文本 → 富文本：空行分段转成 <p>
+      const html = content
+        .split(/\n\s*\n/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map((p) => `<p>${p}</p>`)
+        .join('');
+      setContent(html);
+    } else {
+      // 富文本 → 纯文本：取 innerText 剥离标签
+      const text = editorRef.current?.innerText ?? '';
+      setContent(text);
+    }
+    setFormat(next);
+  };
+
+  const exec = (command: string, value?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+    // execCommand 不触发 React 状态，手动同步回 content
+    if (editorRef.current) setContent(editorRef.current.innerHTML);
+  };
+
   const create = async () => {
     setError(null);
     try {
-      await createMicroPage({ title, slug, content, published });
+      await createMicroPage({ title, slug, content, contentFormat: format, published });
       setTitle('');
       setSlug('');
       setContent('');
+      setFormat('plain');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建失败');
@@ -377,7 +416,8 @@ function MicroPageSection() {
         微页面
       </h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        用于「关于我们」「售后说明」这类单页。正文按空行分段；发布后可被轮播与微页面链接引用。
+        用于「关于我们」「售后说明」这类单页。纯文本按空行分段；富文本支持标题/列表/链接/图片，
+        提交时服务端会做安全清洗。发布后可被轮播与微页面链接引用。
       </p>
 
       <ul className="mt-3 space-y-2">
@@ -385,7 +425,9 @@ function MicroPageSection() {
           <li key={p.id} className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm text-foreground">{p.title}</p>
-              <p className="truncate text-xs text-muted-foreground">/p/{p.slug}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                /p/{p.slug}{p.contentFormat === 'html' ? ' · 富文本' : ''}
+              </p>
             </div>
             <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <input
@@ -423,13 +465,78 @@ function MicroPageSection() {
             className="w-40 rounded-md border border-border px-3 py-2 text-sm"
           />
         </div>
-        <textarea
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          rows={4}
-          placeholder="正文，空行分段"
-          className="w-full rounded-md border border-border px-3 py-2 text-sm"
-        />
+
+        {/* 格式切换 */}
+        <div className="flex items-center gap-2">
+          {(['plain', 'html'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => switchFormat(f)}
+              className={
+                format === f
+                  ? 'rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground'
+                  : 'rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted'
+              }
+            >
+              {f === 'plain' ? '纯文本' : '富文本'}
+            </button>
+          ))}
+        </div>
+
+        {format === 'html' ? (
+          <div className="rounded-md border border-border">
+            {/* 极简工具栏：execCommand 生成 HTML，服务端清洗兜底 */}
+            <div className="flex flex-wrap items-center gap-1 border-b border-border px-2 py-1.5">
+              {[
+                { label: 'B', title: '加粗', cmd: 'bold' },
+                { label: 'I', title: '斜体', cmd: 'italic' },
+                { label: 'U', title: '下划线', cmd: 'underline' },
+                { label: 'H2', title: '标题', cmd: 'formatBlock', value: 'h2' },
+                { label: 'H3', title: '小标题', cmd: 'formatBlock', value: 'h3' },
+                { label: '•', title: '无序列表', cmd: 'insertUnorderedList' },
+                { label: '1.', title: '有序列表', cmd: 'insertOrderedList' },
+              ].map((b) => (
+                <button
+                  key={b.label + b.cmd}
+                  type="button"
+                  title={b.title}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec(b.cmd, b.value)}
+                  className="rounded px-2 py-0.5 text-xs text-foreground hover:bg-muted"
+                >
+                  {b.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                title="清除格式"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => exec('removeFormat')}
+                className="rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+              >
+                清除格式
+              </button>
+            </div>
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={(e) => setContent(e.currentTarget.innerHTML)}
+              className="min-h-28 px-3 py-2 text-sm text-foreground outline-none"
+              data-placeholder="在这里输入正文，可用工具栏排版"
+            />
+          </div>
+        ) : (
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={4}
+            placeholder="正文，空行分段"
+            className="w-full rounded-md border border-border px-3 py-2 text-sm"
+          />
+        )}
+
         <div className="flex items-center gap-3">
           <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
             <input
@@ -453,6 +560,7 @@ function MicroPageSection() {
     </section>
   );
 }
+
 
 const MODULE_LABEL: Record<HomeModuleId, string> = {
   categories: '商品分类',

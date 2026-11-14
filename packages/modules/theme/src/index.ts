@@ -10,6 +10,7 @@ export * from "./errors.js";
 export { linkable } from "./linkable.js";
 export { ThemeService, normalizeLink } from "./services/theme.service.js";
 export * from "./home-modules.js";
+export * from "./rich-text.js";
 
 export default Module("theme", {
   service: (ctx) =>
@@ -21,6 +22,7 @@ export default Module("theme", {
     "migrations/0003_return_address.sql",
     "migrations/0005_banner.sql",
     "migrations/0006_micro_page.sql",
+    "migrations/0011_micro_page_rich_text.sql",
   ],
   linkable,
 });

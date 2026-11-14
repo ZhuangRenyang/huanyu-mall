@@ -108,6 +108,7 @@ export class DrizzleThemeRepository implements ThemeRepository {
     slug: string;
     title: string;
     content: string;
+    contentFormat: "plain" | "html";
     isPublished: boolean;
   }): Promise<MicroPageDTO> {
     const rows = await this.db.insert(schema.themeMicroPage).values(row).returning();
@@ -116,7 +117,13 @@ export class DrizzleThemeRepository implements ThemeRepository {
 
   async updateMicroPage(
     id: string,
-    patch: { slug?: string; title?: string; content?: string; isPublished?: boolean },
+    patch: {
+      slug?: string;
+      title?: string;
+      content?: string;
+      contentFormat?: "plain" | "html";
+      isPublished?: boolean;
+    },
   ): Promise<MicroPageDTO | null> {
     const rows = await this.db
       .update(schema.themeMicroPage)
@@ -207,6 +214,7 @@ function toPage(r: typeof schema.themeMicroPage.$inferSelect): MicroPageDTO {
     slug: r.slug,
     title: r.title,
     content: r.content,
+    content_format: (r.contentFormat as "plain" | "html") ?? "plain",
     is_published: r.isPublished,
   };
 }

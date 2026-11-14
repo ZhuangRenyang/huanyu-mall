@@ -337,11 +337,12 @@ export function createAdminClient(opts: ClientOptions) {
     getDashboard: () => get("/api/v1/admin/dashboard"),
     /** 微页面（ADR-082）。 */
     listMicroPages: () => get("/api/v1/admin/settings/pages"),
-    createMicroPage: (b: { slug: string; title: string; content?: string; is_published?: boolean }) =>
-      post("/api/v1/admin/settings/pages", b),
+    createMicroPage: (
+      b: { slug: string; title: string; content?: string; content_format?: "plain" | "html"; is_published?: boolean },
+    ) => post("/api/v1/admin/settings/pages", b),
     updateMicroPage: (
       id: string,
-      b: { slug?: string; title?: string; content?: string; is_published?: boolean },
+      b: { slug?: string; title?: string; content?: string; content_format?: "plain" | "html"; is_published?: boolean },
     ) => patch(`/api/v1/admin/settings/pages/${id}`, b),
     deleteMicroPage: (id: string) => del(`/api/v1/admin/settings/pages/${id}`),
     /** 店面微页面（只给已发布）。 */
