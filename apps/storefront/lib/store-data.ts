@@ -154,6 +154,8 @@ export interface StoreProfile {
    * 未配置时前台要明说「联系客服」，不能让顾客对着空白框干等。
    */
   returnAddress: string | null;
+  /** 首页模块顺序（ADR-079）：服务端已归一化，前端只按顺序渲染。 */
+  homeModules: Array<{ id: 'categories' | 'vouchers' | 'featured'; enabled: boolean }>;
 }
 
 const DEFAULT_PROFILE: StoreProfile = {
@@ -162,6 +164,11 @@ const DEFAULT_PROFILE: StoreProfile = {
   logoUrl: null,
   announcement: null,
   returnAddress: null,
+  homeModules: [
+    { id: 'categories', enabled: true },
+    { id: 'vouchers', enabled: true },
+    { id: 'featured', enabled: true },
+  ],
 };
 
 /**
@@ -180,6 +187,7 @@ export async function getStoreProfile(): Promise<StoreProfile> {
         logo_url?: string | null;
         announcement?: string | null;
         return_address?: string | null;
+        home_modules?: Array<{ id: 'categories' | 'vouchers' | 'featured'; enabled: boolean }>;
       } | null;
     };
     return {
@@ -188,6 +196,10 @@ export async function getStoreProfile(): Promise<StoreProfile> {
       logoUrl: raw.theme?.logo_url ?? null,
       announcement: raw.theme?.announcement?.trim() || null,
       returnAddress: raw.theme?.return_address?.trim() || null,
+      homeModules:
+        raw.theme?.home_modules && raw.theme.home_modules.length > 0
+          ? raw.theme.home_modules
+          : DEFAULT_PROFILE.homeModules,
     };
   } catch {
     return DEFAULT_PROFILE;

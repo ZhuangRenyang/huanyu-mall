@@ -9,6 +9,7 @@ export * from "./types.js";
 export * from "./errors.js";
 export { linkable } from "./linkable.js";
 export { ThemeService } from "./services/theme.service.js";
+export * from "./home-modules.js";
 
 export default Module("theme", {
   service: (ctx) =>

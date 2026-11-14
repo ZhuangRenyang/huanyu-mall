@@ -47,6 +47,61 @@ export async function getTheme(): Promise<ThemeConfig> {
   }
 }
 
+/** 首页模块（ADR-079）：顺序与开关，存 theme.metadata.home_modules。 */
+export type HomeModuleId = 'categories' | 'vouchers' | 'featured';
+export interface HomeModuleView {
+  id: HomeModuleId;
+  enabled: boolean;
+}
+
+const HOME_MODULES_KEY = 'admin:home-modules';
+const DEFAULT_HOME_MODULES: HomeModuleView[] = [
+  { id: 'categories', enabled: true },
+  { id: 'vouchers', enabled: true },
+  { id: 'featured', enabled: true },
+];
+
+export async function getHomeModules(): Promise<HomeModuleView[]> {
+  if (getAdminApiMode() !== 'live') {
+    try {
+      const raw = window.localStorage.getItem(HOME_MODULES_KEY);
+      return raw ? (JSON.parse(raw) as HomeModuleView[]) : DEFAULT_HOME_MODULES;
+    } catch {
+      return DEFAULT_HOME_MODULES;
+    }
+  }
+  const t = (await adminClient().getTheme()) as {
+    metadata?: { home_modules?: Array<{ id?: string; enabled?: boolean }> } | null;
+  };
+  const stored = t.metadata?.home_modules;
+  if (!Array.isArray(stored) || stored.length === 0) return DEFAULT_HOME_MODULES;
+  const known = stored.filter(
+    (m): m is { id: HomeModuleId; enabled?: boolean } =>
+      m?.id === 'categories' || m?.id === 'vouchers' || m?.id === 'featured',
+  );
+  const seen = new Set<HomeModuleId>();
+  const list = known
+    .filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)))
+    .map((m) => ({ id: m.id, enabled: m.enabled !== false }));
+  for (const m of DEFAULT_HOME_MODULES) {
+    if (!seen.has(m.id)) list.push({ ...m });
+  }
+  return list;
+}
+
+export async function saveHomeModules(modules: HomeModuleView[]): Promise<void> {
+  if (getAdminApiMode() !== 'live') {
+    try {
+      window.localStorage.setItem(HOME_MODULES_KEY, JSON.stringify(modules));
+    } catch {
+      /* 隐私模式写不进不影响演示 */
+    }
+    return;
+  }
+  // 只发 home_modules；服务端把它合并进 metadata（ADR-079），不会抹掉别的键
+  await adminClient().updateTheme({ metadata: { home_modules: modules } } as never);
+}
+
 export async function saveTheme(theme: ThemeConfig): Promise<void> {
   if (getAdminApiMode() !== 'live') {
     mockSaveTheme(theme);

@@ -84,7 +84,15 @@ export function adminSettingsRoutes(app: FastifyInstance, deps: AppDeps): void {
     { preHandler: guard, schema: { body: patchSettingsBody } },
     async (req, reply) => {
       const before = await deps.services.theme.getSettings();
-      const settings = await deps.services.theme.updateSettings(req.body as Partial<ThemeSettingsDTO>);
+      const body = req.body as Partial<ThemeSettingsDTO>;
+      /*
+       * metadata 是合并而不是覆盖（ADR-079）：装修页只提交 home_modules 一项，
+       * 整体覆盖会把其它写在 metadata 里的配置悄悄抹掉。
+       */
+      if (body.metadata !== undefined) {
+        body.metadata = { ...(before.metadata ?? {}), ...(body.metadata ?? {}) };
+      }
+      const settings = await deps.services.theme.updateSettings(body);
       await deps.audit.record(
         auditEntry(req, {
           action: "settings.update",

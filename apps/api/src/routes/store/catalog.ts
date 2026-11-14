@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { errors } from "@mall/core";
 import { monthlySoldSince } from "@mall/order";
+import { normalizeHomeModules } from "@mall/theme";
 import { PaginationQuerySchema } from "@mall/types";
 import type { AppDeps } from "../../deps.js";
 import { makeAuthHelpers, resolveChannelId } from "../../plugins/auth.js";
@@ -28,7 +29,8 @@ export function bootstrapRoutes(app: FastifyInstance, deps: AppDeps): void {
       currencies: [channel.currency_code],
       navigation: [],
       // logo_url 与 theme 平铺：前端不该知道 file_id 与 URL 的区别
-      theme: { ...theme, logo_url: logoUrl },
+      // home_modules 由服务端归一化后下发：前端不复制一套默认顺序与容错逻辑（ADR-079）
+      theme: { ...theme, logo_url: logoUrl, home_modules: normalizeHomeModules(theme.metadata) },
     });
   });
 }
